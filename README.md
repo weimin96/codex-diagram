@@ -5,6 +5,9 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 当前支持：
 
 - Thread 伴随模式：从当前聊天的“插件和 MCP”打开 Diagram，右侧只保留当前图、预览/源码和高频对话操作
+- AI 可直接打开伴随面板：`diagram.thread` 同时对 model/app 可见，因此可以直接在聊天里说“打开右侧画板/Diagram”，让 Codex 调 MCP 工具打开右侧面板
+- 聊天目录优先：模型调用 `diagram.create` 时默认使用当前 thread 绑定的项目目录，不需要传 `workspacePath`；新图统一进入该项目的 `docs/diagrams/`
+- 自由画板：让 Codex 调 `diagram.create(type=canvas)` 即可在当前聊天项目中创建 `.diagram.json` 画板，创建后右侧面板自动跟随到新画板
 - 对话双向联动：Codex 在同一聊天调用 `diagram.get/create/update/rename/duplicate` 后，右侧面板自动跟随到对应图；用户在面板切图后，Model Context 也同步回当前聊天
 - “跟随”可随时暂停，避免 Codex 为分析临时读取其他图时右侧面板频繁跳转；恢复后会继续跟随当前对话状态
 - 当前图被 Codex、IDE 或其他外部进程删除时，右侧会自动刷新并切换到其他可用图表，不会继续对失效路径轮询报错
@@ -70,6 +73,8 @@ pnpm plugin:install:desktop
 2. 从当前聊天的“插件和 MCP”打开 `Diagram`，右侧显示伴随面板。
 3. 直接在聊天里让 Codex 生成、修改或解释图表；面板会跟随当前图。
 4. 需要批量管理、导出或完整分屏编辑时，再打开全局 `Diagram 图表库`。
+
+也可以完全通过对话启动，例如：`调用 Diagram MCP 打开右侧画板，然后在当前聊天项目里创建一个“登录架构”自由画板并开始绘制。` Codex 会先调用 `diagram.thread`，再调用 `diagram.create(type=canvas)`；画板文件保存到当前聊天项目的 `docs/diagrams/`。
 
 ## MCP 工具
 

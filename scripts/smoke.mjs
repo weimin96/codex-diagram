@@ -13,7 +13,13 @@ const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), '
 if (manifest.version !== packageJson.version) throw new Error('Plugin manifest version does not match package.json.')
 
 const serverBundle = await readFile(path.join(packageRoot, 'dist/server.mjs'), 'utf8')
-for (const marker of ['ui://codex-diagram/thread-v', 'diagram.threadState', 'Open the full-screen Diagram library']) {
+for (const marker of [
+  'ui://codex-diagram/thread-v',
+  'diagram.threadState',
+  'Open the full-screen Diagram library',
+  '["model", "app"]',
+  'current conversation workspace',
+]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)
 }
 

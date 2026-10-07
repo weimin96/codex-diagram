@@ -40,7 +40,14 @@ const html = (surface: DiagramSurface) => `<!doctype html>
 
 const server = new McpServer(
   { name: 'codex-diagram', title: 'Codex Diagram', version, icons },
-  { instructions: 'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the current workspace. Read the existing diagram before updating it.' },
+  {
+    instructions: [
+      'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
+      'When the user asks to open/show a diagram or drawing board beside the conversation, call diagram.thread so the companion panel opens in the current thread.',
+      'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
+      'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
+    ].join(' '),
+  },
 )
 
 const appOnly = { ui: { visibility: ['app'] as const } }
@@ -49,8 +56,12 @@ const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 const threadSelection = new Map<string, { path?: string; updatedAt: string }>()
-const ui = (resourceUri: string, entrypoints: OpenAIUiToolMetadata['entrypoints'] = []) => ({
-  ui: { resourceUri, visibility: ['app'] as const },
+const ui = (
+  resourceUri: string,
+  entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
+  visibility: readonly ('model' | 'app')[] = ['app'],
+) => ({
+  ui: { resourceUri, visibility },
   'openai/ui': { entrypoints } satisfies OpenAIUiToolMetadata,
   'openai/iconStyle': 'monochrome',
 })
@@ -78,14 +89,24 @@ server.registerTool('diagram.workspace', {
 
 server.registerTool('diagram.thread', {
   title: 'Diagram',
-  description: 'Open the diagram workspace beside the current Codex conversation.',
+  description: 'Open the Diagram companion panel beside the current Codex conversation. Call this when the user asks to open/show a diagram, drawing board or visual canvas in the right-side conversation workspace.',
   inputSchema: z.object({}),
   annotations: readonly,
-  _meta: ui(threadUiUri, [{ type: 'thread' }]),
-}, async (_args, extra) => ({
-  content: [],
-  structuredContent: workspaceContent(await bootstrapWorkspace(toolThreadId(extra._meta)), 'thread', toolThreadId(extra._meta)),
-}))
+  _meta: ui(threadUiUri, [{ type: 'thread' }], ['model', 'app']),
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const payload = workspaceContent(await bootstrapWorkspace(threadId), 'thread', threadId)
+  const workspacePath = typeof payload.workspacePath === 'string' ? payload.workspacePath : undefined
+  return {
+    content: [{
+      type: 'text',
+      text: workspacePath
+        ? `Opened Diagram beside this conversation. Current conversation workspace: ${workspacePath}`
+        : 'Opened Diagram beside this conversation. No writable workspace is currently bound to this thread.',
+    }],
+    structuredContent: payload,
+  }
+})
 
 server.registerTool('diagram.openWorkspace', {
   title: 'Open diagram workspace',
@@ -198,7 +219,7 @@ server.registerTool('diagram.sources', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid or freeform Canvas diagram under docs/diagrams in the current workspace.',
+  description: 'Create a Mermaid or freeform Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat; use type=canvas for a drawing board.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
@@ -345,9 +366,15 @@ function workspaceResource(uri: string, surface: DiagramSurface) {
 
 async function bootstrapWorkspace(threadId?: string): Promise<WorkspaceSnapshot> {
   const recentWorkspaces = await readRecentWorkspaces()
+  const threadWorkspaces = threadId ? await readCodexDesktopRoots(threadId) : []
   const candidates = uniquePaths([
+    // A thread-specific writable root/project assignment is the strongest
+    // signal for "the directory of this conversation". Keep it ahead of
+    // generic MCP roots and recently opened Diagram workspaces so a model
+    // initiated diagram.create cannot accidentally write into another project.
+    ...threadWorkspaces,
     ...(await clientWorkspaceRoots()),
-    ...(await readCodexDesktopRoots(threadId)),
+    ...(!threadId ? await readCodexDesktopRoots() : []),
     ...recentWorkspaces,
   ])
   for (const candidate of candidates) {
