@@ -17,7 +17,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
     `标题：${request.title.trim()}`,
     scope
       ? `优先分析范围：${scope}`
-      : '分析范围：优先使用当前对话里用户正在处理或选中的代码；如果没有明确对象，再从工作空间定位最相关实现。',
+      : '分析范围：优先使用当前对话里已经明确指向的代码或功能；如果没有明确对象，再从工作空间定位最相关实现。',
     instructions ? `额外要求：${instructions}` : '',
     '',
     '执行要求：',

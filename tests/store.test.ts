@@ -58,3 +58,22 @@ test('rejects an update when the diagram changed after it was read', async () =>
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('indexes source files without generated or dependency directories', async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-sources-'))
+  try {
+    await mkdir(path.join(workspace, 'src', 'auth'), { recursive: true })
+    await mkdir(path.join(workspace, 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(path.join(workspace, 'docs', 'diagrams'), { recursive: true })
+    await writeFile(path.join(workspace, 'src', 'auth', 'LoginService.java'), 'class LoginService {}')
+    await writeFile(path.join(workspace, 'src', 'app.ts'), 'export {}')
+    await writeFile(path.join(workspace, 'node_modules', 'pkg', 'index.js'), 'module.exports = {}')
+    await writeFile(path.join(workspace, 'docs', 'diagrams', 'existing.mmd'), 'flowchart LR\n A --> B\n')
+
+    const store = await DiagramStore.open(workspace)
+    const files = await store.listSourceFiles()
+    assert.deepEqual(files, ['src/app.ts', 'src/auth/LoginService.java'])
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+})

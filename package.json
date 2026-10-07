@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.3.2",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "Visual diagram workspace for Codex with Mermaid editing and MCP tools.",
@@ -15,7 +15,13 @@
     "plugin:install:desktop": "pnpm plugin:install && node scripts/reload-codex-desktop.mjs"
   },
   "dependencies": {
+    "@codemirror/language": "^6.11.3",
+    "@codemirror/search": "^6.5.11",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.6",
+    "@lezer/highlight": "^1.2.1",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "codemirror": "^6.0.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@openai/mcp-extensions": "^0.1.0",
     "mermaid": "^11.12.0",

@@ -11,6 +11,7 @@ Codex 的可视化图表侧边栏插件。第一版使用 Mermaid 作为统一�
 - ER 图
 - 状态图 State Diagram
 - 工作空间自动识别与 Mermaid 文件扫描
+- CodeMirror 源码编辑器：行号、语法高亮、搜索、撤销/重做与编辑快捷键
 - 实时预览、源码编辑、分屏模式
 - `Cmd/Ctrl + S` 保存
 - MCP `list / get / create / update` 工具，供 Codex 直接操作图表
@@ -23,6 +24,9 @@ Codex 的可视化图表侧边栏插件。第一版使用 Mermaid 作为统一�
 - 图表侧栏支持搜索、收起与展开
 - 分屏模式支持拖动调整 Mermaid 源码与预览宽度
 - 保存时使用文件 revision 防止覆盖 Codex / IDE 的并发修改
+- `工作区→图` 快捷入口，可让 Codex 从整个 Workspace 提炼核心结构
+- “文件或目录”支持搜索真实工作区源码路径，不需要手敲文件名
+- 当前图可通过 Codex Host 原生文件能力直接打开，继续在 Host / VS Code 中编辑
 
 ## 本地开发
 
@@ -58,9 +62,12 @@ pnpm plugin:install:desktop
 | `diagram.list` | 列出当前工作空间图表 |
 | `diagram.get` | 读取一个 Mermaid 图表 |
 | `diagram.revision` | UI 内部检查当前图是否发生磁盘变更 |
+| `diagram.sources` | UI 内部搜索当前工作空间真实源码路径 |
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 
 ## 当前边界
 
-当前仍以 Mermaid 为主。Excalidraw / 自由画布、PNG 导出、节点级可视化编辑和更深的代码图谱索引放到后续阶段。源码区目前还是轻量文本编辑器，后续再评估 CodeMirror/Monaco，避免为了行号和高亮引入不必要的体积。
+当前仍以 Mermaid 为主。Excalidraw / 自由画布、PNG 导出、节点级可视化编辑和更深的代码图谱索引放到后续阶段。
+
+当前 Codex MCP App Host 提供 `files.open(path)`，但没有公开“当前活动编辑器文件 / 当前代码选区”的读取接口。因此插件不会伪装成能自动读取 IDE 选区：生成时可以从真实工作区路径选择文件/目录，或者让 Codex 根据当前对话与整个工作区定位实现；后续 Host 提供 active file / selection API 后再直接接入。

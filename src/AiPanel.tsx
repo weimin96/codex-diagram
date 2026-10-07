@@ -5,6 +5,8 @@ import type { DiagramGenerationRequest } from './aiPrompts.js'
 interface AiPanelProps {
   selected: DiagramDocument | null
   sending: boolean
+  generationPreset?: { key: number; scope?: string; title?: string; instructions?: string }
+  onSearchSources: (query: string) => Promise<string[]>
   onClose: () => void
   onGenerate: (request: DiagramGenerationRequest) => Promise<void>
   onModify: (instruction: string) => Promise<void>
@@ -16,12 +18,44 @@ const quickModifications = [
   '优化图的阅读顺序和分组，让主路径更清晰，但不要改变业务语义。',
 ]
 
-export function AiPanel({ selected, sending, onClose, onGenerate, onModify }: AiPanelProps) {
+export function AiPanel({ selected, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
   const [type, setType] = useState<DiagramType>('flowchart')
   const [title, setTitle] = useState('')
   const [scope, setScope] = useState('')
   const [generationInstructions, setGenerationInstructions] = useState('')
   const [modification, setModification] = useState('')
+  const [scopeFocused, setScopeFocused] = useState(false)
+  const [sourceOptions, setSourceOptions] = useState<string[]>([])
+  const [sourceLoading, setSourceLoading] = useState(false)
+
+  useEffect(() => {
+    if (!generationPreset) return
+    if (generationPreset.scope !== undefined) setScope(generationPreset.scope)
+    if (generationPreset.title !== undefined) setTitle(generationPreset.title)
+    if (generationPreset.instructions !== undefined) setGenerationInstructions(generationPreset.instructions)
+  }, [generationPreset?.key])
+
+  useEffect(() => {
+    if (!scopeFocused || scope.trim() === '.') {
+      setSourceOptions([])
+      return
+    }
+    let cancelled = false
+    const handle = window.setTimeout(() => {
+      setSourceLoading(true)
+      void onSearchSources(scope)
+        .then((files) => {
+          if (!cancelled) setSourceOptions(files)
+        })
+        .finally(() => {
+          if (!cancelled) setSourceLoading(false)
+        })
+    }, 160)
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [onSearchSources, scope, scopeFocused])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -42,7 +76,17 @@ export function AiPanel({ selected, sending, onClose, onGenerate, onModify }: Ai
       </div>
 
       <section className="ai-panel-section">
-        <div className="ai-section-title">从代码生成</div>
+        <div className="ai-section-title-row">
+          <div className="ai-section-title">从代码生成</div>
+          <button
+            className="ai-scope-shortcut"
+            type="button"
+            onClick={() => {
+              setScope('.')
+              if (!generationInstructions.trim()) setGenerationInstructions('先识别核心模块和边界，再画主要依赖或调用关系；不要把所有文件都展开。')
+            }}
+          >分析整个工作区</button>
+        </div>
         <div className="ai-form-grid">
           <label>
             <span>类型</span>
@@ -56,7 +100,27 @@ export function AiPanel({ selected, sending, onClose, onGenerate, onModify }: Ai
           </label>
           <label>
             <span>文件或目录</span>
-            <input value={scope} onChange={(event) => setScope(event.target.value)} placeholder="src/auth, LoginService.java（可选）" />
+            <div className="source-picker">
+              <input
+                value={scope}
+                onChange={(event) => setScope(event.target.value)}
+                onFocus={() => setScopeFocused(true)}
+                onBlur={() => window.setTimeout(() => setScopeFocused(false), 120)}
+                placeholder="搜索或输入源码路径（可选）"
+                aria-label="文件或目录"
+                autoComplete="off"
+              />
+              {scopeFocused && (sourceLoading || sourceOptions.length > 0) ? (
+                <div className="source-picker-popover" role="listbox" aria-label="源码文件">
+                  {sourceLoading ? <div className="source-picker-status">正在扫描工作区…</div> : null}
+                  {!sourceLoading ? sourceOptions.map((file) => (
+                    <button key={file} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => { setScope(file); setScopeFocused(false) }}>
+                      {file}
+                    </button>
+                  )) : null}
+                </div>
+              ) : null}
+            </div>
           </label>
           <label>
             <span>要求</span>

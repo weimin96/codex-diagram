@@ -11,6 +11,7 @@ import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
 import { normalizeMermaidColor } from './colors.js'
+import { MermaidEditor } from './MermaidEditor.js'
 import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
@@ -35,6 +36,12 @@ interface DiagramRevisionResult {
   kind: 'diagram-revision'
   workspacePath: string
   revision: DiagramRevision
+}
+
+interface SourceFilesResult {
+  kind: 'source-files'
+  workspacePath: string
+  files: string[]
 }
 
 type ViewMode = 'preview' | 'source' | 'split'
@@ -163,11 +170,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [diagramQuery, setDiagramQuery] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
+  const [generationPreset, setGenerationPreset] = useState<{ key: number; scope?: string; title?: string; instructions?: string } | undefined>()
   const [aiSending, setAiSending] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [externalChange, setExternalChange] = useState(false)
   const [splitPercent, setSplitPercent] = useState(44)
+  const [sourceSearchRequest, setSourceSearchRequest] = useState(0)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
@@ -352,6 +361,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function searchSourceFiles(query: string): Promise<string[]> {
+    const result = await callTool<SourceFilesResult>('diagram.sources', { workspacePath, query, limit: 40 })
+    return result.files
+  }
+
   async function createDiagram(type: DiagramType, title: string) {
     setError(null)
     try {
@@ -438,6 +452,30 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function openDiagramFile() {
+    if (!selected) return
+    const fileApi = openai.files
+    if (!fileApi) {
+      setError('当前 Codex Host 没有提供原生文件打开能力。')
+      return
+    }
+    try {
+      await fileApi.open(resolveWorkspaceFilePath(workspacePath, selected.path))
+    } catch (cause) {
+      setError(`打开图表文件失败：${errorMessage(cause)}`)
+    }
+  }
+
+  function openWorkspaceGeneration() {
+    setGenerationPreset({
+      key: Date.now(),
+      scope: '.',
+      title: '',
+      instructions: '先识别核心模块和边界，再画主要依赖或调用关系；不要把所有文件都展开。',
+    })
+    setAiOpen(true)
+  }
+
   return (
     <main className={`diagram-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="diagram-sidebar">
@@ -468,7 +506,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         </div>
         <div className="sidebar-list-head">
           <span>{diagramQuery.trim() ? `${visibleDiagrams.length} / ${snapshot.diagrams.length}` : `${snapshot.diagrams.length} 个图表`}</span>
-          <button type="button" onClick={() => void refreshList()}>刷新</button>
+          <div className="sidebar-list-actions">
+            <button type="button" onClick={openWorkspaceGeneration}>工作区→图</button>
+            <button type="button" onClick={() => void refreshList()}>刷新</button>
+          </div>
         </div>
         <nav className="diagram-list" aria-label="图表列表">
           {visibleDiagrams.map((diagram) => (
@@ -527,13 +568,15 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             >
               {(mode === 'source' || mode === 'split') ? (
                 <section className="source-pane">
-                  <div className="pane-head"><span>Mermaid</span><span>{diagramLabel(selected.type)}</span></div>
-                  <textarea
-                    spellCheck={false}
-                    value={source}
-                    onChange={(event) => setSource(event.target.value)}
-                    aria-label="Mermaid 源码"
-                  />
+                  <div className="pane-head">
+                    <span>Mermaid</span>
+                    <div className="pane-head-actions">
+                      <span>{diagramLabel(selected.type)}</span>
+                      <button type="button" onClick={() => setSourceSearchRequest((value) => value + 1)}>查找</button>
+                      <button type="button" onClick={() => void openDiagramFile()}>打开文件</button>
+                    </div>
+                  </div>
+                  <MermaidEditor value={source} onChange={setSource} onSave={() => void saveDiagram()} searchRequest={sourceSearchRequest} />
                 </section>
               ) : null}
               {mode === 'split' ? (
@@ -584,6 +627,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           <AiPanel
             selected={selected}
             sending={aiSending}
+            generationPreset={generationPreset}
+            onSearchSources={searchSourceFiles}
             onClose={() => setAiOpen(false)}
             onGenerate={sendGeneration}
             onModify={sendModification}
@@ -860,6 +905,14 @@ function shortPath(value: string): string {
 function safeFilename(value: string): string {
   const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').replace(/^-+|-+$/g, '')
   return cleaned || 'diagram'
+}
+
+function resolveWorkspaceFilePath(root: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, '/').split('/').filter((part) => part && part !== '.')
+  if (normalized.some((part) => part === '..')) throw new Error('图表路径超出当前工作空间。')
+  const windowsRoot = /^[A-Za-z]:[\\/]/.test(root) || root.includes('\\')
+  const separator = windowsRoot ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${separator}${normalized.join(separator)}`
 }
 
 function cleanMermaidError(value: string): string {

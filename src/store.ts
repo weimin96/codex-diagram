@@ -5,8 +5,15 @@ import { createTemplate, detectDiagramType } from './templates.js'
 import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType } from './types.js'
 
 const allowedExtensions = new Set(['.mmd', '.mermaid'])
+const sourceExtensions = new Set([
+  '.c', '.cc', '.cpp', '.cs', '.css', '.go', '.gradle', '.graphql', '.gql', '.h', '.hpp', '.html', '.java',
+  '.js', '.jsx', '.json', '.kt', '.kts', '.less', '.mjs', '.cjs', '.php', '.properties', '.proto', '.py', '.rb',
+  '.rs', '.scala', '.scss', '.sql', '.svelte', '.swift', '.toml', '.ts', '.tsx', '.vue', '.xml', '.yaml', '.yml',
+])
+const sourceNames = new Set(['Dockerfile', 'Makefile', 'CMakeLists.txt', 'pom.xml', 'build.gradle', 'settings.gradle'])
 const ignoredDirectories = new Set([
-  '.git', 'node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.turbo', '.cache', 'target',
+  '.git', '.idea', '.gradle', '.mvn', '.venv', '.dart_tool', '__pycache__',
+  'node_modules', 'vendor', 'venv', 'Pods', 'dist', 'build', 'out', 'coverage', '.next', '.turbo', '.cache', 'target',
 ])
 const maxDepth = 7
 const maxDiagrams = 500
@@ -56,6 +63,12 @@ export class DiagramStore {
     return this.document(relativePathFromRoot(this.workspacePath, target), source, info.mtime)
   }
 
+  async listSourceFiles(limit = 5_000): Promise<string[]> {
+    const results: string[] = []
+    await this.scanSources(this.workspacePath, 0, results, Math.max(1, Math.min(limit, 10_000)))
+    return results.sort((left, right) => left.localeCompare(right))
+  }
+
   async update(relativePath: string, source: string, expectedModifiedAt?: string): Promise<DiagramDocument> {
     const target = await this.resolveExistingDiagram(relativePath)
     if (expectedModifiedAt) {
@@ -84,6 +97,25 @@ export class DiagramStore {
       if (info.isSymbolicLink()) continue
       const source = await readFile(target, 'utf8')
       results.push(this.summary(relativePathFromRoot(this.workspacePath, target), source, info.mtime))
+    }
+  }
+
+  private async scanSources(directory: string, depth: number, results: string[], limit: number): Promise<void> {
+    if (depth > maxDepth || results.length >= limit) return
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (results.length >= limit) return
+      const target = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name)) await this.scanSources(target, depth + 1, results, limit)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const extension = path.extname(entry.name).toLowerCase()
+      if (!sourceExtensions.has(extension) && !sourceNames.has(entry.name)) continue
+      const info = await lstat(target).catch(() => null)
+      if (!info || info.isSymbolicLink()) continue
+      results.push(relativePathFromRoot(this.workspacePath, target))
     }
   }
 

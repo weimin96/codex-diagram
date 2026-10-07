@@ -44,6 +44,7 @@ const server = new McpServer(
 const appOnly = { ui: { visibility: ['app'] as const } }
 const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 const ui = (entrypoints: OpenAIUiToolMetadata['entrypoints'] = []) => ({
   ui: { resourceUri: uiUri, visibility: ['app'] as const },
   'openai/ui': { entrypoints } satisfies OpenAIUiToolMetadata,
@@ -132,6 +133,35 @@ server.registerTool('diagram.revision', {
   return {
     content: [],
     structuredContent: { kind: 'diagram-revision', workspacePath: store.workspacePath, revision },
+  }
+})
+
+server.registerTool('diagram.sources', {
+  title: 'Search workspace source files',
+  description: 'Internal app bridge for choosing real source files when generating a diagram.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    query: z.string().max(240).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
+  annotations: readonly,
+  _meta: appOnly,
+}, async ({ workspacePath, query = '', limit = 40 }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const now = Date.now()
+  let cached = sourceIndexCache.get(store.workspacePath)
+  if (!cached || cached.expiresAt <= now) {
+    cached = { files: await store.listSourceFiles(), expiresAt: now + 15_000 }
+    sourceIndexCache.set(store.workspacePath, cached)
+  }
+  const needle = query.trim().toLocaleLowerCase()
+  const files = (needle
+    ? cached.files.filter((file) => fuzzyPathMatch(file.toLocaleLowerCase(), needle))
+    : cached.files
+  ).slice(0, limit)
+  return {
+    content: [],
+    structuredContent: { kind: 'source-files', workspacePath: store.workspacePath, files },
   }
 })
 
@@ -294,6 +324,12 @@ function stringArray(value: unknown): string[] {
 
 function uniquePaths(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function fuzzyPathMatch(pathValue: string, query: string): boolean {
+  if (pathValue.includes(query)) return true
+  const terms = query.split(/[\\/\s]+/).filter(Boolean)
+  return terms.every((term) => pathValue.includes(term))
 }
 
 function workspaceContent(snapshot: WorkspaceSnapshot): Record<string, unknown> {
