@@ -19,6 +19,8 @@ for (const marker of [
   'Open the full-screen Diagram library',
   '["model", "app"]',
   'current conversation workspace',
+  'preferredDisplayMode: "fullscreen"',
+  'single tool responsible for opening the persistent right-side Diagram panel',
 ]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)
 }

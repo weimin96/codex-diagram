@@ -43,7 +43,8 @@ const server = new McpServer(
   {
     instructions: [
       'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
-      'When the user asks to open/show a diagram or drawing board beside the conversation, call diagram.thread so the companion panel opens in the current thread.',
+      'When the user asks to draw, create, inspect or modify a diagram and wants to see it beside the conversation, call diagram.thread first. It is the single tool responsible for opening the persistent right-side Diagram panel.',
+      'After diagram.thread is open, use diagram.get/create/update for data only; the existing panel follows the current thread state automatically.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
     ].join(' '),
@@ -355,8 +356,12 @@ function workspaceResource(uri: string, surface: DiagramSurface) {
       text: html(surface),
       _meta: {
         'openai/ui': {
-          preferredDisplayMode: surface === 'thread' ? 'inline' : 'fullscreen',
-          availableDisplayModes: ['inline', 'fullscreen'],
+          // Codex opens fullscreen MCP Apps as the tab/panel beside the thread.
+          // This mirrors MCP for Blender's viewport resource. Inline mode leaves
+          // only a tool card in the transcript and does not reliably expose the
+          // persistent right-side working surface the Diagram workflow needs.
+          preferredDisplayMode: 'fullscreen',
+          availableDisplayModes: ['fullscreen'],
         },
         ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } },
       },
