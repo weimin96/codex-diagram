@@ -1,0 +1,21 @@
+{
+  "name": "codex-diagram-local",
+  "interface": {
+    "displayName": "Codex Diagram Local"
+  },
+  "plugins": [
+    {
+      "name": "codex-diagram",
+      "source": {
+        "source": "local",
+        "path": "./package"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": ["CODEX"]
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

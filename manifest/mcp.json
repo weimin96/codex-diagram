@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "codex-diagram": {
+      "command": "node",
+      "args": ["./dist/server.mjs"],
+      "cwd": "."
+    }
+  }
+}
