@@ -10,6 +10,7 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 自由画板：让 Codex 调 `diagram.create(type=canvas)` 即可在当前聊天项目中创建 `.diagram.json` 画板，创建后右侧面板自动跟随到新画板
 - 对话双向联动：Codex 在同一聊天调用 `diagram.get/create/update/rename/duplicate` 后，右侧面板自动跟随到对应图；用户在面板切图后，Model Context 也同步回当前聊天
 - “跟随”可随时暂停，避免 Codex 为分析临时读取其他图时右侧面板频繁跳转；恢复后会继续跟随当前对话状态
+- Thread 空面板会自动发现当前项目中新创建或恢复的图表，不需要关闭重开 Diagram
 - `diagram.thread` 是唯一的右侧面板打开入口：模型可直接调用它，Host 以 fullscreen side-tab 自动打开一个持续复用的 `Diagram` 标签；后续 `diagram.get/create/update` 只改数据，由该面板自动跟随，避免每个业务工具各开一个标签页
 - 当前图被 Codex、IDE 或其他外部进程删除时，右侧会自动刷新并切换到其他可用图表，不会继续对失效路径轮询报错
 - 内部 MCP bridge 对 Host 丢失 `structuredContent` 的情况提供 JSON fallback；后台同步异常会自动重试，不直接用红色错误条打断工作流

@@ -306,6 +306,35 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }, [dirty, followConversation, isThread, onSnapshot, selected, snapshot, workspacePath])
 
   useEffect(() => {
+    if (!isThread || selected || dirty) return
+    let disposed = false
+    let inFlight = false
+    const discover = () => {
+      if (disposed || inFlight) return
+      inFlight = true
+      void callTool<DiagramListResult>('diagram.list', { workspacePath })
+        .then(async (result) => {
+          if (disposed || result.diagrams.length === 0) return
+          const activePath = snapshot.activeDiagramPath
+          const next = (activePath && result.diagrams.find((diagram) => diagram.path === activePath)) || result.diagrams[0]
+          onSnapshot({ ...snapshot, surface: 'thread', diagrams: result.diagrams, activeDiagramPath: next.path })
+          await selectDiagram(next.path, true)
+          if (!disposed) setNotice('已发现当前项目中的图表')
+        })
+        .catch(() => {
+          // Discovery is opportunistic. Thread/revision sync surfaces persistent failures separately.
+        })
+        .finally(() => { inFlight = false })
+    }
+    discover()
+    const handle = window.setInterval(discover, 2_500)
+    return () => {
+      disposed = true
+      window.clearInterval(handle)
+    }
+  }, [dirty, isThread, onSnapshot, selected, snapshot, workspacePath])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && selected) {
         event.preventDefault()
