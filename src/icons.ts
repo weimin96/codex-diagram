@@ -26,7 +26,7 @@ export function diagramGlobalEntrypoint(icons: Icon[]): OpenAIUiEntrypoint {
   return {
     type: 'global',
     quickAction: {
-      title: 'Diagram',
+      title: 'Diagram 图表库',
       icons,
       target: { type: 'tool', name: 'diagram.workspace' },
     },

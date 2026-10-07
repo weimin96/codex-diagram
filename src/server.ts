@@ -8,13 +8,14 @@ import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { DiagramStore } from './store.js'
-import { diagramTypes, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
 const version = __CODEX_DIAGRAM_VERSION__
 const legacyUiUri = 'ui://codex-diagram/workspace-v1'
-const uiUri = `ui://codex-diagram/workspace-v${version}`
+const workspaceUiUri = `ui://codex-diagram/workspace-v${version}`
+const threadUiUri = `ui://codex-diagram/thread-v${version}`
 const uiTemplate = 'ui://codex-diagram/workspace-v{version}'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const [appJs, appCss] = await Promise.all([
@@ -23,7 +24,7 @@ const [appJs, appCss] = await Promise.all([
 ])
 const icons = await loadDiagramIcons()
 
-const html = `<!doctype html>
+const html = (surface: DiagramSurface) => `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -31,14 +32,14 @@ const html = `<!doctype html>
   <style>${appCss}</style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root" data-diagram-surface="${surface}"></div>
   <script>${appJs}</script>
 </body>
 </html>`
 
 const server = new McpServer(
   { name: 'codex-diagram', title: 'Codex Diagram', version, icons },
-  { instructions: 'Codex Diagram reads and writes Mermaid diagrams in the current workspace. Read the existing diagram before updating it.' },
+  { instructions: 'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the current workspace. Read the existing diagram before updating it.' },
 )
 
 const appOnly = { ui: { visibility: ['app'] as const } }
@@ -46,41 +47,43 @@ const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: fa
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
-const ui = (entrypoints: OpenAIUiToolMetadata['entrypoints'] = []) => ({
-  ui: { resourceUri: uiUri, visibility: ['app'] as const },
+const threadSelection = new Map<string, { path?: string; updatedAt: string }>()
+const ui = (resourceUri: string, entrypoints: OpenAIUiToolMetadata['entrypoints'] = []) => ({
+  ui: { resourceUri, visibility: ['app'] as const },
   'openai/ui': { entrypoints } satisfies OpenAIUiToolMetadata,
   'openai/iconStyle': 'monochrome',
 })
 
-registerWorkspaceResource('codex-diagram-workspace-current', uiUri)
+registerWorkspaceResource('codex-diagram-workspace-current', workspaceUiUri, 'workspace')
+registerWorkspaceResource('codex-diagram-thread-current', threadUiUri, 'thread')
 registerWorkspaceResource('codex-diagram-workspace-legacy', legacyUiUri)
 server.registerResource(
   'codex-diagram-workspace-versioned-history',
   new ResourceTemplate(uiTemplate, { list: undefined }),
   { title: 'Diagram 工作台（历史版本兼容）', mimeType: 'text/html;profile=mcp-app' },
-  async (uri) => workspaceResource(uri.toString()),
+  async (uri) => workspaceResource(uri.toString(), 'workspace'),
 )
 
 server.registerTool('diagram.workspace', {
-  title: 'Diagram 工作台',
-  description: 'Open the visual diagram workspace.',
+  title: 'Diagram 图表库',
+  description: 'Open the full-screen Diagram library for browsing, managing, exporting and editing workspace diagrams.',
   inputSchema: z.object({}),
   annotations: readonly,
-  _meta: ui([diagramGlobalEntrypoint(icons)]),
+  _meta: ui(workspaceUiUri, [diagramGlobalEntrypoint(icons)]),
 }, async (_args, extra) => ({
   content: [],
-  structuredContent: workspaceContent(await bootstrapWorkspace(toolThreadId(extra._meta))),
+  structuredContent: workspaceContent(await bootstrapWorkspace(toolThreadId(extra._meta)), 'workspace'),
 }))
 
 server.registerTool('diagram.thread', {
-  title: 'Diagram 工作台',
+  title: 'Diagram',
   description: 'Open the diagram workspace beside the current Codex conversation.',
   inputSchema: z.object({}),
   annotations: readonly,
-  _meta: ui([{ type: 'thread' }]),
+  _meta: ui(threadUiUri, [{ type: 'thread' }]),
 }, async (_args, extra) => ({
   content: [],
-  structuredContent: workspaceContent(await bootstrapWorkspace(toolThreadId(extra._meta))),
+  structuredContent: workspaceContent(await bootstrapWorkspace(toolThreadId(extra._meta)), 'thread', toolThreadId(extra._meta)),
 }))
 
 server.registerTool('diagram.openWorkspace', {
@@ -89,33 +92,53 @@ server.registerTool('diagram.openWorkspace', {
   inputSchema: z.object({ workspacePath: z.string().min(1) }),
   annotations: readonly,
   _meta: appOnly,
-}, async ({ workspacePath }) => ({
+}, async ({ workspacePath }, extra) => ({
   content: [],
-  structuredContent: workspaceContent(await openWorkspace(workspacePath)),
+  structuredContent: workspaceContent(await openWorkspace(workspacePath), undefined, toolThreadId(extra._meta)),
 }))
+
+server.registerTool('diagram.threadState', {
+  title: 'Read active diagram for this conversation',
+  description: 'Internal app bridge for keeping the thread sidebar synchronized with diagram tool usage in the same Codex conversation.',
+  inputSchema: z.object({}),
+  annotations: readonly,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const state = threadId ? threadSelection.get(threadId) : undefined
+  return {
+    content: [],
+    structuredContent: {
+      kind: 'diagram-thread-state',
+      activeDiagramPath: state?.path,
+      updatedAt: state?.updatedAt,
+    },
+  }
+})
 
 server.registerTool('diagram.list', {
   title: 'List diagrams',
-  description: 'List Mermaid .mmd and .mermaid files in the current workspace.',
+  description: 'List Mermaid and Canvas diagram files in the current workspace.',
   inputSchema: z.object({ workspacePath: z.string().optional() }),
   annotations: readonly,
 }, async ({ workspacePath }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagrams = await store.list()
   return {
-    content: [{ type: 'text', text: diagrams.length ? diagrams.map((diagram) => `${diagram.path} (${diagram.type})`).join('\n') : 'No Mermaid diagrams found.' }],
+    content: [{ type: 'text', text: diagrams.length ? diagrams.map((diagram) => `${diagram.path} (${diagram.type})`).join('\n') : 'No diagrams found.' }],
     structuredContent: { kind: 'diagram-list', workspacePath: store.workspacePath, diagrams },
   }
 })
 
 server.registerTool('diagram.get', {
   title: 'Read diagram',
-  description: 'Read one Mermaid diagram from the current workspace before explaining or modifying it.',
+  description: 'Read one Mermaid or Canvas diagram from the current workspace before explaining or modifying it.',
   inputSchema: z.object({ workspacePath: z.string().optional(), path: z.string().min(1) }),
   annotations: readonly,
 }, async ({ workspacePath, path: diagramPath }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.get(diagramPath)
+  markThreadDiagram(extra._meta, diagram.path)
   return {
     content: [{ type: 'text', text: `Path: ${diagram.path}\nType: ${diagram.type}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -168,7 +191,7 @@ server.registerTool('diagram.sources', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid diagram under docs/diagrams in the current workspace.',
+  description: 'Create a Mermaid or freeform Canvas diagram under docs/diagrams in the current workspace.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
@@ -178,6 +201,7 @@ server.registerTool('diagram.create', {
 }, async ({ workspacePath, type, title }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.create(type, title)
+  markThreadDiagram(extra._meta, diagram.path)
   return {
     content: [{ type: 'text', text: `Created ${diagram.path}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -186,7 +210,7 @@ server.registerTool('diagram.create', {
 
 server.registerTool('diagram.update', {
   title: 'Update diagram',
-  description: 'Replace the Mermaid source of an existing diagram. Pass expectedModifiedAt from diagram.get when available to avoid overwriting concurrent edits.',
+  description: 'Replace the source of an existing Mermaid or Canvas diagram. Pass expectedModifiedAt from diagram.get when available to avoid overwriting concurrent edits.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
@@ -197,6 +221,7 @@ server.registerTool('diagram.update', {
 }, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.update(diagramPath, source, expectedModifiedAt)
+  markThreadDiagram(extra._meta, diagram.path)
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -205,7 +230,7 @@ server.registerTool('diagram.update', {
 
 server.registerTool('diagram.rename', {
   title: 'Rename diagram',
-  description: 'Rename an existing Mermaid diagram in place. Pass expectedModifiedAt when available to avoid racing external edits.',
+  description: 'Rename an existing diagram in place. Pass expectedModifiedAt when available to avoid racing external edits.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
@@ -216,6 +241,7 @@ server.registerTool('diagram.rename', {
 }, async ({ workspacePath, path: diagramPath, title, expectedModifiedAt }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.rename(diagramPath, title, expectedModifiedAt)
+  markThreadDiagram(extra._meta, diagram.path)
   return {
     content: [{ type: 'text', text: `Renamed ${diagramPath} to ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -224,7 +250,7 @@ server.registerTool('diagram.rename', {
 
 server.registerTool('diagram.duplicate', {
   title: 'Duplicate diagram',
-  description: 'Duplicate an existing Mermaid diagram beside the source file.',
+  description: 'Duplicate an existing diagram beside the source file.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
@@ -234,6 +260,7 @@ server.registerTool('diagram.duplicate', {
 }, async ({ workspacePath, path: diagramPath, title }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.duplicate(diagramPath, title)
+  markThreadDiagram(extra._meta, diagram.path)
   return {
     content: [{ type: 'text', text: `Duplicated ${diagramPath} as ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -242,7 +269,7 @@ server.registerTool('diagram.duplicate', {
 
 server.registerTool('diagram.delete', {
   title: 'Delete diagram',
-  description: 'Delete one Mermaid diagram from the current workspace. Pass expectedModifiedAt when available to avoid deleting a newly changed file.',
+  description: 'Delete one diagram from the current workspace. Pass expectedModifiedAt when available to avoid deleting a newly changed file.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
@@ -252,6 +279,7 @@ server.registerTool('diagram.delete', {
 }, async ({ workspacePath, path: diagramPath, expectedModifiedAt }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const deletedPath = await store.delete(diagramPath, expectedModifiedAt)
+  clearThreadDiagram(extra._meta, deletedPath)
   return {
     content: [{ type: 'text', text: `Deleted ${deletedPath}` }],
     structuredContent: { kind: 'diagram-deleted', workspacePath: store.workspacePath, path: deletedPath },
@@ -281,18 +309,26 @@ server.registerTool('diagram.exportAsset', {
 
 await server.connect(new StdioServerTransport())
 
-function registerWorkspaceResource(name: string, uri: string): void {
-  server.registerResource(name, uri, { title: 'Diagram 工作台', mimeType: 'text/html;profile=mcp-app' }, async () => workspaceResource(uri))
+function registerWorkspaceResource(name: string, uri: string, surface: DiagramSurface = 'workspace'): void {
+  server.registerResource(
+    name,
+    uri,
+    { title: surface === 'thread' ? 'Diagram' : 'Diagram 图表库', mimeType: 'text/html;profile=mcp-app' },
+    async () => workspaceResource(uri, surface),
+  )
 }
 
-function workspaceResource(uri: string) {
+function workspaceResource(uri: string, surface: DiagramSurface) {
   return {
     contents: [{
       uri,
       mimeType: 'text/html;profile=mcp-app',
-      text: html,
+      text: html(surface),
       _meta: {
-        'openai/ui': { preferredDisplayMode: 'fullscreen', availableDisplayModes: ['inline', 'fullscreen'] },
+        'openai/ui': {
+          preferredDisplayMode: surface === 'thread' ? 'inline' : 'fullscreen',
+          availableDisplayModes: ['inline', 'fullscreen'],
+        },
         ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } },
       },
     }],
@@ -409,13 +445,30 @@ function fuzzyPathMatch(pathValue: string, query: string): boolean {
   return terms.every((term) => pathValue.includes(term))
 }
 
-function workspaceContent(snapshot: WorkspaceSnapshot): Record<string, unknown> {
+function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface, threadId?: string): Record<string, unknown> {
+  const activeDiagramPath = threadId ? threadSelection.get(threadId)?.path : snapshot.activeDiagramPath
   return {
     kind: snapshot.kind,
+    surface: surface ?? snapshot.surface,
     workspacePath: snapshot.workspacePath,
     recentWorkspaces: snapshot.recentWorkspaces,
     diagrams: snapshot.diagrams,
+    activeDiagramPath,
   }
+}
+
+function markThreadDiagram(meta: unknown, diagramPath: string): void {
+  const threadId = toolThreadId(meta)
+  if (!threadId) return
+  threadSelection.set(threadId, { path: diagramPath, updatedAt: new Date().toISOString() })
+}
+
+function clearThreadDiagram(meta: unknown, deletedPath: string): void {
+  const threadId = toolThreadId(meta)
+  if (!threadId) return
+  const current = threadSelection.get(threadId)
+  if (current?.path !== deletedPath) return
+  threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
 }
 
 interface CodexDesktopState {

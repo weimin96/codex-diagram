@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.5.5",
+  "version": "0.7.1",
   "description": "Create, inspect and edit Mermaid diagrams beside Codex conversations.",
   "author": {
     "name": "Codex Diagram"
@@ -8,11 +8,11 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Diagram",
-    "shortDescription": "Flowcharts, sequence diagrams and mind maps",
-    "longDescription": "Open a visual Mermaid diagram workspace beside Codex. Generate diagrams from workspace code, ask Codex to revise the selected diagram, and edit flowcharts, sequence diagrams, class diagrams, ER diagrams, state diagrams and mind maps against the same workspace files.",
+    "shortDescription": "Live diagrams beside your Codex conversation",
+    "longDescription": "Keep a live Diagram panel beside the current Codex conversation. Diagram follows the graph Codex reads, creates or updates in that thread, while the global Diagram library remains available for browsing, CRUD, export and full-screen editing. Supports Mermaid structured diagrams and version-controlled freeform Canvas documents.",
     "developerName": "Codex Diagram",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid", "Code Analysis"],
+    "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid", "Canvas", "Code Analysis"],
     "composerIcon": "./assets/icon.svg",
     "composerIconDark": "./assets/icon-dark.svg",
     "logo": "./assets/icon.svg",

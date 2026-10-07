@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { parseCanvasScene } from '../src/canvas.js'
 import { DiagramStore } from '../src/store.js'
 
 test('creates, lists and updates a Mermaid diagram inside the workspace', async () => {
@@ -117,6 +118,33 @@ test('exports SVG and PNG assets without overwriting previous exports', async ()
     assert.equal(await readFile(path.join(root, firstSvg), 'utf8'), '<svg />')
     assert.deepEqual([...await readFile(path.join(root, png))], [137, 80, 78, 71])
     await assert.rejects(() => store.exportAsset('../escape.png', new Uint8Array([1])), /文件名无效/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('creates and manages freeform Canvas diagrams beside Mermaid files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-canvas-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const canvas = await store.create('canvas', 'Service Landscape')
+    assert.equal(canvas.path, 'docs/diagrams/service-landscape.diagram.json')
+    assert.equal(canvas.type, 'canvas')
+    assert.equal(parseCanvasScene(canvas.source).elements.length, 3)
+
+    const mermaid = await store.create('sequence', 'Request Flow')
+    assert.deepEqual(new Set((await store.list()).map((item) => item.type)), new Set(['canvas', 'sequence']))
+
+    const renamed = await store.rename(canvas.path, 'Platform Canvas', canvas.modifiedAt)
+    assert.equal(renamed.path, 'docs/diagrams/platform-canvas.diagram.json')
+    const duplicated = await store.duplicate(renamed.path)
+    assert.equal(duplicated.path, 'docs/diagrams/platform-canvas-copy.diagram.json')
+    assert.equal(duplicated.type, 'canvas')
+
+    const sourceFiles = await store.listSourceFiles()
+    assert.ok(!sourceFiles.includes(renamed.path))
+    assert.ok(!sourceFiles.includes(duplicated.path))
+    assert.ok(!sourceFiles.includes(mermaid.path))
   } finally {
     await rm(root, { recursive: true, force: true })
   }

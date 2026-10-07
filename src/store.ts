@@ -1,8 +1,9 @@
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { createCanvasSource } from './canvas.js'
 import { createTemplate, detectDiagramType } from './templates.js'
-import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType } from './types.js'
+import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType, MermaidDiagramType } from './types.js'
 
 const allowedExtensions = new Set(['.mmd', '.mermaid'])
 const allowedExportExtensions = new Set(['.svg', '.png'])
@@ -57,8 +58,8 @@ export class DiagramStore {
     const directory = path.join(this.workspacePath, 'docs', 'diagrams')
     await mkdir(directory, { recursive: true })
     const base = slugify(title) || type
-    const target = await nextAvailablePath(directory, base)
-    const source = createTemplate(type, title)
+    const target = await nextAvailablePath(directory, base, type === 'canvas' ? '.diagram.json' : '.mmd')
+    const source = type === 'canvas' ? createCanvasSource(title) : createTemplate(type as MermaidDiagramType, title)
     await writeFile(target, source, { encoding: 'utf8', flag: 'wx' })
     const info = await stat(target)
     return this.document(relativePathFromRoot(this.workspacePath, target), source, info.mtime)
@@ -84,7 +85,7 @@ export class DiagramStore {
     const source = await readFile(target, 'utf8')
     const base = slugify(title)
     if (!base) throw new Error('请输入有效的图表名称。')
-    const destination = path.join(path.dirname(target), `${base}${path.extname(target).toLowerCase()}`)
+    const destination = path.join(path.dirname(target), `${base}${diagramExtension(target)}`)
     assertInside(this.workspacePath, destination)
     if (destination !== target) {
       const existing = await lstat(destination).catch((error) => {
@@ -101,9 +102,10 @@ export class DiagramStore {
   async duplicate(relativePath: string, title?: string): Promise<DiagramDocument> {
     const target = await this.resolveExistingDiagram(relativePath)
     const source = await readFile(target, 'utf8')
-    const originalName = path.basename(target, path.extname(target))
+    const extension = diagramExtension(target)
+    const originalName = path.basename(target).slice(0, -extension.length)
     const base = slugify(title?.trim() || `${originalName}-copy`) || `${originalName}-copy`
-    const destination = await nextAvailablePath(path.dirname(target), base, path.extname(target).toLowerCase())
+    const destination = await nextAvailablePath(path.dirname(target), base, extension)
     await writeFile(destination, normalizeSource(source), { encoding: 'utf8', flag: 'wx' })
     const info = await stat(destination)
     return this.document(relativePathFromRoot(this.workspacePath, destination), normalizeSource(source), info.mtime)
@@ -140,7 +142,7 @@ export class DiagramStore {
         if (!ignoredDirectories.has(entry.name)) await this.scan(target, depth + 1, results)
         continue
       }
-      if (!entry.isFile() || !allowedExtensions.has(path.extname(entry.name).toLowerCase())) continue
+      if (!entry.isFile() || !isDiagramFile(entry.name)) continue
       const info = await lstat(target)
       if (info.isSymbolicLink()) continue
       const source = await readFile(target, 'utf8')
@@ -159,6 +161,7 @@ export class DiagramStore {
         continue
       }
       if (!entry.isFile()) continue
+      if (isDiagramFile(entry.name)) continue
       const extension = path.extname(entry.name).toLowerCase()
       if (!sourceExtensions.has(extension) && !sourceNames.has(entry.name)) continue
       const info = await lstat(target).catch(() => null)
@@ -171,7 +174,7 @@ export class DiagramStore {
     if (!relativePath.trim()) throw new Error('图表路径不能为空。')
     const lexical = path.resolve(this.workspacePath, relativePath)
     assertInside(this.workspacePath, lexical)
-    if (!allowedExtensions.has(path.extname(lexical).toLowerCase())) throw new Error('只支持 .mmd 和 .mermaid 文件。')
+    if (!isDiagramFile(lexical)) throw new Error('只支持 .mmd、.mermaid 和 .diagram.json 图表文件。')
     const target = await realpath(lexical).catch(() => null)
     if (!target) throw new Error(`图表不存在：${relativePath}`)
     assertInside(this.workspacePath, target)
@@ -181,10 +184,11 @@ export class DiagramStore {
   }
 
   private summary(relativePath: string, source: string, modifiedAt: Date): DiagramSummary {
+    const extension = diagramExtension(relativePath)
     return {
       path: relativePath,
-      name: path.basename(relativePath, path.extname(relativePath)),
-      type: detectDiagramType(source),
+      name: path.basename(relativePath).slice(0, -extension.length),
+      type: extension === '.diagram.json' ? 'canvas' : detectDiagramType(source),
       modifiedAt: modifiedAt.toISOString(),
     }
   }
@@ -234,6 +238,15 @@ async function nextAvailablePath(directory: string, base: string, extension = '.
     }
   }
   throw new Error('无法为新图表生成可用文件名。')
+}
+
+function isDiagramFile(value: string): boolean {
+  const lower = value.toLowerCase()
+  return lower.endsWith('.diagram.json') || allowedExtensions.has(path.extname(lower))
+}
+
+function diagramExtension(value: string): string {
+  return value.toLowerCase().endsWith('.diagram.json') ? '.diagram.json' : path.extname(value).toLowerCase()
 }
 
 async function assertExpectedRevision(target: string, expectedModifiedAt?: string): Promise<void> {

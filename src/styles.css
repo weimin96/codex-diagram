@@ -96,6 +96,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .diagram-shell { height: 100%; display: grid; grid-template-columns: 242px minmax(0, 1fr); background: var(--app-bg); position: relative; }
 .diagram-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+.diagram-shell.thread-companion { grid-template-columns: minmax(0, 1fr); }
+.thread-companion .diagram-sidebar, .thread-companion .sidebar-expand-button { display: none; }
 .diagram-sidebar { min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface-panel); }
 .sidebar-collapsed .diagram-sidebar { overflow: hidden; border-right: 0; visibility: hidden; }
 .sidebar-head { padding: 14px 12px 10px; border-bottom: 1px solid var(--border); }
@@ -132,6 +134,31 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .form-actions button { height: 30px; font-size: 12px; }
 
 .diagram-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.thread-companion-head { min-height: 82px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 9px 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
+.thread-diagram-picker { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.thread-follow-toggle { height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 10px; }
+.thread-follow-toggle:hover { background: var(--surface-hover); color: var(--text-primary); }
+.thread-follow-toggle.is-active { color: var(--text-secondary); background: color-mix(in srgb, #22a06b 7%, transparent); }
+.thread-link-status { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: #22a06b; box-shadow: 0 0 0 3px color-mix(in srgb, #22a06b 12%, transparent); }
+.thread-follow-toggle:not(.is-active) .thread-link-status { background: var(--text-tertiary); box-shadow: none; }
+.thread-diagram-picker select { min-width: 0; width: 100%; height: 30px; border: 1px solid var(--border); border-radius: 7px; padding: 0 27px 0 8px; background: var(--app-bg); color: var(--text-primary); font-size: 12px; font-weight: 560; }
+.thread-new-button { height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12px; }
+.thread-new-button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.thread-chat-actions { grid-column: 1 / -1; min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+.thread-chat-actions::-webkit-scrollbar { display: none; }
+.thread-chat-actions button { height: 28px; flex: 0 0 auto; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.thread-chat-actions button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.thread-companion .editor-toolbar { min-height: 40px; justify-content: flex-end; padding: 5px 8px; gap: 6px; }
+.thread-companion .document-identity { display: none; }
+.thread-companion .toolbar-actions { width: 100%; justify-content: space-between; gap: 6px; }
+.thread-companion .save-state { margin-left: auto; font-size: 11px; }
+.thread-companion .mode-switch { flex: 0 0 auto; }
+.thread-companion .mode-switch button { height: 24px; padding: 0 7px; font-size: 11px; }
+.thread-companion .editor-workspace { min-height: 0; }
+.thread-companion .pane-head { height: 30px; padding-inline: 8px; font-size: 11px; }
+.thread-companion .pane-head-actions { gap: 5px; }
+.thread-companion .pane-head-actions > span { display: none; }
+.thread-companion .pane-head-actions button { height: 22px; padding-inline: 6px; font-size: 10px; }
 .editor-toolbar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
 .document-identity { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .document-identity strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -212,6 +239,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .syntax-error { position: absolute; z-index: 5; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface-panel)); color: var(--danger); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.05); }
 .syntax-error strong { flex-shrink: 0; }
 .syntax-error span { color: var(--text-secondary); }
+.freeform-editor { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; background: var(--app-bg); }
+.freeform-toolbar { min-height: 38px; display: flex; align-items: center; gap: 5px; padding: 5px 7px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
+.freeform-toolbar button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; }
+.freeform-toolbar button:hover:not(:disabled), .freeform-toolbar button.is-active { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-toolbar button.is-active { border-color: var(--border-strong); }
+.freeform-toolbar-separator { width: 1px; height: 20px; margin: 0 2px; background: var(--border); }
+.freeform-text-input { min-width: 120px; flex: 1; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font-size: 11px; }
+.freeform-hint { min-width: 0; flex: 1; overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-delete { margin-left: auto; }
+.freeform-surface { min-height: 0; flex: 1; overflow: hidden; padding: 18px; background: var(--app-bg); }
+.freeform-svg { width: 100%; height: 100%; display: block; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.05); touch-action: none; }
+.freeform-svg.tool-node, .freeform-svg.tool-note, .freeform-svg.tool-connect { cursor: crosshair; }
+.freeform-background { fill: var(--surface-panel); }
+.freeform-grid-line { stroke: color-mix(in srgb, var(--text-tertiary) 16%, transparent); stroke-width: 1; }
+.freeform-arrow line { stroke: var(--border-strong); stroke-width: 2.2; cursor: pointer; }
+.freeform-arrow.is-selected line { stroke: var(--accent); stroke-width: 3; }
+.freeform-arrow-head { fill: var(--border-strong); }
+.freeform-box { cursor: grab; }
+.freeform-box:active { cursor: grabbing; }
+.freeform-box rect { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.6; }
+.freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
+.freeform-note rect { fill: color-mix(in srgb, #f7c948 26%, var(--surface-panel)); }
+.freeform-box.is-selected rect { stroke: var(--accent); stroke-width: 3; }
+.freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
+.canvas-invalid { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 24px; color: var(--text-secondary); text-align: center; }
+.canvas-invalid strong { color: var(--danger); font-size: 13px; }
+.canvas-invalid span, .canvas-invalid p { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.6; }
 
 .error-banner { min-height: 36px; display: flex; align-items: center; gap: 10px; justify-content: space-between; padding: 6px 10px 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); background: color-mix(in srgb, var(--danger) 7%, var(--surface-panel)); color: var(--danger); font-size: 12px; }
 .error-banner button { height: 24px; padding-inline: 7px; background: transparent; font-size: 12px; }
@@ -271,7 +325,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .ai-section-title-row { min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .ai-scope-shortcut { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; }
 .ai-scope-shortcut:hover { background: var(--surface-hover); color: var(--text-primary); }
-.generation-templates { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-bottom: 11px; }
+.generation-templates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 11px; }
 .generation-templates button { min-width: 0; height: 30px; padding: 0 5px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .generation-templates button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .ai-form-grid { display: grid; gap: 10px; }
@@ -327,6 +381,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .workspace-open-row { flex-direction: column; }
   .workspace-open-row .primary-button { width: 100%; }
   .ai-panel { position: fixed; width: 100%; }
+  .diagram-shell.thread-companion { min-height: 100%; height: 100%; display: grid; }
+  .thread-companion .diagram-main { min-height: 0; }
+  .thread-companion .editor-toolbar { position: static; flex-direction: row; }
+  .thread-companion .toolbar-actions { flex-wrap: nowrap; }
+  .thread-companion .ai-panel { position: absolute; }
 }
 
 @media (prefers-reduced-motion: reduce) {

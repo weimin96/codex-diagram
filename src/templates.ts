@@ -1,6 +1,6 @@
-import type { DiagramType } from './types.js'
+import type { MermaidDiagramType } from './types.js'
 
-const templates: Record<DiagramType, (title: string) => string> = {
+const templates: Record<MermaidDiagramType, (title: string) => string> = {
   flowchart: (title) => `flowchart LR\n  A[${title}] --> B[下一步]\n`,
   sequence: (title) => `sequenceDiagram\n  participant A as 调用方\n  participant B as ${title}\n  A->>B: 请求\n  B-->>A: 响应\n`,
   mindmap: (title) => `mindmap\n  root((${title}))\n    主题 A\n      子主题\n    主题 B\n`,
@@ -9,11 +9,11 @@ const templates: Record<DiagramType, (title: string) => string> = {
   state: (title) => `stateDiagram-v2\n  [*] --> ${safeStateName(title)}\n  ${safeStateName(title)} --> [*]\n`,
 }
 
-export function createTemplate(type: DiagramType, title: string): string {
+export function createTemplate(type: MermaidDiagramType, title: string): string {
   return templates[type](title.trim() || 'Diagram')
 }
 
-export function detectDiagramType(source: string): DiagramType | 'unknown' {
+export function detectDiagramType(source: string): MermaidDiagramType | 'unknown' {
   const first = source
     .split(/\r?\n/)
     .map((line) => line.trim())

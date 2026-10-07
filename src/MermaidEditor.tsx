@@ -11,6 +11,8 @@ interface MermaidEditorProps {
   onChange: (value: string) => void
   onSave: () => void
   searchRequest: number
+  syntax?: 'mermaid' | 'plain'
+  ariaLabel?: string
 }
 
 const mermaidLanguage = StreamLanguage.define({
@@ -80,7 +82,7 @@ const editorTheme = EditorView.theme({
   },
 })
 
-export function MermaidEditor({ value, onChange, onSave, searchRequest }: MermaidEditorProps) {
+export function MermaidEditor({ value, onChange, onSave, searchRequest, syntax = 'mermaid', ariaLabel = 'Mermaid 源码编辑器' }: MermaidEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const saveRef = useRef(onSave)
@@ -94,8 +96,7 @@ export function MermaidEditor({ value, onChange, onSave, searchRequest }: Mermai
       doc: value,
       extensions: [
         basicSetup,
-        mermaidLanguage,
-        syntaxHighlighting(highlightStyle),
+        ...(syntax === 'mermaid' ? [mermaidLanguage, syntaxHighlighting(highlightStyle)] : []),
         editorTheme,
         Prec.highest(keymap.of([
           {
@@ -141,5 +142,5 @@ export function MermaidEditor({ value, onChange, onSave, searchRequest }: Mermai
     openSearchPanel(viewRef.current)
   }, [searchRequest])
 
-  return <div ref={hostRef} className="mermaid-editor" aria-label="Mermaid 源码编辑器" />
+  return <div ref={hostRef} className="mermaid-editor" aria-label={ariaLabel} />
 }

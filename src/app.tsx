@@ -10,9 +10,11 @@ import {
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
+import { CanvasEditor } from './CanvasEditor.js'
+import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
-import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
@@ -56,10 +58,18 @@ interface DiagramExportResult {
   path: string
 }
 
+interface DiagramThreadStateResult {
+  kind: 'diagram-thread-state'
+  activeDiagramPath?: string
+  updatedAt?: string
+}
+
 type ViewMode = 'preview' | 'source' | 'split'
 
 const mcpApp = new McpApp({ name: 'codex-diagram-sidebar', version: __CODEX_DIAGRAM_VERSION__ })
 const openai = new OpenAIExtensions(mcpApp)
+const rootElement = document.getElementById('root')!
+const hostSurface: DiagramSurface = rootElement.dataset.diagramSurface === 'thread' ? 'thread' : 'workspace'
 let initialWorkspace: WorkspaceSnapshot | null = null
 
 mcpApp.ontoolresult = (result) => {
@@ -84,12 +94,14 @@ async function main() {
   applyHostContext(mcpApp.getHostContext())
 
   if (!initialWorkspace) {
-    const result = await mcpApp.callServerTool({ name: 'diagram.workspace', arguments: {} }) as ServerToolResult
+    const result = await mcpApp.callServerTool({ name: hostSurface === 'thread' ? 'diagram.thread' : 'diagram.workspace', arguments: {} }) as ServerToolResult
     const content = result.structuredContent as WorkspaceSnapshot | undefined
     if (content?.kind === 'workspace') initialWorkspace = content
   }
 
-  createRoot(document.getElementById('root')!).render(
+  if (initialWorkspace && !initialWorkspace.surface) initialWorkspace = { ...initialWorkspace, surface: hostSurface }
+
+  createRoot(rootElement).render(
     <RuntimeErrorBoundary>
       <Root initial={initialWorkspace ?? { kind: 'workspace', recentWorkspaces: [], diagrams: [] }} />
     </RuntimeErrorBoundary>,
@@ -105,7 +117,7 @@ function Root({ initial }: { initial: WorkspaceSnapshot }) {
       <WorkspacePicker
         current={workspace}
         onOpen={(next) => {
-          setWorkspace(next)
+          setWorkspace({ ...next, surface: workspace.surface ?? hostSurface })
           setSwitching(false)
         }}
       />
@@ -172,12 +184,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   onSwitch: () => void
 }) {
   const workspacePath = snapshot.workspacePath!
+  const isThread = (snapshot.surface ?? hostSurface) === 'thread'
   const [selected, setSelected] = useState<DiagramDocument | null>(null)
   const [source, setSource] = useState('')
   const [loadingPath, setLoadingPath] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<ViewMode>('split')
+  const [mode, setMode] = useState<ViewMode>(() => isThread ? 'preview' : 'split')
   const [creating, setCreating] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [diagramQuery, setDiagramQuery] = useState('')
@@ -193,10 +206,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [renaming, setRenaming] = useState(false)
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [followConversation, setFollowConversation] = useState(true)
   const [discardTarget, setDiscardTarget] = useState<{ kind: 'diagram'; path: string } | { kind: 'workspace' } | null>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
+  const lastThreadStateAt = useRef<string | undefined>(undefined)
   const dirty = Boolean(selected && source !== selected.source)
   const visibleDiagrams = useMemo(() => {
     const query = diagramQuery.trim().toLocaleLowerCase()
@@ -216,11 +231,66 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setRenaming(false)
     setDeleteConfirmOpen(false)
     setDiscardTarget(null)
-    if (snapshot.diagrams[0]) void selectDiagram(snapshot.diagrams[0].path, true)
+    const initialDiagram = snapshot.activeDiagramPath
+      ? snapshot.diagrams.find((diagram) => diagram.path === snapshot.activeDiagramPath)
+      : undefined
+    if (initialDiagram ?? snapshot.diagrams[0]) void selectDiagram((initialDiagram ?? snapshot.diagrams[0])!.path, true)
     else clearModelContext(workspacePath)
     // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
+
+  useEffect(() => {
+    if (!isThread) return
+    let disposed = false
+    let inFlight = false
+    const handle = window.setInterval(() => {
+      if (disposed || inFlight || dirty) return
+      inFlight = true
+      void callTool<DiagramThreadStateResult>('diagram.threadState', {})
+        .then(async (state) => {
+          if (disposed) return
+          if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
+          if (!followConversation) return
+          lastThreadStateAt.current = state.updatedAt
+          const nextPath = state.activeDiagramPath
+          if (!nextPath) {
+            const result = await callTool<DiagramListResult>('diagram.list', { workspacePath })
+            if (disposed) return
+            const remaining = result.diagrams
+            onSnapshot({ ...snapshot, surface: 'thread', diagrams: remaining, activeDiagramPath: undefined })
+            if (selected && !remaining.some((diagram) => diagram.path === selected.path)) {
+              setSelected(null)
+              setSource('')
+              if (remaining[0]) await selectDiagram(remaining[0].path, true)
+              else clearModelContext(workspacePath)
+              if (!disposed) setNotice('当前图已从对话中删除，已切换到可用图表')
+            }
+            return
+          }
+          if (nextPath === selected?.path) return
+          let diagrams = snapshot.diagrams
+          if (!diagrams.some((diagram) => diagram.path === nextPath)) {
+            const result = await callTool<DiagramListResult>('diagram.list', { workspacePath })
+            if (disposed) return
+            diagrams = result.diagrams
+            onSnapshot({ ...snapshot, surface: 'thread', diagrams, activeDiagramPath: nextPath })
+          }
+          if (diagrams.some((diagram) => diagram.path === nextPath)) {
+            await selectDiagram(nextPath, true)
+            if (!disposed) setNotice('已跟随当前对话中的图表')
+          }
+        })
+        .catch((cause) => {
+          if (!disposed) setError(`对话联动失败：${errorMessage(cause)}`)
+        })
+        .finally(() => { inFlight = false })
+    }, 1_300)
+    return () => {
+      disposed = true
+      window.clearInterval(handle)
+    }
+  }, [dirty, followConversation, isThread, onSnapshot, selected, snapshot, workspacePath])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -553,7 +623,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setExporting(true)
     setError(null)
     try {
-      const svg = await renderMermaidSvg(source, `export-${Date.now()}`)
+      const svg = selected.type === 'canvas'
+        ? renderCanvasSvg(source)
+        : await renderMermaidSvg(source, `export-${Date.now()}`)
       const filename = `${safeFilename(selected.name)}.svg`
       const destination = await deliverExport(filename, 'svg', svg)
       setNotice(`已导出 ${destination}`)
@@ -569,7 +641,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setExporting(true)
     setError(null)
     try {
-      const svg = await renderMermaidSvg(source, `export-png-${Date.now()}`)
+      const svg = selected.type === 'canvas'
+        ? renderCanvasSvg(source)
+        : await renderMermaidSvg(source, `export-png-${Date.now()}`)
       const blob = await svgToPngBase64(svg, resolveCssColor('--app-bg', '#ffffff'))
       const filename = `${safeFilename(selected.name)}.png`
       const destination = await deliverExport(filename, 'png', blob)
@@ -641,8 +715,37 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setAiOpen(true)
   }
 
+  async function explainInConversation() {
+    if (!selected || aiSending) return
+    if (!openai.message) {
+      setError('当前 Codex Host 没有提供对话消息能力。')
+      return
+    }
+    setAiSending(true)
+    setError(null)
+    try {
+      await sendCodexMessage([
+        '解释 Diagram 侧边栏当前选中的图表，并在当前对话中回答，不要修改文件。',
+        `工作空间：${workspacePath}`,
+        `图表路径：${selected.path}`,
+        `图表类型：${selected.type}`,
+        '',
+        '先调用 diagram.get 读取最新版本；结合当前对话上下文说明主流程、关键边界、异常路径和最值得关注的设计点。',
+      ].join('\n'))
+      setNotice('已让 Codex 在当前对话中解释这张图')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setAiSending(false)
+    }
+  }
+
+  function updateFromConversation() {
+    void sendModification('结合当前对话中用户最新提出的需求和已确认的代码事实更新这张图。只调整受当前对话影响的部分，保留仍然正确的结构。')
+  }
+
   return (
-    <main className={`diagram-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+    <main className={`diagram-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${isThread ? ' thread-companion' : ''}`}>
       <aside className="diagram-sidebar">
         <div className="sidebar-head">
           <div className="sidebar-title-row">
@@ -689,7 +792,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               {loadingPath === diagram.path ? <span className="loading-line" /> : null}
             </button>
           ))}
-          {snapshot.diagrams.length === 0 ? <div className="sidebar-empty">当前项目还没有 Mermaid 图表。</div> : null}
+          {snapshot.diagrams.length === 0 ? <div className="sidebar-empty">当前项目还没有图表。</div> : null}
           {snapshot.diagrams.length > 0 && visibleDiagrams.length === 0 ? <div className="sidebar-empty">没有匹配的图表。</div> : null}
         </nav>
       </aside>
@@ -699,6 +802,42 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       ) : null}
 
       <section className="diagram-main">
+        {isThread ? (
+          <div className="thread-companion-head">
+            <div className="thread-diagram-picker">
+              <button
+                className={`thread-follow-toggle${followConversation ? ' is-active' : ''}`}
+                type="button"
+                aria-pressed={followConversation}
+                title={followConversation ? '正在跟随当前对话中的图表' : '已暂停跟随当前对话'}
+                onClick={() => setFollowConversation((value) => !value)}
+              >
+                <span className="thread-link-status" />
+                跟随
+              </button>
+              <select
+                aria-label="当前图表"
+                value={selected?.path ?? ''}
+                onChange={(event) => {
+                  if (event.target.value) void selectDiagram(event.target.value)
+                }}
+              >
+                {snapshot.diagrams.length === 0 ? <option value="">当前还没有图表</option> : null}
+                {snapshot.diagrams.map((diagram) => (
+                  <option key={diagram.path} value={diagram.path}>{diagram.name} · {diagramLabel(diagram.type)}</option>
+                ))}
+              </select>
+            </div>
+            <button className="thread-new-button" type="button" onClick={() => setAiOpen(true)}>新图</button>
+            {selected ? (
+              <div className="thread-chat-actions" aria-label="对话联动操作">
+                <button type="button" disabled={aiSending || dirty} onClick={updateFromConversation}>按对话更新</button>
+                <button type="button" disabled={aiSending || dirty} onClick={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>补异常</button>
+                <button type="button" disabled={aiSending} onClick={() => void explainInConversation()}>解释</button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {notice ? <div className="notice-banner">{notice}</div> : null}
         {externalChange ? (
           <div className="conflict-banner">
@@ -715,19 +854,21 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span>{selected.path}</span>
               </div>
               <div className="toolbar-actions">
-                <button type="button" onClick={() => setAiOpen(true)}>Codex</button>
-                <div className="export-actions" aria-label="导出图表">
-                  <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
-                  <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
-                </div>
+                {!isThread ? <button type="button" onClick={() => setAiOpen(true)}>Codex</button> : null}
+                {!isThread ? (
+                  <div className="export-actions" aria-label="导出图表">
+                    <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
+                    <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
+                  </div>
+                ) : null}
                 <div className="mode-switch" aria-label="视图模式">
                   <ModeButton value="preview" mode={mode} onChange={setMode}>预览</ModeButton>
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
-                  <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton>
+                  {!isThread ? <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton> : null}
                 </div>
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
-                <div className="document-actions">
+                {!isThread ? <div className="document-actions">
                   <button
                     className="document-actions-trigger"
                     type="button"
@@ -773,7 +914,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                       )}
                     </div>
                   ) : null}
-                </div>
+                </div> : null}
               </div>
             </header>
             <div
@@ -784,14 +925,21 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               {(mode === 'source' || mode === 'split') ? (
                 <section className="source-pane">
                   <div className="pane-head">
-                    <span>Mermaid</span>
+                    <span>{selected.type === 'canvas' ? 'Canvas JSON' : 'Mermaid'}</span>
                     <div className="pane-head-actions">
                       <span>{diagramLabel(selected.type)}</span>
                       <button type="button" onClick={() => setSourceSearchRequest((value) => value + 1)}>查找</button>
                       <button type="button" onClick={() => void openDiagramFile()}>打开文件</button>
                     </div>
                   </div>
-                  <MermaidEditor value={source} onChange={setSource} onSave={() => void saveDiagram()} searchRequest={sourceSearchRequest} />
+                  <MermaidEditor
+                    value={source}
+                    onChange={setSource}
+                    onSave={() => void saveDiagram()}
+                    searchRequest={sourceSearchRequest}
+                    syntax={selected.type === 'canvas' ? 'plain' : 'mermaid'}
+                    ariaLabel={selected.type === 'canvas' ? '自由画布 JSON 编辑器' : 'Mermaid 源码编辑器'}
+                  />
                 </section>
               ) : null}
               {mode === 'split' ? (
@@ -821,8 +969,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               ) : null}
               {(mode === 'preview' || mode === 'split') ? (
                 <section className="preview-pane">
-                  <div className="pane-head"><span>预览</span><span>实时渲染</span></div>
-                  <MermaidPreview source={source} />
+                  <div className="pane-head"><span>{selected.type === 'canvas' ? '画布' : '预览'}</span><span>{selected.type === 'canvas' ? '可视化编辑' : '实时渲染'}</span></div>
+                  {selected.type === 'canvas'
+                    ? <CanvasEditor source={source} onChange={setSource} />
+                    : <MermaidPreview source={source} />}
                 </section>
               ) : null}
             </div>
@@ -831,7 +981,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           <div className="main-empty">
             <div className="empty-graphic"><span /><span /><span /></div>
             <h2>选择或创建一个图表</h2>
-            <p>流程图、时序图、思维脑图、类图、ER 图和状态图统一使用 Mermaid 源码。</p>
+            <p>结构化图使用 Mermaid；自由布局的架构草图和说明使用 Canvas 文档。</p>
             <div className="empty-actions">
               <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
               <button type="button" onClick={() => setAiOpen(true)}>从代码生成</button>
@@ -1080,6 +1230,17 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
   return result.svg
 }
 
+function renderCanvasSvg(source: string): string {
+  const scene = parseCanvasScene(source)
+  return canvasSceneToSvg(scene, {
+    background: resolveCssColor('--app-bg', '#ffffff'),
+    panel: resolveCssColor('--surface-raised', '#f5f5f5'),
+    text: resolveCssColor('--text-primary', '#171717'),
+    border: resolveCssColor('--border-strong', '#8a8a8a'),
+    note: '#fff4b8',
+  })
+}
+
 async function svgToPngBase64(svg: string, background: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG，无法导出 PNG。')
@@ -1182,7 +1343,7 @@ async function sendCodexMessage(text: string): Promise<void> {
 
 function updateModelContext(workspacePath: string, diagram: DiagramDocument) {
   void openai.modelContext?.update({
-    content: [{ type: 'text', text: `Selected Mermaid diagram ${diagram.path} (${diagram.type}).` }],
+    content: [{ type: 'text', text: `Selected diagram ${diagram.path} (${diagram.type}).` }],
     structuredContent: {
       workspacePath,
       selectedDiagram: { path: diagram.path, type: diagram.type, source: diagram.source.slice(0, 24_000) },
@@ -1192,13 +1353,13 @@ function updateModelContext(workspacePath: string, diagram: DiagramDocument) {
 
 function clearModelContext(workspacePath: string) {
   void openai.modelContext?.update({
-    content: [{ type: 'text', text: 'No Mermaid diagram is currently selected.' }],
+    content: [{ type: 'text', text: 'No diagram is currently selected.' }],
     structuredContent: { workspacePath, selectedDiagram: null },
   })
 }
 
 function diagramLabel(type: DiagramSummary['type']): string {
-  return diagramTypes.find((item) => item.type === type)?.label ?? 'Mermaid'
+  return diagramTypes.find((item) => item.type === type)?.label ?? '图表'
 }
 
 function shortPath(value: string): string {
