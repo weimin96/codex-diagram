@@ -56,8 +56,14 @@ export class DiagramStore {
     return this.document(relativePathFromRoot(this.workspacePath, target), source, info.mtime)
   }
 
-  async update(relativePath: string, source: string): Promise<DiagramDocument> {
+  async update(relativePath: string, source: string, expectedModifiedAt?: string): Promise<DiagramDocument> {
     const target = await this.resolveExistingDiagram(relativePath)
+    if (expectedModifiedAt) {
+      const current = await stat(target)
+      if (current.mtime.toISOString() !== expectedModifiedAt) {
+        throw new Error('图表已被其他编辑器修改，请重新载入最新版本后再保存。')
+      }
+    }
     await writeFile(target, normalizeSource(source), 'utf8')
     const info = await stat(target)
     return this.document(relativePathFromRoot(this.workspacePath, target), normalizeSource(source), info.mtime)

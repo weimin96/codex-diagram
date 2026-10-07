@@ -41,3 +41,20 @@ test('rejects traversal and ignores diagrams in excluded directories', async () 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('rejects an update when the diagram changed after it was read', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const created = await store.create('flowchart', 'Concurrent Edit')
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    await writeFile(path.join(root, created.path), 'flowchart LR\n  External-->Change\n', 'utf8')
+
+    await assert.rejects(
+      () => store.update(created.path, 'flowchart LR\n  Local-->Change\n', created.modifiedAt),
+      /其他编辑器修改/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

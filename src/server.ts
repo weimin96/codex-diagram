@@ -155,16 +155,17 @@ server.registerTool('diagram.create', {
 
 server.registerTool('diagram.update', {
   title: 'Update diagram',
-  description: 'Replace the Mermaid source of an existing diagram in the current workspace.',
+  description: 'Replace the Mermaid source of an existing diagram. Pass expectedModifiedAt from diagram.get when available to avoid overwriting concurrent edits.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
     source: z.string().min(1),
+    expectedModifiedAt: z.string().optional(),
   }),
   annotations: write,
-}, async ({ workspacePath, path: diagramPath, source }, extra) => {
+}, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
-  const diagram = await store.update(diagramPath, source)
+  const diagram = await store.update(diagramPath, source, expectedModifiedAt)
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },

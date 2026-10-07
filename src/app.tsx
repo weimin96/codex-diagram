@@ -1,4 +1,4 @@
-import React, { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import mermaid from 'mermaid'
 import {
@@ -10,6 +10,7 @@ import {
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
+import { normalizeMermaidColor } from './colors.js'
 import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
@@ -159,12 +160,27 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ViewMode>('split')
   const [creating, setCreating] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [diagramQuery, setDiagramQuery] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
   const [aiSending, setAiSending] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [externalChange, setExternalChange] = useState(false)
+  const [splitPercent, setSplitPercent] = useState(44)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
+  const editorWorkspace = useRef<HTMLDivElement>(null)
+  const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
   const dirty = Boolean(selected && source !== selected.source)
+  const visibleDiagrams = useMemo(() => {
+    const query = diagramQuery.trim().toLocaleLowerCase()
+    if (!query) return snapshot.diagrams
+    return snapshot.diagrams.filter((diagram) => (
+      diagram.name.toLocaleLowerCase().includes(query)
+      || diagram.path.toLocaleLowerCase().includes(query)
+      || diagramLabel(diagram.type).toLocaleLowerCase().includes(query)
+    ))
+  }, [diagramQuery, snapshot.diagrams])
 
   useEffect(() => {
     if (!selected && snapshot.diagrams[0]) void selectDiagram(snapshot.diagrams[0].path)
@@ -195,16 +211,21 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     let inFlight = false
     let reportedError = false
     const handle = window.setInterval(() => {
-      if (disposed || inFlight || dirty || saving) return
+      if (disposed || inFlight || saving) return
       inFlight = true
       void callTool<DiagramRevisionResult>('diagram.revision', { workspacePath, path: selected.path })
         .then(async (result) => {
           reportedError = false
-          if (disposed || dirty || result.revision.modifiedAt === selected.modifiedAt) return
+          if (disposed || result.revision.modifiedAt === selected.modifiedAt) return
+          if (dirty) {
+            setExternalChange(true)
+            return
+          }
           const latest = await callTool<DiagramResult>('diagram.get', { workspacePath, path: selected.path })
           if (disposed || dirty) return
           setSelected(latest.diagram)
           setSource(latest.diagram.source)
+          setExternalChange(false)
           onSnapshot({
             ...snapshot,
             diagrams: snapshot.diagrams.map((item) => item.path === latest.diagram.path ? latest.diagram : item),
@@ -263,6 +284,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       const result = await callTool<DiagramResult>('diagram.get', { workspacePath, path: diagramPath })
       setSelected(result.diagram)
       setSource(result.diagram.source)
+      setExternalChange(false)
       updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -273,12 +295,22 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function saveDiagram() {
     if (!selected || !dirty || saving) return
+    if (externalChange) {
+      setError('文件已在外部修改，请先重新载入最新版本。')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.update', { workspacePath, path: selected.path, source })
+      const result = await callTool<DiagramResult>('diagram.update', {
+        workspacePath,
+        path: selected.path,
+        source,
+        expectedModifiedAt: selected.modifiedAt,
+      })
       setSelected(result.diagram)
       setSource(result.diagram.source)
+      setExternalChange(false)
       onSnapshot({
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
@@ -288,6 +320,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function reloadSelected() {
+    if (!selected) return
+    setError(null)
+    try {
+      const result = await callTool<DiagramResult>('diagram.get', { workspacePath, path: selected.path })
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      updateModelContext(workspacePath, result.diagram)
+      setNotice('已重新载入磁盘版本')
+    } catch (cause) {
+      setError(errorMessage(cause))
     }
   }
 
@@ -388,7 +439,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   return (
-    <main className="diagram-shell">
+    <main className={`diagram-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="diagram-sidebar">
         <div className="sidebar-head">
           <div className="sidebar-title-row">
@@ -396,19 +447,31 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               <div className="eyebrow">DIAGRAMS</div>
               <div className="sidebar-title">图表</div>
             </div>
-            <button className="icon-text-button" type="button" onClick={() => setCreating((value) => !value)}>新建</button>
+            <div className="sidebar-head-actions">
+              <button className="icon-button" type="button" title="收起图表栏" aria-label="收起图表栏" onClick={() => setSidebarCollapsed(true)}>‹</button>
+              <button className="icon-text-button" type="button" onClick={() => setCreating((value) => !value)}>新建</button>
+            </div>
           </div>
           <button className="workspace-path" type="button" onClick={onSwitch} title={workspacePath}>{workspacePath}</button>
         </div>
 
         {creating ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={createDiagram} /> : null}
 
+        <div className="diagram-search-wrap">
+          <input
+            className="diagram-search"
+            value={diagramQuery}
+            onChange={(event) => setDiagramQuery(event.target.value)}
+            placeholder="搜索图表"
+            aria-label="搜索图表"
+          />
+        </div>
         <div className="sidebar-list-head">
-          <span>{snapshot.diagrams.length} 个图表</span>
+          <span>{diagramQuery.trim() ? `${visibleDiagrams.length} / ${snapshot.diagrams.length}` : `${snapshot.diagrams.length} 个图表`}</span>
           <button type="button" onClick={() => void refreshList()}>刷新</button>
         </div>
         <nav className="diagram-list" aria-label="图表列表">
-          {snapshot.diagrams.map((diagram) => (
+          {visibleDiagrams.map((diagram) => (
             <button
               key={diagram.path}
               className={`diagram-list-item${selected?.path === diagram.path ? ' is-active' : ''}`}
@@ -421,11 +484,22 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             </button>
           ))}
           {snapshot.diagrams.length === 0 ? <div className="sidebar-empty">当前项目还没有 Mermaid 图表。</div> : null}
+          {snapshot.diagrams.length > 0 && visibleDiagrams.length === 0 ? <div className="sidebar-empty">没有匹配的图表。</div> : null}
         </nav>
       </aside>
 
+      {sidebarCollapsed ? (
+        <button className="sidebar-expand-button" type="button" title="展开图表栏" aria-label="展开图表栏" onClick={() => setSidebarCollapsed(false)}>›</button>
+      ) : null}
+
       <section className="diagram-main">
         {notice ? <div className="notice-banner">{notice}</div> : null}
+        {externalChange ? (
+          <div className="conflict-banner">
+            <span>文件已在外部修改</span>
+            <button type="button" onClick={() => void reloadSelected()}>重新载入</button>
+          </div>
+        ) : null}
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
         {selected ? (
           <>
@@ -443,10 +517,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton>
                 </div>
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
-                <button className="primary-button compact" type="button" disabled={!dirty || saving} onClick={() => void saveDiagram()}>保存</button>
+                {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
               </div>
             </header>
-            <div className={`editor-workspace mode-${mode}`}>
+            <div
+              ref={editorWorkspace}
+              className={`editor-workspace mode-${mode}`}
+              style={{ '--diagram-split': `${splitPercent}%` } as CSSProperties}
+            >
               {(mode === 'source' || mode === 'split') ? (
                 <section className="source-pane">
                   <div className="pane-head"><span>Mermaid</span><span>{diagramLabel(selected.type)}</span></div>
@@ -457,6 +535,31 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                     aria-label="Mermaid 源码"
                   />
                 </section>
+              ) : null}
+              {mode === 'split' ? (
+                <button
+                  className="split-resizer"
+                  type="button"
+                  aria-label="调整源码和预览宽度"
+                  title="拖动调整源码和预览宽度"
+                  onDoubleClick={() => setSplitPercent(44)}
+                  onPointerDown={(event) => {
+                    const bounds = editorWorkspace.current?.getBoundingClientRect()
+                    if (!bounds) return
+                    splitDrag.current = { pointerId: event.pointerId, left: bounds.left, width: bounds.width }
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                  }}
+                  onPointerMove={(event) => {
+                    const drag = splitDrag.current
+                    if (!drag || drag.pointerId !== event.pointerId) return
+                    const next = ((event.clientX - drag.left) / drag.width) * 100
+                    setSplitPercent(Math.min(68, Math.max(28, next)))
+                  }}
+                  onPointerUp={(event) => {
+                    if (splitDrag.current?.pointerId === event.pointerId) splitDrag.current = null
+                  }}
+                  onPointerCancel={() => { splitDrag.current = null }}
+                />
               ) : null}
               {(mode === 'preview' || mode === 'split') ? (
                 <section className="preview-pane">
@@ -524,9 +627,45 @@ function ModeButton({ value, mode, onChange, children }: { value: ViewMode; mode
 
 function MermaidPreview({ source }: { source: string }) {
   const container = useRef<HTMLDivElement>(null)
+  const viewport = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [themeRevision, setThemeRevision] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [svgSize, setSvgSize] = useState({ width: 1, height: 1 })
+  const [dragging, setDragging] = useState(false)
+  const dragState = useRef<{ pointerId: number; x: number; y: number; originX: number; originY: number } | null>(null)
   const renderId = useMemo(() => `diagram-${Math.random().toString(36).slice(2)}`, [])
+
+  function centerAt(nextZoom: number) {
+    const surface = viewport.current
+    if (!surface) return
+    const clamped = clampZoom(nextZoom)
+    setZoom(clamped)
+    setOffset({
+      x: (surface.clientWidth - svgSize.width * clamped) / 2,
+      y: (surface.clientHeight - svgSize.height * clamped) / 2,
+    })
+  }
+
+  function fit() {
+    const surface = viewport.current
+    if (!surface || svgSize.width <= 1 || svgSize.height <= 1) return
+    const horizontal = Math.max(80, surface.clientWidth - 96) / svgSize.width
+    const vertical = Math.max(80, surface.clientHeight - 96) / svgSize.height
+    centerAt(Math.min(horizontal, vertical, 1.35))
+  }
+
+  function zoomBy(factor: number) {
+    const surface = viewport.current
+    if (!surface) return
+    const next = clampZoom(zoom * factor)
+    const cx = surface.clientWidth / 2
+    const cy = surface.clientHeight / 2
+    const ratio = next / zoom
+    setOffset({ x: cx - (cx - offset.x) * ratio, y: cy - (cy - offset.y) * ratio })
+    setZoom(next)
+  }
 
   useEffect(() => {
     const onTheme = () => setThemeRevision((value) => value + 1)
@@ -551,8 +690,32 @@ function MermaidPreview({ source }: { source: string }) {
         if (cancelled || !container.current) return
         const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
         if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG。')
-        container.current.replaceChildren(document.importNode(parsed.documentElement, true))
+        const svgElement = parsed.documentElement
+        const viewBox = svgElement.getAttribute('viewBox')?.trim().split(/\s+/).map(Number)
+        const width = viewBox?.length === 4 && Number.isFinite(viewBox[2]) ? viewBox[2] : Number.parseFloat(svgElement.getAttribute('width') || '800')
+        const height = viewBox?.length === 4 && Number.isFinite(viewBox[3]) ? viewBox[3] : Number.parseFloat(svgElement.getAttribute('height') || '500')
+        svgElement.removeAttribute('width')
+        svgElement.removeAttribute('height')
+        svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+        const imported = document.importNode(svgElement, true)
+        container.current.replaceChildren(imported)
+        setSvgSize({ width: Math.max(1, width), height: Math.max(1, height) })
         setError(null)
+        window.requestAnimationFrame(() => {
+          const surface = viewport.current
+          if (!surface) return
+          const nextZoom = Math.min(
+            Math.max(80, surface.clientWidth - 96) / Math.max(1, width),
+            Math.max(80, surface.clientHeight - 96) / Math.max(1, height),
+            1.35,
+          )
+          const clamped = clampZoom(nextZoom)
+          setZoom(clamped)
+          setOffset({
+            x: (surface.clientWidth - Math.max(1, width) * clamped) / 2,
+            y: (surface.clientHeight - Math.max(1, height) * clamped) / 2,
+          })
+        })
       } catch (cause) {
         if (cancelled || !container.current) return
         container.current.replaceChildren()
@@ -562,9 +725,52 @@ function MermaidPreview({ source }: { source: string }) {
   }, [source, renderId, themeRevision])
 
   return (
-    <div className="preview-surface">
-      {error ? <div className="syntax-error"><strong>Mermaid 语法错误</strong><span>{error}</span></div> : null}
-      <div ref={container} className="mermaid-canvas" />
+    <div
+      ref={viewport}
+      className={`preview-surface${dragging ? ' is-dragging' : ''}`}
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest('.canvas-controls')) return
+        dragState.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: offset.x, originY: offset.y }
+        event.currentTarget.setPointerCapture(event.pointerId)
+        setDragging(true)
+      }}
+      onPointerMove={(event) => {
+        const drag = dragState.current
+        if (!drag || drag.pointerId !== event.pointerId) return
+        setOffset({ x: drag.originX + event.clientX - drag.x, y: drag.originY + event.clientY - drag.y })
+      }}
+      onPointerUp={(event) => {
+        if (dragState.current?.pointerId === event.pointerId) dragState.current = null
+        setDragging(false)
+      }}
+      onPointerCancel={() => { dragState.current = null; setDragging(false) }}
+      onWheel={(event) => {
+        event.preventDefault()
+        if (event.metaKey || event.ctrlKey) {
+          zoomBy(event.deltaY < 0 ? 1.1 : 1 / 1.1)
+          return
+        }
+        setOffset((current) => ({ x: current.x - event.deltaX, y: current.y - event.deltaY }))
+      }}
+    >
+      <div className="canvas-controls" aria-label="画布控制">
+        <button type="button" title="缩小" aria-label="缩小" onClick={() => zoomBy(1 / 1.16)}>−</button>
+        <button type="button" className="zoom-value" title="恢复 100%" onClick={() => centerAt(1)}>{Math.round(zoom * 100)}%</button>
+        <button type="button" title="放大" aria-label="放大" onClick={() => zoomBy(1.16)}>＋</button>
+        <span className="canvas-control-separator" />
+        <button type="button" title="适配画布" onClick={fit}>适配</button>
+      </div>
+      {error ? <div className="syntax-error"><strong>预览渲染失败</strong><span>{error}</span></div> : null}
+      <div
+        className="mermaid-stage"
+        style={{
+          width: `${svgSize.width}px`,
+          height: `${svgSize.height}px`,
+          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+        }}
+      >
+        <div ref={container} className="mermaid-canvas" />
+      </div>
     </div>
   )
 }
@@ -577,17 +783,34 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
     theme: 'base',
     fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
     themeVariables: {
-      background: styles.getPropertyValue('--app-bg').trim() || '#ffffff',
-      primaryColor: styles.getPropertyValue('--surface-raised').trim() || '#f5f5f5',
-      primaryTextColor: styles.getPropertyValue('--text-primary').trim() || '#171717',
-      primaryBorderColor: styles.getPropertyValue('--border-strong').trim() || '#b8b8b8',
-      lineColor: styles.getPropertyValue('--text-secondary').trim() || '#666666',
-      secondaryColor: styles.getPropertyValue('--surface-muted').trim() || '#eeeeee',
-      tertiaryColor: styles.getPropertyValue('--surface-panel').trim() || '#fafafa',
+      background: resolveCssColor('--app-bg', '#ffffff'),
+      primaryColor: resolveCssColor('--surface-raised', '#f5f5f5'),
+      primaryTextColor: resolveCssColor('--text-primary', '#171717'),
+      primaryBorderColor: resolveCssColor('--border-strong', '#b8b8b8'),
+      lineColor: resolveCssColor('--text-secondary', '#666666'),
+      secondaryColor: resolveCssColor('--surface-muted', '#eeeeee'),
+      tertiaryColor: resolveCssColor('--surface-panel', '#fafafa'),
     },
   })
   const result = await mermaid.render(renderId, source || 'flowchart LR\n  A[空图表]')
   return result.svg
+}
+
+function resolveCssColor(variable: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || fallback
+  const probe = document.createElement('span')
+  probe.style.position = 'fixed'
+  probe.style.pointerEvents = 'none'
+  probe.style.visibility = 'hidden'
+  probe.style.color = value
+  document.body.appendChild(probe)
+  const resolved = getComputedStyle(probe).color
+  probe.remove()
+  return normalizeMermaidColor(resolved, fallback)
+}
+
+function clampZoom(value: number): number {
+  return Math.min(4, Math.max(0.2, value))
 }
 
 class RuntimeErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
