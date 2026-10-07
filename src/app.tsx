@@ -44,6 +44,18 @@ interface SourceFilesResult {
   files: string[]
 }
 
+interface DiagramDeletedResult {
+  kind: 'diagram-deleted'
+  workspacePath: string
+  path: string
+}
+
+interface DiagramExportResult {
+  kind: 'diagram-export'
+  workspacePath: string
+  path: string
+}
+
 type ViewMode = 'preview' | 'source' | 'split'
 
 const mcpApp = new McpApp({ name: 'codex-diagram-sidebar', version: __CODEX_DIAGRAM_VERSION__ })
@@ -177,6 +189,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [externalChange, setExternalChange] = useState(false)
   const [splitPercent, setSplitPercent] = useState(44)
   const [sourceSearchRequest, setSourceSearchRequest] = useState(0)
+  const [documentMenuOpen, setDocumentMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [renameTitle, setRenameTitle] = useState('')
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [discardTarget, setDiscardTarget] = useState<{ kind: 'diagram'; path: string } | { kind: 'workspace' } | null>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
@@ -192,8 +209,16 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }, [diagramQuery, snapshot.diagrams])
 
   useEffect(() => {
-    if (!selected && snapshot.diagrams[0]) void selectDiagram(snapshot.diagrams[0].path)
-    // Workspace changes intentionally reset selection.
+    setSelected(null)
+    setSource('')
+    setExternalChange(false)
+    setDocumentMenuOpen(false)
+    setRenaming(false)
+    setDeleteConfirmOpen(false)
+    setDiscardTarget(null)
+    if (snapshot.diagrams[0]) void selectDiagram(snapshot.diagrams[0].path, true)
+    else clearModelContext(workspacePath)
+    // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
 
@@ -285,8 +310,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     return () => window.clearInterval(handle)
   }, [dirty, onSnapshot, snapshot, workspacePath])
 
-  async function selectDiagram(diagramPath: string) {
-    if (dirty && !window.confirm('当前图表有未保存修改，确定切换并放弃吗？')) return
+  async function selectDiagram(diagramPath: string, force = false) {
+    if (!force && dirty) {
+      setDiscardTarget({ kind: 'diagram', path: diagramPath })
+      return
+    }
+    setDocumentMenuOpen(false)
+    setRenaming(false)
+    setDeleteConfirmOpen(false)
     setLoadingPath(diagramPath)
     setError(null)
     try {
@@ -300,6 +331,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     } finally {
       setLoadingPath(null)
     }
+  }
+
+  function requestWorkspaceSwitch() {
+    if (dirty) {
+      setDiscardTarget({ kind: 'workspace' })
+      return
+    }
+    onSwitch()
+  }
+
+  function discardUnsavedChanges() {
+    const target = discardTarget
+    setDiscardTarget(null)
+    if (!target) return
+    if (target.kind === 'workspace') {
+      onSwitch()
+      return
+    }
+    void selectDiagram(target.path, true)
   }
 
   async function saveDiagram() {
@@ -381,6 +431,77 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function renameDiagram() {
+    if (!selected || dirty || !renameTitle.trim()) return
+    setError(null)
+    try {
+      const result = await callTool<DiagramResult>('diagram.rename', {
+        workspacePath,
+        path: selected.path,
+        title: renameTitle.trim(),
+        expectedModifiedAt: selected.modifiedAt,
+      })
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === selected.path ? result.diagram : item),
+      })
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setRenaming(false)
+      setDocumentMenuOpen(false)
+      updateModelContext(workspacePath, result.diagram)
+      setNotice(`已重命名为 ${result.diagram.name}`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
+  async function duplicateDiagram() {
+    if (!selected || dirty) return
+    setError(null)
+    try {
+      const result = await callTool<DiagramResult>('diagram.duplicate', {
+        workspacePath,
+        path: selected.path,
+      })
+      const next = [result.diagram, ...snapshot.diagrams]
+      onSnapshot({ ...snapshot, diagrams: next })
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setDocumentMenuOpen(false)
+      setRenaming(false)
+      updateModelContext(workspacePath, result.diagram)
+      setNotice(`已复制为 ${result.diagram.name}`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
+  async function deleteDiagram() {
+    if (!selected || dirty) return
+    const deleting = selected
+    setError(null)
+    try {
+      await callTool<DiagramDeletedResult>('diagram.delete', {
+        workspacePath,
+        path: deleting.path,
+        expectedModifiedAt: deleting.modifiedAt,
+      })
+      const remaining = snapshot.diagrams.filter((item) => item.path !== deleting.path)
+      onSnapshot({ ...snapshot, diagrams: remaining })
+      setSelected(null)
+      setSource('')
+      setDocumentMenuOpen(false)
+      setRenaming(false)
+      setDeleteConfirmOpen(false)
+      setNotice(`已删除 ${deleting.name}`)
+      if (remaining[0]) await selectDiagram(remaining[0].path)
+      else clearModelContext(workspacePath)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
   async function sendGeneration(request: DiagramGenerationRequest) {
     if (!openai.message) {
       setError('当前 Codex Host 没有提供对话消息能力。')
@@ -434,22 +555,66 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     try {
       const svg = await renderMermaidSvg(source, `export-${Date.now()}`)
       const filename = `${safeFilename(selected.name)}.svg`
-      const result = await mcpApp.downloadFile({
-        contents: [{
-          type: 'resource',
-          resource: {
-            uri: `file:///${encodeURIComponent(filename)}`,
-            mimeType: 'image/svg+xml',
-            text: svg,
-          },
-        }],
-      })
-      if (result.isError) throw new Error('Codex Host 取消或拒绝了文件导出。')
+      const destination = await deliverExport(filename, 'svg', svg)
+      setNotice(`已导出 ${destination}`)
     } catch (cause) {
       setError(cleanMermaidError(errorMessage(cause)))
     } finally {
       setExporting(false)
     }
+  }
+
+  async function exportPng() {
+    if (!selected || exporting) return
+    setExporting(true)
+    setError(null)
+    try {
+      const svg = await renderMermaidSvg(source, `export-png-${Date.now()}`)
+      const blob = await svgToPngBase64(svg, resolveCssColor('--app-bg', '#ffffff'))
+      const filename = `${safeFilename(selected.name)}.png`
+      const destination = await deliverExport(filename, 'png', blob)
+      setNotice(`已导出 ${destination}`)
+    } catch (cause) {
+      setError(cleanMermaidError(errorMessage(cause)))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function deliverExport(filename: string, format: 'svg' | 'png', content: string): Promise<string> {
+    if (mcpApp.getHostCapabilities()?.downloadFile) {
+      const result = format === 'svg'
+        ? await mcpApp.downloadFile({
+            contents: [{
+              type: 'resource',
+              resource: {
+                uri: `file:///${encodeURIComponent(filename)}`,
+                mimeType: 'image/svg+xml',
+                text: content,
+              },
+            }],
+          })
+        : await mcpApp.downloadFile({
+            contents: [{
+              type: 'resource',
+              resource: {
+                uri: `file:///${encodeURIComponent(filename)}`,
+                mimeType: 'image/png',
+                blob: content,
+              },
+            }],
+          })
+      if (result.isError) throw new Error('Codex Host 取消或拒绝了文件导出。')
+      return filename
+    }
+
+    const result = await callTool<DiagramExportResult>('diagram.exportAsset', {
+      workspacePath,
+      filename,
+      format,
+      content,
+    })
+    return result.path
   }
 
   async function openDiagramFile() {
@@ -490,7 +655,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               <button className="icon-text-button" type="button" onClick={() => setCreating((value) => !value)}>新建</button>
             </div>
           </div>
-          <button className="workspace-path" type="button" onClick={onSwitch} title={workspacePath}>{workspacePath}</button>
+          <button className="workspace-path" type="button" onClick={requestWorkspaceSwitch} title={workspacePath}>{workspacePath}</button>
         </div>
 
         {creating ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={createDiagram} /> : null}
@@ -551,7 +716,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               </div>
               <div className="toolbar-actions">
                 <button type="button" onClick={() => setAiOpen(true)}>Codex</button>
-                <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : '导出 SVG'}</button>
+                <div className="export-actions" aria-label="导出图表">
+                  <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
+                  <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
+                </div>
                 <div className="mode-switch" aria-label="视图模式">
                   <ModeButton value="preview" mode={mode} onChange={setMode}>预览</ModeButton>
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
@@ -559,6 +727,53 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 </div>
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
+                <div className="document-actions">
+                  <button
+                    className="document-actions-trigger"
+                    type="button"
+                    aria-expanded={documentMenuOpen}
+                    aria-label="更多图表操作"
+                    onClick={() => {
+                      setDocumentMenuOpen((value) => !value)
+                      setRenaming(false)
+                      setRenameTitle(selected.name)
+                    }}
+                  >•••</button>
+                  {documentMenuOpen ? (
+                    <div className="document-actions-menu">
+                      {renaming ? (
+                        <form
+                          className="rename-form"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            void renameDiagram()
+                          }}
+                        >
+                          <input autoFocus value={renameTitle} onChange={(event) => setRenameTitle(event.target.value)} aria-label="新图表名称" />
+                          <div>
+                            <button type="button" onClick={() => setRenaming(false)}>取消</button>
+                            <button className="is-primary" disabled={!renameTitle.trim() || dirty}>保存</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <button type="button" disabled={dirty} onClick={() => { setRenameTitle(selected.name); setRenaming(true) }}>重命名</button>
+                          <button type="button" disabled={dirty} onClick={() => void duplicateDiagram()}>复制图表</button>
+                          <span className="document-actions-separator" />
+                          <button
+                            className="is-danger"
+                            type="button"
+                            disabled={dirty}
+                            onClick={() => {
+                              setDocumentMenuOpen(false)
+                              setDeleteConfirmOpen(true)
+                            }}
+                          >删除图表</button>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </header>
             <div
@@ -633,6 +848,30 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onGenerate={sendGeneration}
             onModify={sendModification}
           />
+        ) : null}
+        {selected && deleteConfirmOpen ? (
+          <div className="confirm-overlay" role="presentation" onMouseDown={() => setDeleteConfirmOpen(false)}>
+            <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-diagram-title" onMouseDown={(event) => event.stopPropagation()}>
+              <strong id="delete-diagram-title">删除“{selected.name}”</strong>
+              <p>{selected.path}</p>
+              <div className="confirm-dialog-actions">
+                <button type="button" onClick={() => setDeleteConfirmOpen(false)}>取消</button>
+                <button className="danger-button" type="button" onClick={() => void deleteDiagram()}>确认删除</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {discardTarget ? (
+          <div className="confirm-overlay" role="presentation" onMouseDown={() => setDiscardTarget(null)}>
+            <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-diagram-title" onMouseDown={(event) => event.stopPropagation()}>
+              <strong id="discard-diagram-title">放弃未保存修改？</strong>
+              <p>当前图表还有未保存内容。继续后这些修改不会保留。</p>
+              <div className="confirm-dialog-actions">
+                <button type="button" onClick={() => setDiscardTarget(null)}>继续编辑</button>
+                <button className="danger-button" type="button" onClick={discardUnsavedChanges}>放弃并继续</button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </section>
     </main>
@@ -841,6 +1080,64 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
   return result.svg
 }
 
+async function svgToPngBase64(svg: string, background: string): Promise<string> {
+  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
+  if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG，无法导出 PNG。')
+  const root = parsed.documentElement
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/\s+/).map(Number)
+  const sourceWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2])
+    ? Math.max(1, viewBox[2])
+    : Math.max(1, Number.parseFloat(root.getAttribute('width') || '1200'))
+  const sourceHeight = viewBox?.length === 4 && Number.isFinite(viewBox[3])
+    ? Math.max(1, viewBox[3])
+    : Math.max(1, Number.parseFloat(root.getAttribute('height') || '800'))
+  const scale = Math.min(2, 8192 / sourceWidth, 8192 / sourceHeight)
+  const width = Math.max(1, Math.round(sourceWidth * scale))
+  const height = Math.max(1, Math.round(sourceHeight * scale))
+  // MCP Apps run under a restrictive CSP. A blob: URL can be rejected by the
+  // host even though the SVG was produced locally, while an inline data URL
+  // remains self-contained and needs no resource-domain permission.
+  const imageUrl = `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('浏览器无法载入 Mermaid SVG。'))
+    image.src = imageUrl
+  })
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('浏览器不支持 PNG 画布导出。')
+  context.fillStyle = background
+  context.fillRect(0, 0, width, height)
+  context.drawImage(image, 0, 0, width, height)
+  const png = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG 编码失败。')), 'image/png')
+  })
+  return blobToBase64(png)
+}
+
+function utf8ToBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = new Uint8Array(await blob.arrayBuffer())
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < buffer.length; offset += chunkSize) {
+    binary += String.fromCharCode(...buffer.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
 function resolveCssColor(variable: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim() || fallback
   const probe = document.createElement('span')
@@ -890,6 +1187,13 @@ function updateModelContext(workspacePath: string, diagram: DiagramDocument) {
       workspacePath,
       selectedDiagram: { path: diagram.path, type: diagram.type, source: diagram.source.slice(0, 24_000) },
     },
+  })
+}
+
+function clearModelContext(workspacePath: string) {
+  void openai.modelContext?.update({
+    content: [{ type: 'text', text: 'No Mermaid diagram is currently selected.' }],
+    structuredContent: { workspacePath, selectedDiagram: null },
   })
 }
 

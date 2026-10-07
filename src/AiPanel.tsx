@@ -18,6 +18,13 @@ const quickModifications = [
   '优化图的阅读顺序和分组，让主路径更清晰，但不要改变业务语义。',
 ]
 
+const generationTemplates: Array<{ label: string; type: DiagramType; title: string; instructions: string }> = [
+  { label: '架构依赖', type: 'flowchart', title: '项目架构', instructions: '识别模块边界、核心依赖与外部系统，只展示主要方向和关键接口。' },
+  { label: '调用链', type: 'sequence', title: '核心调用链', instructions: '沿真实调用顺序展示入口、服务、存储和外部依赖，并保留关键失败分支。' },
+  { label: '数据模型', type: 'er', title: '数据模型', instructions: '从实体、表结构或模型定义提取核心实体、主外键和主要关系，不展开无关字段。' },
+  { label: '状态流转', type: 'state', title: '状态流转', instructions: '从枚举、状态字段和业务分支还原合法状态、触发条件以及失败或终止状态。' },
+]
+
 export function AiPanel({ selected, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
   const [type, setType] = useState<DiagramType>('flowchart')
   const [title, setTitle] = useState('')
@@ -86,6 +93,19 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
               if (!generationInstructions.trim()) setGenerationInstructions('先识别核心模块和边界，再画主要依赖或调用关系；不要把所有文件都展开。')
             }}
           >分析整个工作区</button>
+        </div>
+        <div className="generation-templates" aria-label="生成预设">
+          {generationTemplates.map((template) => (
+            <button
+              key={template.label}
+              type="button"
+              onClick={() => {
+                setType(template.type)
+                setTitle(template.title)
+                setGenerationInstructions(template.instructions)
+              }}
+            >{template.label}</button>
+          ))}
         </div>
         <div className="ai-form-grid">
           <label>

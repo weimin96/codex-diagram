@@ -1,10 +1,11 @@
-import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createTemplate, detectDiagramType } from './templates.js'
 import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType } from './types.js'
 
 const allowedExtensions = new Set(['.mmd', '.mermaid'])
+const allowedExportExtensions = new Set(['.svg', '.png'])
 const sourceExtensions = new Set([
   '.c', '.cc', '.cpp', '.cs', '.css', '.go', '.gradle', '.graphql', '.gql', '.h', '.hpp', '.html', '.java',
   '.js', '.jsx', '.json', '.kt', '.kts', '.less', '.mjs', '.cjs', '.php', '.properties', '.proto', '.py', '.rb',
@@ -71,15 +72,62 @@ export class DiagramStore {
 
   async update(relativePath: string, source: string, expectedModifiedAt?: string): Promise<DiagramDocument> {
     const target = await this.resolveExistingDiagram(relativePath)
-    if (expectedModifiedAt) {
-      const current = await stat(target)
-      if (current.mtime.toISOString() !== expectedModifiedAt) {
-        throw new Error('图表已被其他编辑器修改，请重新载入最新版本后再保存。')
-      }
-    }
+    await assertExpectedRevision(target, expectedModifiedAt)
     await writeFile(target, normalizeSource(source), 'utf8')
     const info = await stat(target)
     return this.document(relativePathFromRoot(this.workspacePath, target), normalizeSource(source), info.mtime)
+  }
+
+  async rename(relativePath: string, title: string, expectedModifiedAt?: string): Promise<DiagramDocument> {
+    const target = await this.resolveExistingDiagram(relativePath)
+    await assertExpectedRevision(target, expectedModifiedAt)
+    const source = await readFile(target, 'utf8')
+    const base = slugify(title)
+    if (!base) throw new Error('请输入有效的图表名称。')
+    const destination = path.join(path.dirname(target), `${base}${path.extname(target).toLowerCase()}`)
+    assertInside(this.workspacePath, destination)
+    if (destination !== target) {
+      const existing = await lstat(destination).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      if (existing) throw new Error(`同目录下已存在图表：${path.basename(destination)}`)
+      await rename(target, destination)
+    }
+    const info = await stat(destination)
+    return this.document(relativePathFromRoot(this.workspacePath, destination), source, info.mtime)
+  }
+
+  async duplicate(relativePath: string, title?: string): Promise<DiagramDocument> {
+    const target = await this.resolveExistingDiagram(relativePath)
+    const source = await readFile(target, 'utf8')
+    const originalName = path.basename(target, path.extname(target))
+    const base = slugify(title?.trim() || `${originalName}-copy`) || `${originalName}-copy`
+    const destination = await nextAvailablePath(path.dirname(target), base, path.extname(target).toLowerCase())
+    await writeFile(destination, normalizeSource(source), { encoding: 'utf8', flag: 'wx' })
+    const info = await stat(destination)
+    return this.document(relativePathFromRoot(this.workspacePath, destination), normalizeSource(source), info.mtime)
+  }
+
+  async delete(relativePath: string, expectedModifiedAt?: string): Promise<string> {
+    const target = await this.resolveExistingDiagram(relativePath)
+    await assertExpectedRevision(target, expectedModifiedAt)
+    const deletedPath = relativePathFromRoot(this.workspacePath, target)
+    await unlink(target)
+    return deletedPath
+  }
+
+  async exportAsset(filename: string, content: string | Uint8Array): Promise<string> {
+    const requested = filename.trim()
+    if (!requested || path.basename(requested) !== requested) throw new Error('导出文件名无效。')
+    const extension = path.extname(requested).toLowerCase()
+    if (!allowedExportExtensions.has(extension)) throw new Error('只支持导出 SVG 和 PNG。')
+    const base = slugify(path.basename(requested, extension)) || 'diagram'
+    const directory = path.join(this.workspacePath, 'docs', 'diagrams', 'exports')
+    await mkdir(directory, { recursive: true })
+    const target = await nextAvailablePath(directory, base, extension)
+    await writeFile(target, content, { flag: 'wx' })
+    return relativePathFromRoot(this.workspacePath, target)
   }
 
   private async scan(directory: string, depth: number, results: DiagramSummary[]): Promise<void> {
@@ -174,10 +222,10 @@ function slugify(value: string): string {
     .slice(0, 80)
 }
 
-async function nextAvailablePath(directory: string, base: string): Promise<string> {
+async function nextAvailablePath(directory: string, base: string, extension = '.mmd'): Promise<string> {
   for (let index = 0; index < 10_000; index += 1) {
     const suffix = index === 0 ? '' : `-${index + 1}`
-    const candidate = path.join(directory, `${base}${suffix}.mmd`)
+    const candidate = path.join(directory, `${base}${suffix}${extension}`)
     try {
       await lstat(candidate)
     } catch (error) {
@@ -186,4 +234,12 @@ async function nextAvailablePath(directory: string, base: string): Promise<strin
     }
   }
   throw new Error('无法为新图表生成可用文件名。')
+}
+
+async function assertExpectedRevision(target: string, expectedModifiedAt?: string): Promise<void> {
+  if (!expectedModifiedAt) return
+  const current = await stat(target)
+  if (current.mtime.toISOString() !== expectedModifiedAt) {
+    throw new Error('图表已被其他编辑器修改，请重新载入最新版本后再继续。')
+  }
 }

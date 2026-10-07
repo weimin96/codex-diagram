@@ -77,3 +77,47 @@ test('indexes source files without generated or dependency directories', async (
     await rm(workspace, { recursive: true, force: true })
   }
 })
+
+test('renames, duplicates and deletes diagrams without losing source', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-actions-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const created = await store.create('flowchart', 'Checkout Flow')
+    const source = 'flowchart LR\n  Cart --> Pay\n'
+    const updated = await store.update(created.path, source, created.modifiedAt)
+
+    const renamed = await store.rename(updated.path, 'Payment Flow', updated.modifiedAt)
+    assert.equal(renamed.path, 'docs/diagrams/payment-flow.mmd')
+    assert.equal(renamed.source, source)
+    await assert.rejects(() => store.get(created.path), /图表不存在/)
+
+    const duplicated = await store.duplicate(renamed.path)
+    assert.equal(duplicated.path, 'docs/diagrams/payment-flow-copy.mmd')
+    assert.equal(duplicated.source, source)
+
+    const deleted = await store.delete(duplicated.path, duplicated.modifiedAt)
+    assert.equal(deleted, duplicated.path)
+    assert.deepEqual((await store.list()).map((item) => item.path), [renamed.path])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('exports SVG and PNG assets without overwriting previous exports', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-export-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const firstSvg = await store.exportAsset('System Overview.svg', '<svg />')
+    const secondSvg = await store.exportAsset('System Overview.svg', '<svg>2</svg>')
+    const png = await store.exportAsset('System Overview.png', new Uint8Array([137, 80, 78, 71]))
+
+    assert.equal(firstSvg, 'docs/diagrams/exports/system-overview.svg')
+    assert.equal(secondSvg, 'docs/diagrams/exports/system-overview-2.svg')
+    assert.equal(png, 'docs/diagrams/exports/system-overview.png')
+    assert.equal(await readFile(path.join(root, firstSvg), 'utf8'), '<svg />')
+    assert.deepEqual([...await readFile(path.join(root, png))], [137, 80, 78, 71])
+    await assert.rejects(() => store.exportAsset('../escape.png', new Uint8Array([1])), /文件名无效/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

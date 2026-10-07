@@ -44,6 +44,7 @@ const server = new McpServer(
 const appOnly = { ui: { visibility: ['app'] as const } }
 const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 const ui = (entrypoints: OpenAIUiToolMetadata['entrypoints'] = []) => ({
   ui: { resourceUri: uiUri, visibility: ['app'] as const },
@@ -199,6 +200,82 @@ server.registerTool('diagram.update', {
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.rename', {
+  title: 'Rename diagram',
+  description: 'Rename an existing Mermaid diagram in place. Pass expectedModifiedAt when available to avoid racing external edits.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    title: z.string().min(1).max(120),
+    expectedModifiedAt: z.string().optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, title, expectedModifiedAt }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const diagram = await store.rename(diagramPath, title, expectedModifiedAt)
+  return {
+    content: [{ type: 'text', text: `Renamed ${diagramPath} to ${diagram.path}` }],
+    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.duplicate', {
+  title: 'Duplicate diagram',
+  description: 'Duplicate an existing Mermaid diagram beside the source file.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    title: z.string().min(1).max(120).optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, title }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const diagram = await store.duplicate(diagramPath, title)
+  return {
+    content: [{ type: 'text', text: `Duplicated ${diagramPath} as ${diagram.path}` }],
+    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.delete', {
+  title: 'Delete diagram',
+  description: 'Delete one Mermaid diagram from the current workspace. Pass expectedModifiedAt when available to avoid deleting a newly changed file.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    expectedModifiedAt: z.string().optional(),
+  }),
+  annotations: destructive,
+}, async ({ workspacePath, path: diagramPath, expectedModifiedAt }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const deletedPath = await store.delete(diagramPath, expectedModifiedAt)
+  return {
+    content: [{ type: 'text', text: `Deleted ${deletedPath}` }],
+    structuredContent: { kind: 'diagram-deleted', workspacePath: store.workspacePath, path: deletedPath },
+  }
+})
+
+server.registerTool('diagram.exportAsset', {
+  title: 'Export diagram asset',
+  description: 'Internal app bridge for saving an exported SVG or PNG into docs/diagrams/exports when the host cannot download files directly.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    filename: z.string().min(1).max(180),
+    format: z.enum(['svg', 'png']),
+    content: z.string().min(1).max(32 * 1024 * 1024),
+  }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, filename, format, content }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const data = format === 'png' ? Buffer.from(content, 'base64') : content
+  const assetPath = await store.exportAsset(filename, data)
+  return {
+    content: [],
+    structuredContent: { kind: 'diagram-export', workspacePath: store.workspacePath, path: assetPath },
   }
 })
 
