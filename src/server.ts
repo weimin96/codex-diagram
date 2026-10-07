@@ -8,6 +8,7 @@ import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { DiagramStore } from './store.js'
+import { encodeToolResultFallback } from './toolResult.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
@@ -92,10 +93,13 @@ server.registerTool('diagram.openWorkspace', {
   inputSchema: z.object({ workspacePath: z.string().min(1) }),
   annotations: readonly,
   _meta: appOnly,
-}, async ({ workspacePath }, extra) => ({
-  content: [],
-  structuredContent: workspaceContent(await openWorkspace(workspacePath), undefined, toolThreadId(extra._meta)),
-}))
+}, async ({ workspacePath }, extra) => {
+  const payload = workspaceContent(await openWorkspace(workspacePath), undefined, toolThreadId(extra._meta))
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
 
 server.registerTool('diagram.threadState', {
   title: 'Read active diagram for this conversation',
@@ -106,13 +110,14 @@ server.registerTool('diagram.threadState', {
 }, async (_args, extra) => {
   const threadId = toolThreadId(extra._meta)
   const state = threadId ? threadSelection.get(threadId) : undefined
+  const payload = {
+    kind: 'diagram-thread-state',
+    activeDiagramPath: state?.path,
+    updatedAt: state?.updatedAt,
+  }
   return {
-    content: [],
-    structuredContent: {
-      kind: 'diagram-thread-state',
-      activeDiagramPath: state?.path,
-      updatedAt: state?.updatedAt,
-    },
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
   }
 })
 
@@ -154,9 +159,10 @@ server.registerTool('diagram.revision', {
 }, async ({ workspacePath, path: diagramPath }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const revision = await store.revision(diagramPath)
+  const payload = { kind: 'diagram-revision', workspacePath: store.workspacePath, revision }
   return {
-    content: [],
-    structuredContent: { kind: 'diagram-revision', workspacePath: store.workspacePath, revision },
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
   }
 })
 
@@ -183,9 +189,10 @@ server.registerTool('diagram.sources', {
     ? cached.files.filter((file) => fuzzyPathMatch(file.toLocaleLowerCase(), needle))
     : cached.files
   ).slice(0, limit)
+  const payload = { kind: 'source-files', workspacePath: store.workspacePath, files }
   return {
-    content: [],
-    structuredContent: { kind: 'source-files', workspacePath: store.workspacePath, files },
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
   }
 })
 
@@ -301,9 +308,10 @@ server.registerTool('diagram.exportAsset', {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const data = format === 'png' ? Buffer.from(content, 'base64') : content
   const assetPath = await store.exportAsset(filename, data)
+  const payload = { kind: 'diagram-export', workspacePath: store.workspacePath, path: assetPath }
   return {
-    content: [],
-    structuredContent: { kind: 'diagram-export', workspacePath: store.workspacePath, path: assetPath },
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
   }
 })
 

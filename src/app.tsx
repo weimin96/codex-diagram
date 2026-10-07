@@ -14,13 +14,12 @@ import { CanvasEditor } from './CanvasEditor.js'
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
+import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
 import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
-interface ServerToolResult {
-  structuredContent?: unknown
-}
+interface ServerToolResult extends ToolResultLike {}
 
 interface DiagramResult {
   kind: 'diagram'
@@ -207,11 +206,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [followConversation, setFollowConversation] = useState(true)
+  const [syncIssue, setSyncIssue] = useState<string | null>(null)
   const [discardTarget, setDiscardTarget] = useState<{ kind: 'diagram'; path: string } | { kind: 'workspace' } | null>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
   const lastThreadStateAt = useRef<string | undefined>(undefined)
+  const backgroundFailures = useRef({ thread: 0, revision: 0 })
   const dirty = Boolean(selected && source !== selected.source)
   const visibleDiagrams = useMemo(() => {
     const query = diagramQuery.trim().toLocaleLowerCase()
@@ -222,6 +223,17 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       || diagramLabel(diagram.type).toLocaleLowerCase().includes(query)
     ))
   }, [diagramQuery, snapshot.diagrams])
+
+  function backgroundSyncSucceeded(kind: 'thread' | 'revision') {
+    backgroundFailures.current[kind] = 0
+    if (backgroundFailures.current.thread < 3 && backgroundFailures.current.revision < 3) setSyncIssue(null)
+  }
+
+  function backgroundSyncFailed(kind: 'thread' | 'revision') {
+    backgroundFailures.current[kind] += 1
+    if (backgroundFailures.current[kind] < 3) return
+    setSyncIssue(kind === 'thread' ? '对话联动正在重试' : '文件同步正在重试')
+  }
 
   useEffect(() => {
     setSelected(null)
@@ -249,6 +261,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       inFlight = true
       void callTool<DiagramThreadStateResult>('diagram.threadState', {})
         .then(async (state) => {
+          backgroundSyncSucceeded('thread')
           if (disposed) return
           if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
           if (!followConversation) return
@@ -281,8 +294,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             if (!disposed) setNotice('已跟随当前对话中的图表')
           }
         })
-        .catch((cause) => {
-          if (!disposed) setError(`对话联动失败：${errorMessage(cause)}`)
+        .catch(() => {
+          if (!disposed) backgroundSyncFailed('thread')
         })
         .finally(() => { inFlight = false })
     }, 1_300)
@@ -319,6 +332,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       inFlight = true
       void callTool<DiagramRevisionResult>('diagram.revision', { workspacePath, path: selected.path })
         .then(async (result) => {
+          backgroundSyncSucceeded('revision')
           reportedError = false
           if (disposed || result.revision.modifiedAt === selected.modifiedAt) return
           if (dirty) {
@@ -337,10 +351,32 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           updateModelContext(workspacePath, latest.diagram)
           setNotice('已同步磁盘上的最新修改')
         })
-        .catch((cause) => {
+        .catch(async () => {
           if (disposed || reportedError) return
           reportedError = true
-          setError(`自动同步失败：${errorMessage(cause)}`)
+          try {
+            const listed = await callTool<DiagramListResult>('diagram.list', { workspacePath })
+            if (disposed) return
+            if (!listed.diagrams.some((diagram) => diagram.path === selected.path)) {
+              const fallback = listed.diagrams[0]
+              onSnapshot({ ...snapshot, diagrams: listed.diagrams, activeDiagramPath: fallback?.path })
+              setSelected(null)
+              setSource('')
+              setExternalChange(false)
+              backgroundSyncSucceeded('revision')
+              if (fallback) {
+                await selectDiagram(fallback.path, true)
+                if (!disposed) setNotice('当前图已被外部删除，已切换到其他图表')
+              } else {
+                clearModelContext(workspacePath)
+                if (!disposed) setNotice('当前图已被外部删除')
+              }
+              return
+            }
+          } catch {
+            // Keep the currently rendered diagram available and retry in the background.
+          }
+          backgroundSyncFailed('revision')
         })
         .finally(() => { inFlight = false })
     }, 1_800)
@@ -838,6 +874,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             ) : null}
           </div>
         ) : null}
+        {isThread && syncIssue ? (
+          <div className="sync-warning" role="status">
+            <span>{syncIssue}</span>
+            <span>不会影响当前图查看与编辑</span>
+          </div>
+        ) : null}
         {notice ? <div className="notice-banner">{notice}</div> : null}
         {externalChange ? (
           <div className="conflict-banner">
@@ -1328,8 +1370,11 @@ class RuntimeErrorBoundary extends Component<{ children: ReactNode }, { error: E
 
 async function callTool<T>(name: string, arguments_: Record<string, unknown>): Promise<T> {
   const result = await mcpApp.callServerTool({ name, arguments: arguments_ }) as ServerToolResult
-  if (!result.structuredContent) throw new Error(`${name} 没有返回结构化结果。`)
-  return result.structuredContent as T
+  const serverError = extractToolResultError(result)
+  if (serverError) throw new Error(serverError)
+  const payload = extractToolResultPayload<T>(result)
+  if (payload === undefined) throw new Error(`${name} 没有返回可解析结果。`)
+  return payload
 }
 
 async function sendCodexMessage(text: string): Promise<void> {

@@ -148,6 +148,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-chat-actions::-webkit-scrollbar { display: none; }
 .thread-chat-actions button { height: 28px; flex: 0 0 auto; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .thread-chat-actions button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.sync-warning { min-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, #b7791f 6%, var(--surface-panel)); color: var(--text-secondary); font-size: 10px; }
+.sync-warning span:last-child { color: var(--text-tertiary); }
 .thread-companion .editor-toolbar { min-height: 40px; justify-content: flex-end; padding: 5px 8px; gap: 6px; }
 .thread-companion .document-identity { display: none; }
 .thread-companion .toolbar-actions { width: 100%; justify-content: space-between; gap: 6px; }
