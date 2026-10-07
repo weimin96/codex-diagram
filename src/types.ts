@@ -11,6 +11,11 @@ export interface DiagramDocument extends DiagramSummary {
   source: string
 }
 
+export interface DiagramRevision {
+  path: string
+  modifiedAt: string
+}
+
 export interface WorkspaceSnapshot {
   kind: 'workspace'
   workspacePath?: string

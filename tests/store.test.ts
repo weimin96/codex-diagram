@@ -20,6 +20,10 @@ test('creates, lists and updates a Mermaid diagram inside the workspace', async 
     const updated = await store.update(created.path, 'sequenceDiagram\n  A->>B: ping')
     assert.equal(updated.type, 'sequence')
     assert.match(await readFile(path.join(root, created.path), 'utf8'), /sequenceDiagram/)
+
+    const revision = await store.revision(created.path)
+    assert.equal(revision.path, created.path)
+    assert.equal(revision.modifiedAt, updated.modifiedAt)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

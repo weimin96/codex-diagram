@@ -15,6 +15,10 @@ Codex 的可视化图表侧边栏插件。第一版使用 Mermaid 作为统一�
 - `Cmd/Ctrl + S` 保存
 - MCP `list / get / create / update` 工具，供 Codex 直接操作图表
 - 新图默认保存到 `docs/diagrams/`
+- 从当前 Codex 对话发起“从代码生成图表”
+- 让 Codex 补异常路径、简化结构、整理布局或按自定义要求修改当前图
+- Codex / 外部编辑器写回后自动同步当前图
+- 通过 Codex Host 导出 SVG
 
 ## 本地开发
 
@@ -34,6 +38,12 @@ pnpm smoke
 pnpm plugin:install
 ```
 
+如果 Codex Desktop 已经打开，开发时可以安装后顺便刷新插件宿主：
+
+```bash
+pnpm plugin:install:desktop
+```
+
 安装后在 Codex 的全局插件入口中打开 `Diagram`。
 
 ## MCP 工具
@@ -43,9 +53,10 @@ pnpm plugin:install
 | `diagram.workspace` | 打开 Diagram UI |
 | `diagram.list` | 列出当前工作空间图表 |
 | `diagram.get` | 读取一个 Mermaid 图表 |
+| `diagram.revision` | UI 内部检查当前图是否发生磁盘变更 |
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 
 ## 当前边界
 
-第一阶段只接 Mermaid。Excalidraw / 自由画布、从代码自动推导调用链、SVG/PNG 导出和更完整的 AI 操作面板放到后续阶段。
+当前仍以 Mermaid 为主。Excalidraw / 自由画布、PNG 导出、节点级可视化编辑和更深的代码图谱索引放到后续阶段。

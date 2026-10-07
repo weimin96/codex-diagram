@@ -120,6 +120,21 @@ server.registerTool('diagram.get', {
   }
 })
 
+server.registerTool('diagram.revision', {
+  title: 'Read diagram revision',
+  description: 'Internal app bridge for checking whether an open diagram changed on disk.',
+  inputSchema: z.object({ workspacePath: z.string().optional(), path: z.string().min(1) }),
+  annotations: readonly,
+  _meta: appOnly,
+}, async ({ workspacePath, path: diagramPath }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const revision = await store.revision(diagramPath)
+  return {
+    content: [],
+    structuredContent: { kind: 'diagram-revision', workspacePath: store.workspacePath, revision },
+  }
+})
+
 server.registerTool('diagram.create', {
   title: 'Create diagram',
   description: 'Create a Mermaid diagram under docs/diagrams in the current workspace.',

@@ -8,7 +8,9 @@ import {
   applyHostStyleVariables,
 } from '@modelcontextprotocol/ext-apps'
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
-import { diagramTypes, type DiagramDocument, type DiagramSummary, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { AiPanel } from './AiPanel.js'
+import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
+import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
@@ -26,6 +28,12 @@ interface DiagramListResult {
   kind: 'diagram-list'
   workspacePath: string
   diagrams: DiagramSummary[]
+}
+
+interface DiagramRevisionResult {
+  kind: 'diagram-revision'
+  workspacePath: string
+  revision: DiagramRevision
 }
 
 type ViewMode = 'preview' | 'source' | 'split'
@@ -151,6 +159,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ViewMode>('split')
   const [creating, setCreating] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiSending, setAiSending] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const dirty = Boolean(selected && source !== selected.source)
 
   useEffect(() => {
@@ -169,6 +182,78 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   })
+
+  useEffect(() => {
+    if (!notice) return
+    const handle = window.setTimeout(() => setNotice(null), 4_500)
+    return () => window.clearTimeout(handle)
+  }, [notice])
+
+  useEffect(() => {
+    if (!selected) return
+    let disposed = false
+    let inFlight = false
+    let reportedError = false
+    const handle = window.setInterval(() => {
+      if (disposed || inFlight || dirty || saving) return
+      inFlight = true
+      void callTool<DiagramRevisionResult>('diagram.revision', { workspacePath, path: selected.path })
+        .then(async (result) => {
+          reportedError = false
+          if (disposed || dirty || result.revision.modifiedAt === selected.modifiedAt) return
+          const latest = await callTool<DiagramResult>('diagram.get', { workspacePath, path: selected.path })
+          if (disposed || dirty) return
+          setSelected(latest.diagram)
+          setSource(latest.diagram.source)
+          onSnapshot({
+            ...snapshot,
+            diagrams: snapshot.diagrams.map((item) => item.path === latest.diagram.path ? latest.diagram : item),
+          })
+          updateModelContext(workspacePath, latest.diagram)
+          setNotice('已同步磁盘上的最新修改')
+        })
+        .catch((cause) => {
+          if (disposed || reportedError) return
+          reportedError = true
+          setError(`自动同步失败：${errorMessage(cause)}`)
+        })
+        .finally(() => { inFlight = false })
+    }, 1_800)
+    return () => {
+      disposed = true
+      window.clearInterval(handle)
+    }
+  }, [dirty, onSnapshot, saving, selected, snapshot, workspacePath])
+
+  useEffect(() => {
+    let inFlight = false
+    const handle = window.setInterval(() => {
+      const watch = aiWatch.current
+      if (!watch || inFlight) return
+      if (Date.now() > watch.until) {
+        aiWatch.current = null
+        setError('未检测到 Codex 创建的新图表。可以刷新列表，或在当前对话中查看任务执行结果。')
+        return
+      }
+      inFlight = true
+      void callTool<DiagramListResult>('diagram.list', { workspacePath })
+        .then(async (result) => {
+          onSnapshot({ ...snapshot, diagrams: result.diagrams })
+          const created = result.diagrams.find((item) => !watch.existingPaths.has(item.path))
+          if (created && !dirty) {
+            aiWatch.current = null
+            await selectDiagram(created.path)
+            setNotice(`Codex 已创建 ${created.name}`)
+          }
+        })
+        .catch((cause) => {
+          aiWatch.current = null
+          setError(`自动刷新图表失败：${errorMessage(cause)}`)
+        })
+        .finally(() => { inFlight = false })
+    }, 1_600)
+    return () => window.clearInterval(handle)
+  }, [dirty, onSnapshot, snapshot, workspacePath])
 
   async function selectDiagram(diagramPath: string) {
     if (dirty && !window.confirm('当前图表有未保存修改，确定切换并放弃吗？')) return
@@ -231,6 +316,77 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function sendGeneration(request: DiagramGenerationRequest) {
+    if (!openai.message) {
+      setError('当前 Codex Host 没有提供对话消息能力。')
+      return
+    }
+    setAiSending(true)
+    setError(null)
+    try {
+      aiWatch.current = {
+        until: Date.now() + 90_000,
+        existingPaths: new Set(snapshot.diagrams.map((item) => item.path)),
+      }
+      await sendCodexMessage(buildGenerationPrompt(workspacePath, request))
+      setAiOpen(false)
+      setNotice('已发送到当前 Codex 对话，生成后会自动刷新')
+    } catch (cause) {
+      aiWatch.current = null
+      setError(errorMessage(cause))
+    } finally {
+      setAiSending(false)
+    }
+  }
+
+  async function sendModification(instruction: string) {
+    if (!selected) return
+    if (!openai.message) {
+      setError('当前 Codex Host 没有提供对话消息能力。')
+      return
+    }
+    if (dirty) {
+      setError('先保存当前修改，再让 Codex 继续编辑这张图。')
+      return
+    }
+    setAiSending(true)
+    setError(null)
+    try {
+      await sendCodexMessage(buildModificationPrompt(workspacePath, selected, instruction))
+      setAiOpen(false)
+      setNotice('已发送到当前 Codex 对话，文件更新后会自动同步')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setAiSending(false)
+    }
+  }
+
+  async function exportSvg() {
+    if (!selected || exporting) return
+    setExporting(true)
+    setError(null)
+    try {
+      const svg = await renderMermaidSvg(source, `export-${Date.now()}`)
+      const filename = `${safeFilename(selected.name)}.svg`
+      const result = await mcpApp.downloadFile({
+        contents: [{
+          type: 'resource',
+          resource: {
+            uri: `file:///${encodeURIComponent(filename)}`,
+            mimeType: 'image/svg+xml',
+            text: svg,
+          },
+        }],
+      })
+      if (result.isError) throw new Error('Codex Host 取消或拒绝了文件导出。')
+    } catch (cause) {
+      setError(cleanMermaidError(errorMessage(cause)))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <main className="diagram-shell">
       <aside className="diagram-sidebar">
@@ -269,6 +425,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       </aside>
 
       <section className="diagram-main">
+        {notice ? <div className="notice-banner">{notice}</div> : null}
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
         {selected ? (
           <>
@@ -278,6 +435,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span>{selected.path}</span>
               </div>
               <div className="toolbar-actions">
+                <button type="button" onClick={() => setAiOpen(true)}>Codex</button>
+                <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : '导出 SVG'}</button>
                 <div className="mode-switch" aria-label="视图模式">
                   <ModeButton value="preview" mode={mode} onChange={setMode}>预览</ModeButton>
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
@@ -312,9 +471,21 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <div className="empty-graphic"><span /><span /><span /></div>
             <h2>选择或创建一个图表</h2>
             <p>流程图、时序图、思维脑图、类图、ER 图和状态图统一使用 Mermaid 源码。</p>
-            <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
+            <div className="empty-actions">
+              <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
+              <button type="button" onClick={() => setAiOpen(true)}>从代码生成</button>
+            </div>
           </div>
         )}
+        {aiOpen ? (
+          <AiPanel
+            selected={selected}
+            sending={aiSending}
+            onClose={() => setAiOpen(false)}
+            onGenerate={sendGeneration}
+            onModify={sendModification}
+          />
+        ) : null}
       </section>
     </main>
   )
@@ -375,26 +546,10 @@ function MermaidPreview({ source }: { source: string }) {
 
     async function render() {
       if (!container.current) return
-      const styles = getComputedStyle(document.documentElement)
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: 'base',
-        fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
-        themeVariables: {
-          background: styles.getPropertyValue('--app-bg').trim() || '#ffffff',
-          primaryColor: styles.getPropertyValue('--surface-raised').trim() || '#f5f5f5',
-          primaryTextColor: styles.getPropertyValue('--text-primary').trim() || '#171717',
-          primaryBorderColor: styles.getPropertyValue('--border-strong').trim() || '#b8b8b8',
-          lineColor: styles.getPropertyValue('--text-secondary').trim() || '#666666',
-          secondaryColor: styles.getPropertyValue('--surface-muted').trim() || '#eeeeee',
-          tertiaryColor: styles.getPropertyValue('--surface-panel').trim() || '#fafafa',
-        },
-      })
       try {
-        const result = await mermaid.render(`${renderId}-${Date.now()}`, source || 'flowchart LR\n  A[空图表]')
+        const svg = await renderMermaidSvg(source, `${renderId}-${Date.now()}`)
         if (cancelled || !container.current) return
-        const parsed = new DOMParser().parseFromString(result.svg, 'image/svg+xml')
+        const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
         if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG。')
         container.current.replaceChildren(document.importNode(parsed.documentElement, true))
         setError(null)
@@ -414,6 +569,27 @@ function MermaidPreview({ source }: { source: string }) {
   )
 }
 
+async function renderMermaidSvg(source: string, renderId: string): Promise<string> {
+  const styles = getComputedStyle(document.documentElement)
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: 'base',
+    fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
+    themeVariables: {
+      background: styles.getPropertyValue('--app-bg').trim() || '#ffffff',
+      primaryColor: styles.getPropertyValue('--surface-raised').trim() || '#f5f5f5',
+      primaryTextColor: styles.getPropertyValue('--text-primary').trim() || '#171717',
+      primaryBorderColor: styles.getPropertyValue('--border-strong').trim() || '#b8b8b8',
+      lineColor: styles.getPropertyValue('--text-secondary').trim() || '#666666',
+      secondaryColor: styles.getPropertyValue('--surface-muted').trim() || '#eeeeee',
+      tertiaryColor: styles.getPropertyValue('--surface-panel').trim() || '#fafafa',
+    },
+  })
+  const result = await mermaid.render(renderId, source || 'flowchart LR\n  A[空图表]')
+  return result.svg
+}
+
 class RuntimeErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null }
   static getDerivedStateFromError(error: Error) { return { error } }
@@ -428,6 +604,15 @@ async function callTool<T>(name: string, arguments_: Record<string, unknown>): P
   const result = await mcpApp.callServerTool({ name, arguments: arguments_ }) as ServerToolResult
   if (!result.structuredContent) throw new Error(`${name} 没有返回结构化结果。`)
   return result.structuredContent as T
+}
+
+async function sendCodexMessage(text: string): Promise<void> {
+  if (!openai.message) throw new Error('当前 Codex Host 没有提供对话消息能力。')
+  await openai.message.send({
+    role: 'user',
+    content: [{ type: 'text', text }],
+    _meta: { 'openai/message': { target: 'active', send: true } },
+  })
 }
 
 function updateModelContext(workspacePath: string, diagram: DiagramDocument) {
@@ -447,6 +632,11 @@ function diagramLabel(type: DiagramSummary['type']): string {
 function shortPath(value: string): string {
   const parts = value.split('/')
   return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : value
+}
+
+function safeFilename(value: string): string {
+  const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').replace(/^-+|-+$/g, '')
+  return cleaned || 'diagram'
 }
 
 function cleanMermaidError(value: string): string {

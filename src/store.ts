@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node
 import os from 'node:os'
 import path from 'node:path'
 import { createTemplate, detectDiagramType } from './templates.js'
-import type { DiagramDocument, DiagramSummary, DiagramType } from './types.js'
+import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType } from './types.js'
 
 const allowedExtensions = new Set(['.mmd', '.mermaid'])
 const ignoredDirectories = new Set([
@@ -34,6 +34,15 @@ export class DiagramStore {
     const target = await this.resolveExistingDiagram(relativePath)
     const [source, info] = await Promise.all([readFile(target, 'utf8'), stat(target)])
     return this.document(relativePathFromRoot(this.workspacePath, target), source, info.mtime)
+  }
+
+  async revision(relativePath: string): Promise<DiagramRevision> {
+    const target = await this.resolveExistingDiagram(relativePath)
+    const info = await stat(target)
+    return {
+      path: relativePathFromRoot(this.workspacePath, target),
+      modifiedAt: info.mtime.toISOString(),
+    }
   }
 
   async create(type: DiagramType, title: string): Promise<DiagramDocument> {

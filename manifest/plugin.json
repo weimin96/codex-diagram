@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Create, inspect and edit Mermaid diagrams beside Codex conversations.",
   "author": {
     "name": "Codex Diagram"
@@ -9,10 +9,10 @@
   "interface": {
     "displayName": "Diagram",
     "shortDescription": "Flowcharts, sequence diagrams and mind maps",
-    "longDescription": "Open a visual Mermaid diagram workspace beside Codex. Create and edit flowcharts, sequence diagrams, class diagrams, ER diagrams, state diagrams and mind maps while Codex reads and updates the same workspace files through MCP tools.",
+    "longDescription": "Open a visual Mermaid diagram workspace beside Codex. Generate diagrams from workspace code, ask Codex to revise the selected diagram, and edit flowcharts, sequence diagrams, class diagrams, ER diagrams, state diagrams and mind maps against the same workspace files.",
     "developerName": "Codex Diagram",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid"],
+    "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid", "Code Analysis"],
     "composerIcon": "./assets/icon.svg",
     "composerIconDark": "./assets/icon-dark.svg",
     "logo": "./assets/icon.svg",
