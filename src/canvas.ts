@@ -5,11 +5,25 @@ export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
 export type CanvasIcon = 'user' | 'web' | 'api' | 'service' | 'database' | 'cache' | 'queue' | 'cloud' | 'file' | 'external'
+export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'minio'
+export type CanvasGroupKind = 'group' | 'boundary'
+export type CanvasLaneAxis = 'horizontal' | 'vertical'
 export interface CanvasPoint { x: number; y: number }
 
 export interface CanvasGroup {
   id: string
   label?: string
+  tone?: CanvasTone
+  kind?: CanvasGroupKind
+  collapsed?: boolean
+}
+
+export interface CanvasLane {
+  id: string
+  label: string
+  axis: CanvasLaneAxis
+  start: number
+  size: number
   tone?: CanvasTone
 }
 
@@ -21,6 +35,7 @@ export interface CanvasScene {
   height: number
   elements: CanvasElement[]
   groups?: CanvasGroup[]
+  lanes?: CanvasLane[]
 }
 
 export interface CanvasNode {
@@ -37,6 +52,11 @@ export interface CanvasNode {
   groupId?: string
   sourcePaths?: string[]
   icon?: CanvasIcon
+  stencil?: CanvasStencil
+  subtitle?: string
+  description?: string
+  tags?: string[]
+  laneId?: string
 }
 
 export interface CanvasNote {
@@ -53,6 +73,11 @@ export interface CanvasNote {
   groupId?: string
   sourcePaths?: string[]
   icon?: CanvasIcon
+  stencil?: CanvasStencil
+  subtitle?: string
+  description?: string
+  tags?: string[]
+  laneId?: string
 }
 
 export interface CanvasArrow {
@@ -103,6 +128,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     height: positive(scene.height, 1000),
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
     ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
+    ...(Array.isArray(scene.lanes) ? { lanes: normalizeCanvasLanes(scene.lanes, positive(scene.width, 1600), positive(scene.height, 1000)) } : {}),
   }
 }
 
@@ -116,7 +142,9 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const text = colors?.text || '#171717'
   const border = colors?.border || '#8a8a8a'
   const note = colors?.note || '#fff7cc'
-  const nodes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const allNodes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const collapsedGroups = new Set((scene.groups ?? []).filter((group) => group.collapsed).map((group) => group.id))
+  const nodes = new Map([...allNodes.values()].filter((item) => !item.groupId || !collapsedGroups.has(item.groupId)).map((item) => [item.id, item]))
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
     const from = nodes.get(arrow.from)
     const to = nodes.get(arrow.to)
@@ -137,20 +165,33 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
     const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
-    const icon = item.icon ? `<text x="${item.x + 14}" y="${item.y + 20}" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasIconLabel(item.icon))}</text>` : ''
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${texts}</g>`
+    const iconLabel = item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : ''
+    const icon = iconLabel ? `<text x="${item.x + 14}" y="${item.y + 20}" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(iconLabel)}</text>` : ''
+    const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
+    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${texts}${subtitle}</g>`
   }).join('')
   const groups = (scene.groups ?? []).map((group) => {
-    const members = [...nodes.values()].filter((item) => item.groupId === group.id)
+    const members = [...allNodes.values()].filter((item) => item.groupId === group.id)
     if (members.length < 2) return ''
     const minX = Math.min(...members.map((item) => item.x)) - 24
     const minY = Math.min(...members.map((item) => item.y)) - 42
     const maxX = Math.max(...members.map((item) => item.x + item.width)) + 24
     const maxY = Math.max(...members.map((item) => item.y + item.height)) + 24
     const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
-    return `<g><rect x="${minX}" y="${minY}" width="${maxX - minX}" height="${maxY - minY}" rx="18" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="8 6"/>${group.label ? `<text x="${minX + 14}" y="${minY + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(group.label)}</text>` : ''}</g>`
+    const dash = group.kind === 'boundary' ? '12 6' : '8 6'
+    const width = group.collapsed ? Math.min(260, maxX - minX) : maxX - minX
+    const height = group.collapsed ? 54 : maxY - minY
+    return `<g><rect x="${minX}" y="${minY}" width="${width}" height="${height}" rx="18" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="${dash}"/>${group.label ? `<text x="${minX + 14}" y="${minY + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(group.label)}${group.collapsed ? ' · collapsed' : ''}</text>` : ''}</g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${groups}${arrows}${shapes}</svg>`
+  const lanes = (scene.lanes ?? []).map((lane) => {
+    const palette = canvasTonePalette(lane.tone ?? 'muted', { panel, text, border, note }, 'node')
+    const x = lane.axis === 'vertical' ? lane.start : 0
+    const y = lane.axis === 'horizontal' ? lane.start : 0
+    const width = lane.axis === 'vertical' ? lane.size : scene.width
+    const height = lane.axis === 'horizontal' ? lane.size : scene.height
+    return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.fill)}" fill-opacity="0.2" stroke="${escapeXml(palette.stroke)}" stroke-width="1" stroke-dasharray="4 6"/><text x="${x + 12}" y="${y + 20}" font-size="12" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
+  }).join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${arrows}${shapes}</svg>`
 }
 
 function centerOfCanvasBox(item: CanvasNode | CanvasNote) {
@@ -177,17 +218,29 @@ export function anchorPoint(item: CanvasNode | CanvasNote, anchor: CanvasAnchor 
   }
 }
 
-export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points'>): string {
+export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor'>): string {
   const points = arrow.points?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
   if (points.length > 0) return [`M ${start.x} ${start.y}`, ...points.map((point) => `L ${point.x} ${point.y}`), `L ${end.x} ${end.y}`].join(' ')
   return arrow.routing === 'orthogonal'
-    ? orthogonalSvgPath(start.x, start.y, end.x, end.y)
+    ? orthogonalSvgPath(start.x, start.y, end.x, end.y, preferredOrthogonalAxis(arrow.fromAnchor, arrow.toAnchor, start, end))
     : `M ${start.x} ${start.y} L ${end.x} ${end.y}`
 }
 
-function orthogonalSvgPath(x1: number, y1: number, x2: number, y2: number): string {
+function orthogonalSvgPath(x1: number, y1: number, x2: number, y2: number, axis: 'x' | 'y'): string {
+  if (axis === 'y') {
+    const midY = (y1 + y2) / 2
+    return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`
+  }
   const midX = (x1 + x2) / 2
   return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`
+}
+
+function preferredOrthogonalAxis(from: CanvasAnchor | undefined, to: CanvasAnchor | undefined, start: CanvasPoint, end: CanvasPoint): 'x' | 'y' {
+  const horizontalAnchors = new Set<CanvasAnchor>(['left', 'right'])
+  const verticalAnchors = new Set<CanvasAnchor>(['top', 'bottom'])
+  if ((from && horizontalAnchors.has(from)) || (to && horizontalAnchors.has(to))) return 'x'
+  if ((from && verticalAnchors.has(from)) || (to && verticalAnchors.has(to))) return 'y'
+  return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y) ? 'x' : 'y'
 }
 
 function shapeRadius(shape: CanvasShape | undefined, height: number): number {
@@ -244,6 +297,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
   const icons: CanvasIcon[] = ['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']
+  const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']
   return {
     id: item.id,
     type: item.type,
@@ -258,6 +312,11 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(typeof item.groupId === 'string' && item.groupId.trim() ? { groupId: item.groupId.trim() } : {}),
     ...(Array.isArray(item.sourcePaths) ? { sourcePaths: item.sourcePaths.filter((path) => typeof path === 'string' && path.trim()).map((path) => path.trim()).slice(0, 12) } : {}),
     ...(item.icon && icons.includes(item.icon) ? { icon: item.icon } : {}),
+    ...(item.stencil && stencils.includes(item.stencil) ? { stencil: item.stencil } : {}),
+    ...(typeof item.subtitle === 'string' && item.subtitle.trim() ? { subtitle: item.subtitle.trim().slice(0, 120) } : {}),
+    ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim().slice(0, 1000) } : {}),
+    ...(Array.isArray(item.tags) ? { tags: item.tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()).slice(0, 12) } : {}),
+    ...(typeof item.laneId === 'string' && item.laneId.trim() ? { laneId: item.laneId.trim() } : {}),
   }
 }
 
@@ -274,8 +333,39 @@ function normalizeCanvasGroups(value: unknown[]): CanvasGroup[] {
       id,
       ...(typeof item.label === 'string' && item.label.trim() ? { label: item.label.trim() } : {}),
       ...(typeof item.tone === 'string' && tones.includes(item.tone as CanvasTone) ? { tone: item.tone as CanvasTone } : {}),
+      ...(item.kind === 'group' || item.kind === 'boundary' ? { kind: item.kind as CanvasGroupKind } : {}),
+      ...(item.collapsed === true ? { collapsed: true } : {}),
     }]
   })
+}
+
+function normalizeCanvasLanes(value: unknown[], width: number, height: number): CanvasLane[] {
+  const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
+  const seen = new Set<string>()
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object') return []
+    const item = raw as Record<string, unknown>
+    if (typeof item.id !== 'string' || !item.id.trim() || seen.has(item.id.trim())) return []
+    if (typeof item.label !== 'string' || !item.label.trim()) return []
+    if (item.axis !== 'horizontal' && item.axis !== 'vertical') return []
+    const id = item.id.trim()
+    const max = item.axis === 'horizontal' ? height : width
+    const start = Math.max(0, Math.min(max, typeof item.start === 'number' && Number.isFinite(item.start) ? item.start : 0))
+    const size = Math.max(64, Math.min(max - start || 64, typeof item.size === 'number' && Number.isFinite(item.size) ? item.size : 240))
+    seen.add(id)
+    return [{
+      id,
+      label: item.label.trim().slice(0, 120),
+      axis: item.axis,
+      start,
+      size,
+      ...(typeof item.tone === 'string' && tones.includes(item.tone as CanvasTone) ? { tone: item.tone as CanvasTone } : {}),
+    }]
+  })
+}
+
+export function canvasStencilLabel(stencil: CanvasStencil): string {
+  return ({ spring: 'SPRING', react: 'REACT', vue: 'VUE', postgres: 'PG', mysql: 'MYSQL', redis: 'REDIS', kafka: 'KAFKA', docker: 'DOCKER', kubernetes: 'K8S', qdrant: 'QDRANT', opensearch: 'OS', minio: 'S3' })[stencil]
 }
 
 export function canvasIconLabel(icon: CanvasIcon): string {

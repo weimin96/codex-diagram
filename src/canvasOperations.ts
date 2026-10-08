@@ -1,4 +1,4 @@
-import type { CanvasArrow, CanvasElement, CanvasGroup, CanvasNode, CanvasNote, CanvasScene } from './canvas.js'
+import type { CanvasArrow, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasScene, CanvasStencil } from './canvas.js'
 
 export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasElement[] {
   const chosen = new Set(ids)
@@ -168,11 +168,65 @@ export function updateCanvasGroup(scene: CanvasScene, groupId: string, patch: Pa
 }
 
 export type CanvasLayoutMode = 'horizontal' | 'vertical' | 'grid'
+export type CanvasArchitectureTemplate = 'web-service' | 'event-driven' | 'cache-aside'
+
+export function insertCanvasArchitectureTemplate(scene: CanvasScene, template: CanvasArchitectureTemplate): { scene: CanvasScene; selectedIds: string[] } {
+  const used: CanvasElement[] = [...scene.elements]
+  const existingBoxes = scene.elements.filter((item) => item.type !== 'arrow').length
+  const originX = 120 + (existingBoxes % 3) * 48
+  const originY = 120 + (existingBoxes % 4) * 42
+  const added: CanvasElement[] = []
+  const node = (text: string, x: number, y: number, icon: CanvasIcon, stencil?: CanvasStencil, subtitle?: string) => {
+    const id = nextCanvasElementId('node', [...used, ...added])
+    added.push({ id, type: 'node', x: originX + x, y: originY + y, width: 210, height: 92, text, icon, stencil, subtitle, tone: 'default' })
+    return id
+  }
+  const arrow = (from: string, to: string, label?: string) => {
+    const id = nextCanvasElementId('arrow', [...used, ...added])
+    added.push({ id, type: 'arrow', from, to, label, routing: 'orthogonal', fromAnchor: 'right', toAnchor: 'left' })
+  }
+
+  if (template === 'web-service') {
+    const web = node('Web App', 0, 140, 'web', 'react', 'UI / Client')
+    const api = node('API Gateway', 300, 140, 'api', undefined, 'HTTP / Auth')
+    const service = node('Application Service', 600, 140, 'service', 'spring', 'Business Logic')
+    const db = node('Database', 900, 40, 'database', 'postgres')
+    const cache = node('Cache', 900, 240, 'cache', 'redis')
+    arrow(web, api, 'HTTPS')
+    arrow(api, service, 'request')
+    arrow(service, db, 'read/write')
+    arrow(service, cache, 'cache')
+  } else if (template === 'event-driven') {
+    const producer = node('Producer Service', 0, 140, 'service', 'spring')
+    const broker = node('Event Bus', 330, 140, 'queue', 'kafka')
+    const consumer = node('Consumer Service', 660, 60, 'service', 'spring')
+    const worker = node('Async Worker', 660, 240, 'service')
+    const store = node('State Store', 960, 140, 'database', 'postgres')
+    arrow(producer, broker, 'publish')
+    arrow(broker, consumer, 'consume')
+    arrow(broker, worker, 'consume')
+    arrow(consumer, store, 'persist')
+    arrow(worker, store, 'persist')
+  } else {
+    const client = node('Client', 0, 140, 'web')
+    const service = node('Application Service', 300, 140, 'service', 'spring')
+    const cache = node('Cache', 620, 40, 'cache', 'redis')
+    const db = node('Database', 620, 240, 'database', 'postgres')
+    arrow(client, service, 'request')
+    arrow(service, cache, 'lookup')
+    arrow(service, db, 'fallback')
+  }
+
+  const nodeIds = added.filter((item) => item.type !== 'arrow').map((item) => item.id)
+  return { scene: { ...scene, elements: [...scene.elements, ...added] }, selectedIds: nodeIds }
+}
 
 export function layoutCanvasScene(scene: CanvasScene, mode: CanvasLayoutMode, grid = 16): CanvasScene {
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const mutable = boxes.filter((item) => !item.locked)
   if (mutable.length < 2) return scene
+
+  if (scene.lanes?.length) return layoutCanvasWithinLanes(scene, mode, grid)
 
   if (mode === 'grid') {
     const columns = Math.max(2, Math.ceil(Math.sqrt(mutable.length)))
@@ -235,6 +289,62 @@ export function layoutCanvasScene(scene: CanvasScene, mode: CanvasLayoutMode, gr
   return applyLayoutPositions(scene, positions)
 }
 
+export function createCanvasLanePreset(scene: CanvasScene, axis: CanvasLaneAxis, count = 3): CanvasScene {
+  const safeCount = Math.max(2, Math.min(6, Math.floor(count)))
+  const extent = axis === 'horizontal' ? scene.height : scene.width
+  const size = extent / safeCount
+  const lanes: CanvasLane[] = Array.from({ length: safeCount }, (_, index) => ({
+    id: `lane-${axis}-${index + 1}`,
+    label: `Lane ${index + 1}`,
+    axis,
+    start: index * size,
+    size,
+    tone: index % 2 === 0 ? 'muted' : 'default',
+  }))
+  const elements = scene.elements.map((item) => {
+    if (item.type === 'arrow') return item
+    const center = axis === 'horizontal' ? item.y + item.height / 2 : item.x + item.width / 2
+    const lane = lanes[Math.min(safeCount - 1, Math.max(0, Math.floor(center / size)))]
+    return { ...item, laneId: lane.id }
+  })
+  return { ...scene, lanes, elements }
+}
+
+export function clearCanvasLanes(scene: CanvasScene): CanvasScene {
+  return {
+    ...scene,
+    lanes: undefined,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || !item.laneId) return item
+      const { laneId: _laneId, ...rest } = item
+      return rest
+    }),
+  }
+}
+
+export function assignCanvasSelectionToLane(scene: CanvasScene, ids: string[], laneId?: string): CanvasScene {
+  const allowed = laneId ? scene.lanes?.some((lane) => lane.id === laneId) : true
+  if (!allowed) return scene
+  const selected = new Set(ids)
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || !selected.has(item.id) || item.locked) return item
+      if (laneId) return { ...item, laneId }
+      const { laneId: _laneId, ...rest } = item
+      return rest
+    }),
+  }
+}
+
+export function updateCanvasLane(scene: CanvasScene, laneId: string, patch: Partial<Omit<CanvasLane, 'id'>>): CanvasScene {
+  if (!scene.lanes?.some((lane) => lane.id === laneId)) return scene
+  return {
+    ...scene,
+    lanes: scene.lanes.map((lane) => lane.id === laneId ? { ...lane, ...patch, id: lane.id } : lane),
+  }
+}
+
 export function expandCanvasGroupSelection(scene: CanvasScene, ids: string[]): string[] {
   const groups = new Set(scene.elements
     .filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id) && Boolean(item.groupId))
@@ -286,6 +396,40 @@ function applyLayoutPositions(scene: CanvasScene, positions: Map<string, { x: nu
       }
     }),
   }
+}
+
+function layoutCanvasWithinLanes(scene: CanvasScene, mode: CanvasLayoutMode, grid: number): CanvasScene {
+  const lanes = scene.lanes ?? []
+  const positions = new Map<string, { x: number; y: number }>()
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !item.locked)
+  for (const lane of lanes) {
+    const members = boxes.filter((item) => item.laneId === lane.id)
+    if (!members.length) continue
+    const columns = mode === 'grid' ? Math.max(1, Math.ceil(Math.sqrt(members.length))) : mode === 'horizontal' ? members.length : 1
+    members.forEach((item, index) => {
+      if (lane.axis === 'horizontal') {
+        const usableWidth = Math.max(220, scene.width - 160)
+        const cellWidth = usableWidth / Math.max(1, columns)
+        const row = Math.floor(index / columns)
+        const col = index % columns
+        positions.set(item.id, {
+          x: snap(80 + col * cellWidth + Math.max(0, (cellWidth - item.width) / 2), grid),
+          y: snap(lane.start + 46 + row * 140, grid),
+        })
+      } else {
+        const rows = mode === 'vertical' ? members.length : Math.max(1, Math.ceil(members.length / columns))
+        const usableHeight = Math.max(160, scene.height - 120)
+        const cellHeight = usableHeight / Math.max(1, rows)
+        const col = mode === 'vertical' ? 0 : index % columns
+        const row = mode === 'vertical' ? index : Math.floor(index / columns)
+        positions.set(item.id, {
+          x: snap(lane.start + 34 + col * 240, grid),
+          y: snap(60 + row * cellHeight + Math.max(0, (cellHeight - item.height) / 2), grid),
+        })
+      }
+    })
+  }
+  return applyLayoutPositions(scene, positions)
 }
 
 function upsertCanvasGroup(groups: CanvasGroup[] | undefined, next: CanvasGroup): CanvasGroup[] {

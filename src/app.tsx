@@ -663,12 +663,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
-  async function acceptAiProposal() {
+  async function acceptAiProposal(elementIds?: string[]) {
     if (!aiProposal || saving) return
     setSaving(true)
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.applyProposal', {})
+      const result = await callTool<DiagramResult>('diagram.applyProposal', elementIds?.length ? { elementIds } : {})
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
@@ -854,7 +854,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
     const compact = canvasSelection.elements.map((element) => {
       if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
-      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, stencil: element.stencil, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
     })
     await sendModification([
       '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
@@ -1324,7 +1324,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             reason={aiProposal.summary.reason}
             applying={saving}
             onClose={() => setProposalReviewOpen(false)}
-            onAccept={() => void acceptAiProposal()}
+            onAccept={(elementIds) => void acceptAiProposal(elementIds)}
             onReject={() => void dismissAiProposal()}
           />
         ) : null}
@@ -1400,12 +1400,17 @@ function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccep
   reason?: string
   applying: boolean
   onClose: () => void
-  onAccept: () => void
+  onAccept: (elementIds?: string[]) => void
   onReject: () => void
 }) {
   const diff = useMemo(() => buildLineDiff(before.source, after.source), [after.source, before.source])
   const added = diff.filter((line) => line.kind === 'add').length
   const removed = diff.filter((line) => line.kind === 'remove').length
+  const canvasChanges = useMemo(() => buildCanvasProposalChanges(before, after), [after, before])
+  const [selectedChangeIds, setSelectedChangeIds] = useState<string[]>([])
+  useEffect(() => {
+    setSelectedChangeIds(canvasChanges?.map((item) => item.id) ?? [])
+  }, [canvasChanges])
   return (
     <aside className="change-review-panel proposal-review-panel" aria-label="Codex 候选修改">
       <div className="change-review-head">
@@ -1418,6 +1423,25 @@ function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccep
       </div>
       <div className="change-review-path">{after.path}</div>
       {reason ? <div className="proposal-review-reason">{reason}</div> : null}
+      {canvasChanges?.length ? (
+        <div className="proposal-element-changes" aria-label="候选元素修改">
+          <div className="proposal-element-head">
+            <strong>Canvas 元素</strong>
+            <span>{selectedChangeIds.length}/{canvasChanges.length} 已选择</span>
+          </div>
+          {canvasChanges.map((change) => (
+            <label key={change.id} className="proposal-element-row">
+              <input
+                type="checkbox"
+                checked={selectedChangeIds.includes(change.id)}
+                onChange={(event) => setSelectedChangeIds((current) => event.target.checked ? [...current, change.id] : current.filter((id) => id !== change.id))}
+              />
+              <span className={`proposal-change-kind is-${change.kind}`}>{change.kind === 'add' ? '新增' : change.kind === 'remove' ? '删除' : '修改'}</span>
+              <code>{change.label}</code>
+            </label>
+          ))}
+        </div>
+      ) : null}
       <div className="change-review-diff" role="log" aria-label="候选源码差异">
         {diff.map((line, index) => (
           <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
@@ -1428,10 +1452,39 @@ function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccep
       </div>
       <div className="change-review-actions">
         <button type="button" disabled={applying} onClick={onReject}>拒绝</button>
-        <button className="primary-button" type="button" disabled={applying} onClick={onAccept}>{applying ? '应用中…' : '接受并写入'}</button>
+        {canvasChanges?.length ? <button type="button" disabled={applying || selectedChangeIds.length === 0 || selectedChangeIds.length === canvasChanges.length} onClick={() => onAccept(selectedChangeIds)}>{applying ? '应用中…' : `仅应用已选 (${selectedChangeIds.length})`}</button> : null}
+        <button className="primary-button" type="button" disabled={applying} onClick={() => onAccept()}>{applying ? '应用中…' : '全部接受'}</button>
       </div>
     </aside>
   )
+}
+
+type CanvasProposalChange = { id: string; kind: 'add' | 'remove' | 'update'; label: string }
+
+function buildCanvasProposalChanges(before: DiagramDocument, after: DiagramDocument): CanvasProposalChange[] | null {
+  if (before.type !== 'canvas' || after.type !== 'canvas') return null
+  try {
+    const left = parseCanvasScene(before.source)
+    const right = parseCanvasScene(after.source)
+    const leftById = new Map(left.elements.map((item) => [item.id, item]))
+    const rightById = new Map(right.elements.map((item) => [item.id, item]))
+    const ids = [...new Set([...leftById.keys(), ...rightById.keys()])]
+    return ids.flatMap((id) => {
+      const previous = leftById.get(id)
+      const next = rightById.get(id)
+      if (!previous && next) return [{ id, kind: 'add' as const, label: canvasElementReviewLabel(next) }]
+      if (previous && !next) return [{ id, kind: 'remove' as const, label: canvasElementReviewLabel(previous) }]
+      if (!previous || !next || JSON.stringify(previous) === JSON.stringify(next)) return []
+      return [{ id, kind: 'update' as const, label: canvasElementReviewLabel(next) }]
+    })
+  } catch {
+    return null
+  }
+}
+
+function canvasElementReviewLabel(element: ReturnType<typeof parseCanvasScene>['elements'][number]): string {
+  if (element.type === 'arrow') return `${element.id}: ${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
+  return `${element.id}: ${element.text}`
 }
 
 type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string }
@@ -1822,7 +1875,7 @@ async function sendCodexMessage(text: string): Promise<void> {
 function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
   const selectedCanvasElements = canvasSelection?.elements.map((element) => {
     if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
-    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
+    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, stencil: element.stencil, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
   })
   void openai.modelContext?.update({
     content: [{

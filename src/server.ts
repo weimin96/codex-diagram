@@ -7,7 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasElement, type CanvasScene } from './canvas.js'
 import { DiagramStore } from './store.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
@@ -352,17 +352,20 @@ server.registerTool('diagram.proposal', {
 
 server.registerTool('diagram.applyProposal', {
   title: 'Apply diagram proposal',
-  description: 'Internal app bridge for accepting the pending Diagram proposal after user review.',
-  inputSchema: z.object({}),
+  description: 'Internal app bridge for accepting the pending Diagram proposal after user review. Canvas proposals may pass elementIds to apply only selected nodes/links while preserving the rest of the current document.',
+  inputSchema: z.object({ elementIds: z.array(z.string().min(1)).max(200).optional() }),
   annotations: write,
   _meta: appOnly,
-}, async (_args, extra) => {
+}, async ({ elementIds }, extra) => {
   const threadId = toolThreadId(extra._meta)
   if (!threadId) throw new Error('当前调用没有聊天上下文。')
   const proposal = threadProposals.get(threadId)
   if (!proposal) throw new Error('当前聊天没有待应用的 Diagram Proposal。')
   const store = await DiagramStore.open(proposal.workspacePath)
-  const diagram = await store.update(proposal.path, proposal.source, proposal.baseModifiedAt)
+  const source = elementIds?.length
+    ? mergeCanvasProposalElements(proposal.baseSource, proposal.source, elementIds)
+    : proposal.source
+  const diagram = await store.update(proposal.path, source, proposal.baseModifiedAt)
   threadProposals.delete(threadId)
   markThreadDiagram(extra._meta, diagram.path)
   return {
@@ -657,6 +660,67 @@ function proposalSummary(proposal: { path: string; reason?: string; baseModified
     baseModifiedAt: proposal.baseModifiedAt,
     updatedAt: proposal.updatedAt,
   }
+}
+
+function mergeCanvasProposalElements(baseSource: string, candidateSource: string, elementIds: string[]): string {
+  let base: CanvasScene
+  let candidate: CanvasScene
+  try {
+    base = parseCanvasScene(baseSource)
+    candidate = parseCanvasScene(candidateSource)
+  } catch {
+    throw new Error('部分接受仅支持结构有效的 Canvas Proposal。')
+  }
+  const selected = new Set(elementIds)
+  const candidateById = new Map(candidate.elements.map((item) => [item.id, item]))
+  const relatedArrowIds = new Set<string>()
+  for (const item of candidate.elements) {
+    if (item.type === 'arrow' && (selected.has(item.id) || selected.has(item.from) || selected.has(item.to))) relatedArrowIds.add(item.id)
+  }
+  for (const item of base.elements) {
+    if (item.type === 'arrow' && (selected.has(item.id) || selected.has(item.from) || selected.has(item.to))) relatedArrowIds.add(item.id)
+  }
+  const affected = new Set([...selected, ...relatedArrowIds])
+  const nextElements: CanvasElement[] = []
+  const seen = new Set<string>()
+  for (const item of base.elements) {
+    if (!affected.has(item.id)) {
+      nextElements.push(item)
+      seen.add(item.id)
+      continue
+    }
+    const replacement = candidateById.get(item.id)
+    if (replacement) {
+      nextElements.push(replacement)
+      seen.add(item.id)
+    }
+  }
+  for (const item of candidate.elements) {
+    if (!affected.has(item.id) || seen.has(item.id)) continue
+    nextElements.push(item)
+    seen.add(item.id)
+  }
+  const liveNodeIds = new Set(nextElements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+  const sanitized = nextElements.filter((item) => item.type !== 'arrow' || (liveNodeIds.has(item.from) && liveNodeIds.has(item.to)))
+  const groupIds = new Set(sanitized.flatMap((item) => item.type === 'arrow' || !item.groupId ? [] : [item.groupId]))
+  const laneIds = new Set(sanitized.flatMap((item) => item.type === 'arrow' || !item.laneId ? [] : [item.laneId]))
+  const groups = mergeCanvasMetadataById(base.groups, candidate.groups, groupIds)
+  const lanes = mergeCanvasMetadataById(base.lanes, candidate.lanes, laneIds)
+  return serializeCanvasScene({
+    ...base,
+    elements: sanitized,
+    groups: groups.length ? groups : undefined,
+    lanes: lanes.length ? lanes : undefined,
+  })
+}
+
+function mergeCanvasMetadataById<T extends { id: string }>(base: T[] | undefined, candidate: T[] | undefined, usedIds: Set<string>): T[] {
+  const candidateById = new Map((candidate ?? []).map((item) => [item.id, item]))
+  const baseById = new Map((base ?? []).map((item) => [item.id, item]))
+  return [...usedIds].flatMap((id) => {
+    const item = candidateById.get(id) ?? baseById.get(id)
+    return item ? [item] : []
+  })
 }
 
 interface CodexDesktopState {
