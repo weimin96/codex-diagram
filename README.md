@@ -1,6 +1,6 @@
 # Codex Diagram
 
-Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐与选区 Codex 上下文。
+Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、样式 Inspector、MiniMap 与选区 Codex 上下文。
 
 当前支持：
 
@@ -9,6 +9,7 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 聊天目录优先：模型调用 `diagram.create` 时默认使用当前 thread 绑定的项目目录，不需要传 `workspacePath`；新图统一进入该项目的 `docs/diagrams/`
 - 自由画板：让 Codex 调 `diagram.create(type=canvas)` 即可在当前聊天项目中创建 `.diagram.json` 画板，创建后右侧面板自动跟随到新画板
 - 对话双向联动：Codex 在同一聊天调用 `diagram.get/create/update/rename/duplicate` 后，右侧面板自动跟随到对应图；用户在面板切图后，Model Context 也同步回当前聊天
+- Thread 右侧会把当前聊天最近涉及的图表收进临时 Tabs；Codex 操作新图时自动加入，用户可手动切换/关闭，最多保留 6 张，避免架构图、时序图、ER 图之间反复使用下拉框
 - “跟随”可随时暂停，避免 Codex 为分析临时读取其他图时右侧面板频繁跳转；恢复后会继续跟随当前对话状态
 - Thread 空面板会自动发现当前项目中新创建或恢复的图表，不需要关闭重开 Diagram
 - `diagram.thread` 是唯一的右侧面板打开入口：模型可直接调用它，Host 以 fullscreen side-tab 自动打开一个持续复用的 `Diagram` 标签；后续 `diagram.get/create/update` 只改数据，由该面板自动跟随，避免每个业务工具各开一个标签页
@@ -42,7 +43,9 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 分屏模式支持拖动调整 Mermaid 源码与预览宽度
 - 保存时使用文件 revision 防止覆盖 Codex / IDE 的并发修改
 - 图表支持重命名、复制与删除；重命名和删除同样带 revision 并发保护
-- 自由画布支持节点、备注、连接、拖拽、文字编辑、缩放/平移、多选/框选、复制粘贴、撤销重做、节点 resize、对齐和删除，并与 Mermaid 共用保存、并发保护和导出链路
+- 自由画布支持节点、备注、连接、拖拽、文字编辑、缩放/平移、多选/框选、复制粘贴、撤销重做、节点 resize、对齐/等距分布、删除，并与 Mermaid 共用保存、并发保护和导出链路
+- Canvas 节点支持默认/强调/成功/警告/危险/弱化语义色，圆角/方形/胶囊形状，以及锁定；连线支持标签、实线/虚线和直线/正交路由
+- Canvas 支持右键菜单、前后图层调整和 MiniMap；锁定节点仍可选中查看，但不会被拖动、resize、对齐或 AI 无意重排
 - Canvas 选中元素会同步到当前聊天 Model Context；右侧可直接“调整选中”，让 Codex 只修改当前选区
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
 - Canvas 文档默认保存为 `docs/diagrams/*.diagram.json`，可以直接进入 Git diff，也不会被源码选择器误当成业务 JSON

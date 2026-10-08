@@ -1,4 +1,8 @@
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
+export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
+export type CanvasShape = 'rounded' | 'square' | 'pill'
+export type CanvasLineStyle = 'solid' | 'dashed'
+export type CanvasRouting = 'straight' | 'orthogonal'
 
 export interface CanvasScene {
   type: 'codex-diagram-canvas'
@@ -17,6 +21,9 @@ export interface CanvasNode {
   width: number
   height: number
   text: string
+  tone?: CanvasTone
+  shape?: CanvasShape
+  locked?: boolean
 }
 
 export interface CanvasNote {
@@ -27,6 +34,9 @@ export interface CanvasNote {
   width: number
   height: number
   text: string
+  tone?: CanvasTone
+  shape?: CanvasShape
+  locked?: boolean
 }
 
 export interface CanvasArrow {
@@ -35,6 +45,8 @@ export interface CanvasArrow {
   from: string
   to: string
   label?: string
+  lineStyle?: CanvasLineStyle
+  routing?: CanvasRouting
 }
 
 export function createCanvasSource(title: string): string {
@@ -70,7 +82,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     title: typeof scene.title === 'string' ? scene.title : 'Canvas',
     width: positive(scene.width, 1600),
     height: positive(scene.height, 1000),
-    elements: scene.elements.filter(isCanvasElement),
+    elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
   }
 }
 
@@ -89,19 +101,67 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const from = nodes.get(arrow.from)
     const to = nodes.get(arrow.to)
     if (!from || !to) return ''
-    const x1 = from.x + from.width / 2
-    const y1 = from.y + from.height / 2
-    const x2 = to.x + to.width / 2
-    const y2 = to.y + to.height / 2
-    return `<g><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeXml(border)}" stroke-width="2" marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
+    const fromCenter = centerOfCanvasBox(from)
+    const toCenter = centerOfCanvasBox(to)
+    const start = edgePoint(from, toCenter)
+    const end = edgePoint(to, fromCenter)
+    const x1 = start.x
+    const y1 = start.y
+    const x2 = end.x
+    const y2 = end.y
+    const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
+    const geometry = arrow.routing === 'orthogonal'
+      ? orthogonalSvgPath(x1, y1, x2, y2)
+      : `M ${x1} ${y1} L ${x2} ${y2}`
+    return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
-    const fill = item.type === 'note' ? note : panel
+    const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
-    const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(text)}">${escapeXml(line)}</text>`).join('')
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="12" fill="${escapeXml(fill)}" stroke="${escapeXml(border)}" stroke-width="1.5"/>${texts}</g>`
+    const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
+    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${texts}</g>`
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${arrows}${shapes}</svg>`
+}
+
+function centerOfCanvasBox(item: CanvasNode | CanvasNote) {
+  return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
+}
+
+function edgePoint(item: CanvasNode | CanvasNote, toward: { x: number; y: number }) {
+  const origin = centerOfCanvasBox(item)
+  const dx = toward.x - origin.x
+  const dy = toward.y - origin.y
+  if (dx === 0 && dy === 0) return origin
+  const scale = 1 / Math.max(Math.abs(dx) / Math.max(1, item.width / 2), Math.abs(dy) / Math.max(1, item.height / 2))
+  return { x: origin.x + dx * scale, y: origin.y + dy * scale }
+}
+
+function orthogonalSvgPath(x1: number, y1: number, x2: number, y2: number): string {
+  const midX = (x1 + x2) / 2
+  return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`
+}
+
+function shapeRadius(shape: CanvasShape | undefined, height: number): number {
+  if (shape === 'square') return 3
+  if (shape === 'pill') return Math.max(12, height / 2)
+  return 12
+}
+
+function canvasTonePalette(
+  tone: CanvasTone | undefined,
+  colors: { panel: string; text: string; border: string; note: string },
+  kind: 'node' | 'note',
+) {
+  if (!tone || tone === 'default') return { fill: kind === 'note' ? colors.note : colors.panel, text: colors.text, stroke: colors.border }
+  const palettes: Record<Exclude<CanvasTone, 'default'>, { fill: string; text: string; stroke: string }> = {
+    accent: { fill: '#eef2ff', text: '#312e81', stroke: '#818cf8' },
+    success: { fill: '#ecfdf5', text: '#065f46', stroke: '#34d399' },
+    warning: { fill: '#fffbeb', text: '#92400e', stroke: '#fbbf24' },
+    danger: { fill: '#fef2f2', text: '#991b1b', stroke: '#f87171' },
+    muted: { fill: '#f5f5f5', text: '#525252', stroke: '#a3a3a3' },
+  }
+  return palettes[tone]
 }
 
 function positive(value: unknown, fallback: number): number {
@@ -116,6 +176,34 @@ function isCanvasElement(value: unknown): value is CanvasElement {
   return (item.type === 'node' || item.type === 'note')
     && [item.x, item.y, item.width, item.height].every((part) => typeof part === 'number' && Number.isFinite(part))
     && typeof item.text === 'string'
+}
+
+function normalizeCanvasElement(item: CanvasElement): CanvasElement {
+  if (item.type === 'arrow') {
+    return {
+      id: item.id,
+      type: 'arrow',
+      from: item.from,
+      to: item.to,
+      ...(typeof item.label === 'string' && item.label ? { label: item.label } : {}),
+      ...(item.lineStyle === 'solid' || item.lineStyle === 'dashed' ? { lineStyle: item.lineStyle } : {}),
+      ...(item.routing === 'straight' || item.routing === 'orthogonal' ? { routing: item.routing } : {}),
+    }
+  }
+  const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
+  const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
+  return {
+    id: item.id,
+    type: item.type,
+    x: item.x,
+    y: item.y,
+    width: item.width,
+    height: item.height,
+    text: item.text,
+    ...(item.tone && tones.includes(item.tone) ? { tone: item.tone } : {}),
+    ...(item.shape && shapes.includes(item.shape) ? { shape: item.shape } : {}),
+    ...(item.locked === true ? { locked: true } : {}),
+  }
 }
 
 function escapeXml(value: string): string {

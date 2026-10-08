@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasElement, type CanvasNode, type CanvasNote, type CanvasScene } from './canvas.js'
-import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, nextCanvasElementId, pasteCanvasSelection } from './canvasOperations.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasElement, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasTone } from './canvas.js'
+import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, distributeCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -17,6 +17,7 @@ interface CanvasEditorProps {
 
 type Viewport = { x: number; y: number; zoom: number }
 type SelectionRect = { x1: number; y1: number; x2: number; y2: number }
+type ContextMenuState = { x: number; y: number }
 type DragState =
   | { kind: 'move'; pointerId: number; startX: number; startY: number; before: string; positions: Map<string, { x: number; y: number }> }
   | { kind: 'pan'; pointerId: number; clientX: number; clientY: number; start: Viewport }
@@ -41,6 +42,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null)
   const [spacePanning, setSpacePanning] = useState(false)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
@@ -123,6 +125,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
         return
       }
       if (event.key === 'Escape') {
+        setContextMenu(null)
         setSelectedIds([])
         setConnectFrom(null)
         setTool('select')
@@ -156,6 +159,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
   const selected = scene.elements.filter((item) => selectedIds.includes(item.id))
   const selectedSingle = selected.length === 1 ? selected[0] : null
   const selectedBox = selectedSingle && selectedSingle.type !== 'arrow' ? selectedSingle : null
+  const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const selectedLocked = selectedBoxes.filter((item) => item.locked)
 
   function currentScene(): CanvasScene {
     if (!sceneRef.current) throw new Error('Canvas scene unavailable')
@@ -225,9 +230,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
   function deleteSelected() {
     if (selectedIds.length === 0) return
     const live = currentScene()
-    commit(deleteCanvasSelection(live, selectedIds))
+    const mutableIds = selected.filter((item) => item.type === 'arrow' || !item.locked).map((item) => item.id)
+    if (mutableIds.length === 0) return
+    commit(deleteCanvasSelection(live, mutableIds))
     setSelectedIds([])
     setConnectFrom(null)
+    setContextMenu(null)
   }
 
   function copySelection() {
@@ -245,6 +253,44 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
 
   function alignSelection(axis: 'x' | 'y') {
     commit(alignCanvasSelection(currentScene(), selectedIds, axis, GRID))
+  }
+
+  function distributeSelection(axis: 'x' | 'y') {
+    commit(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID))
+  }
+
+  function reorderSelection(direction: 'front' | 'back') {
+    commit(reorderCanvasSelection(currentScene(), selectedIds, direction))
+    setContextMenu(null)
+  }
+
+  function toggleSelectionLock() {
+    if (selectedBoxes.length === 0) return
+    const shouldLock = selectedLocked.length !== selectedBoxes.length
+    const ids = new Set(selectedBoxes.map((item) => item.id))
+    const live = currentScene()
+    commit({
+      ...live,
+      elements: live.elements.map((item) => item.type !== 'arrow' && ids.has(item.id) ? { ...item, locked: shouldLock || undefined } : item),
+    })
+    setContextMenu(null)
+  }
+
+  function updateSelectedBoxes(updater: (item: CanvasNode | CanvasNote) => CanvasNode | CanvasNote) {
+    if (selectedBoxes.length === 0) return
+    const ids = new Set(selectedBoxes.filter((item) => !item.locked).map((item) => item.id))
+    if (ids.size === 0) return
+    const live = currentScene()
+    commit({ ...live, elements: live.elements.map((item) => item.type !== 'arrow' && ids.has(item.id) ? updater(item) : item) })
+  }
+
+  function openContextMenu(event: React.MouseEvent, id: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    editorRef.current?.focus({ preventScroll: true })
+    if (!selectedIds.includes(id)) setSelectedIds([id])
+    const surface = editorRef.current?.getBoundingClientRect()
+    setContextMenu({ x: event.clientX - (surface?.left ?? 0), y: event.clientY - (surface?.top ?? 0) })
   }
 
   function handleBoxClick(id: string, event: React.MouseEvent<SVGGElement>) {
@@ -272,6 +318,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
   function startMove(event: React.PointerEvent<SVGGElement>, item: CanvasNode | CanvasNote) {
     if (tool !== 'select' || spacePanning) return
     event.stopPropagation()
+    setContextMenu(null)
     editorRef.current?.focus({ preventScroll: true })
     const live = currentScene()
     let ids = selectedIds
@@ -283,11 +330,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
       ids = event.shiftKey ? [...ids, item.id] : [item.id]
       setSelectedIds(ids)
     }
+    if (item.locked) return
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
     const positions = new Map<string, { x: number; y: number }>()
     live.elements.forEach((candidate) => {
-      if (candidate.type !== 'arrow' && ids.includes(candidate.id)) positions.set(candidate.id, { x: candidate.x, y: candidate.y })
+      if (candidate.type !== 'arrow' && ids.includes(candidate.id) && !candidate.locked) positions.set(candidate.id, { x: candidate.x, y: candidate.y })
     })
+    if (positions.size === 0) return
     drag.current = { kind: 'move', pointerId: event.pointerId, startX: point.x, startY: point.y, before: sourceRef.current, positions }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -329,6 +378,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
 
   function beginBackgroundPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (event.target !== event.currentTarget) return
+    setContextMenu(null)
     editorRef.current?.focus({ preventScroll: true })
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, event.currentTarget, live, viewport)
@@ -368,6 +418,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
   }
 
   function beginResize(event: React.PointerEvent<SVGRectElement>, item: CanvasNode | CanvasNote) {
+    if (item.locked) return
     event.stopPropagation()
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
@@ -422,6 +473,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
     setViewport({ x: 0, y: 0, zoom: 1 })
   }
 
+  function recenterFromMinimap(event: React.PointerEvent<SVGSVGElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const targetX = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * scene.width
+    const targetY = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * scene.height
+    setViewport((current) => {
+      const width = scene.width / current.zoom
+      const height = scene.height / current.zoom
+      return {
+        ...current,
+        x: clamp(targetX - width / 2, 0, Math.max(0, scene.width - width)),
+        y: clamp(targetY - height / 2, 0, Math.max(0, scene.height - height)),
+      }
+    })
+  }
+
   const viewWidth = scene.width / viewport.zoom
   const viewHeight = scene.height / viewport.zoom
 
@@ -447,10 +513,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
               <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
             </div>
             {selectedSingle?.type === 'arrow' ? (
-              <label>
-                <span>连线文字</span>
-                <input aria-label="连线文字" value={selectedSingle.label ?? ''} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, label: event.target.value || undefined } : item)} />
-              </label>
+              <>
+                <label>
+                  <span>连线文字</span>
+                  <input aria-label="连线文字" value={selectedSingle.label ?? ''} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, label: event.target.value || undefined } : item)} />
+                </label>
+                <div className="freeform-property-row">
+                  <label><span>线型</span><select aria-label="连线线型" value={selectedSingle.lineStyle ?? 'solid'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, lineStyle: event.target.value as CanvasLineStyle } : item)}><option value="solid">实线</option><option value="dashed">虚线</option></select></label>
+                  <label><span>路由</span><select aria-label="连线路由" value={selectedSingle.routing ?? 'straight'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, routing: event.target.value as CanvasRouting } : item)}><option value="straight">直线</option><option value="orthogonal">正交</option></select></label>
+                </div>
+              </>
             ) : null}
             {selectedBox ? (
               <>
@@ -460,20 +532,33 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
                     ref={textInputRef}
                     aria-label="选中元素文字"
                     value={selectedBox.text}
-                    onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' ? item : { ...item, text: event.target.value })}
+                    disabled={selectedBox.locked}
+                    onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, text: event.target.value })}
                   />
                 </label>
                 <div className="freeform-size-row">
-                  <label><span>W</span><input aria-label="元素宽度" type="number" min="100" value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
-                  <label><span>H</span><input aria-label="元素高度" type="number" min="60" value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
+                  <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
+                  <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
                 </div>
+                <div className="freeform-property-row">
+                  <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
+                  <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
+                </div>
+                <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedBox.locked ? '解锁元素' : '锁定元素'}</button>
               </>
             ) : null}
             {selected.length > 1 ? (
-              <div className="freeform-align-row">
-                <button type="button" aria-label="垂直对齐选中元素" onClick={() => alignSelection('x')}>垂直对齐</button>
-                <button type="button" aria-label="水平对齐选中元素" onClick={() => alignSelection('y')}>水平对齐</button>
-              </div>
+              <>
+                <div className="freeform-align-row">
+                  <button type="button" aria-label="垂直对齐选中元素" onClick={() => alignSelection('x')}>垂直对齐</button>
+                  <button type="button" aria-label="水平对齐选中元素" onClick={() => alignSelection('y')}>水平对齐</button>
+                </div>
+                <div className="freeform-align-row">
+                  <button type="button" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>水平分布</button>
+                  <button type="button" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>垂直分布</button>
+                </div>
+                <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length && selectedBoxes.length > 0 ? '解锁选中' : '锁定选中'}</button>
+              </>
             ) : null}
           </div>
         ) : null}
@@ -510,11 +595,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
             const from = boxes.find((item) => item.id === arrow.from)
             const to = boxes.find((item) => item.id === arrow.to)
             if (!from || !to) return null
-            const start = center(from)
-            const end = center(to)
+            const fromCenter = center(from)
+            const toCenter = center(to)
+            const start = connectionPoint(from, toCenter)
+            const end = connectionPoint(to, fromCenter)
+            const path = arrowPath(start, end, arrow.routing)
             return (
-              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}`} onPointerDown={(event) => { event.stopPropagation(); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
-                <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} markerEnd="url(#canvas-arrow)" />
+              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+                <path d={path} markerEnd="url(#canvas-arrow)" />
                 {arrow.label ? <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
               </g>
             )
@@ -522,24 +610,25 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
           {boxes.map((item) => (
             <g
               key={item.id}
-              className={`freeform-box freeform-${item.type}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}`}
+              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}`}
               transform={`translate(${item.x} ${item.y})`}
+              onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
               onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
               onDoubleClick={(event) => {
                 event.stopPropagation()
                 setSelectedIds([item.id])
-                window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
+                if (!item.locked) window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
               }}
               onPointerMove={(event) => moveSelection(event, item)}
               onPointerUp={finishGesture}
               onPointerCancel={finishGesture}
             >
-              <rect width={item.width} height={item.height} rx="14" />
+              <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
               <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">
                 {truncate(item.text, 28)}
               </text>
-              {selectedIds.length === 1 && selectedIds[0] === item.id ? (
+              {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? (
                 <rect
                   className="freeform-resize-handle"
                   x={item.width - 7}
@@ -561,6 +650,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
           })() : null}
         </svg>
 
+        {contextMenu ? (
+          <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button>
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('front')}>移到最前</button> : null}
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('back')}>移到最后</button> : null}
+            <span />
+            <button type="button" role="menuitem" className="is-danger" disabled={selectedBoxes.length > 0 && selectedLocked.length === selectedBoxes.length} onClick={deleteSelected}>删除</button>
+          </div>
+        ) : null}
+
         <div className="freeform-status">
           <span>{scene.elements.length} 个元素</span>
           {selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span>Space 拖动画布 · ⇧ 多选</span>}
@@ -572,6 +672,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange }: CanvasEdit
           <span />
           <button type="button" aria-label="适配画布" onClick={fit}>适配</button>
         </div>
+        <svg className="freeform-minimap" aria-label="画布缩略图" viewBox={`0 0 ${scene.width} ${scene.height}`} onPointerDown={recenterFromMinimap}>
+          <rect width={scene.width} height={scene.height} className="freeform-minimap-bg" />
+          {boxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
+          <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
+        </svg>
       </div>
     </div>
   )
@@ -583,6 +688,23 @@ function ToolButton({ active, title, onClick, children }: { active: boolean; tit
 
 function center(item: CanvasNode | CanvasNote) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
+}
+
+function connectionPoint(item: CanvasNode | CanvasNote, toward: { x: number; y: number }) {
+  const origin = center(item)
+  const dx = toward.x - origin.x
+  const dy = toward.y - origin.y
+  if (dx === 0 && dy === 0) return origin
+  const halfWidth = Math.max(1, item.width / 2)
+  const halfHeight = Math.max(1, item.height / 2)
+  const scale = 1 / Math.max(Math.abs(dx) / halfWidth, Math.abs(dy) / halfHeight)
+  return { x: origin.x + dx * scale, y: origin.y + dy * scale }
+}
+
+function arrowPath(start: { x: number; y: number }, end: { x: number; y: number }, routing?: CanvasRouting) {
+  if (routing !== 'orthogonal') return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+  const midX = (start.x + end.x) / 2
+  return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`
 }
 
 function scenePoint(clientX: number, clientY: number, svg: SVGSVGElement, scene: CanvasScene, viewport: Viewport) {

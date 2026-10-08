@@ -206,6 +206,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [followConversation, setFollowConversation] = useState(true)
+  const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
@@ -240,6 +241,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   useEffect(() => {
     setSelected(null)
+    setThreadTabs([])
     setCanvasSelection(null)
     setChangeReview(null)
     setChangeReviewOpen(false)
@@ -257,6 +259,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
+
+  useEffect(() => {
+    if (!isThread) return
+    const available = new Set(snapshot.diagrams.map((diagram) => diagram.path))
+    setThreadTabs((current) => current.filter((path) => available.has(path)))
+  }, [isThread, snapshot.diagrams])
 
   useEffect(() => {
     if (!selected || selected.type !== 'canvas') {
@@ -462,7 +470,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     return () => window.clearInterval(handle)
   }, [dirty, onSnapshot, snapshot, workspacePath])
 
-  async function selectDiagram(diagramPath: string, force = false) {
+  function rememberThreadTab(diagramPath: string) {
+    if (!isThread) return
+    setThreadTabs((current) => {
+      if (current.includes(diagramPath)) return current
+      return [...current, diagramPath].slice(-6)
+    })
+  }
+
+  function closeThreadTab(diagramPath: string) {
+    if (!isThread) return
+    const index = threadTabs.indexOf(diagramPath)
+    const next = threadTabs.filter((path) => path !== diagramPath)
+    setThreadTabs(next)
+    if (selected?.path !== diagramPath || next.length === 0) return
+    const fallback = next[Math.min(Math.max(0, index - 1), next.length - 1)]
+    if (fallback) void selectDiagram(fallback, true, false)
+  }
+
+  async function selectDiagram(diagramPath: string, force = false, remember = true) {
     if (!force && dirty) {
       setDiscardTarget({ kind: 'diagram', path: diagramPath })
       return
@@ -481,6 +507,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
+      if (remember) rememberThreadTab(result.diagram.path)
       updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -613,6 +640,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setCreating(false)
+      rememberThreadTab(result.diagram.path)
       updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -637,6 +665,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSource(result.diagram.source)
       setRenaming(false)
       setDocumentMenuOpen(false)
+      if (isThread) setThreadTabs((current) => current.map((path) => path === selected.path ? result.diagram.path : path))
       updateModelContext(workspacePath, result.diagram)
       setNotice(`已重命名为 ${result.diagram.name}`)
     } catch (cause) {
@@ -658,6 +687,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSource(result.diagram.source)
       setDocumentMenuOpen(false)
       setRenaming(false)
+      rememberThreadTab(result.diagram.path)
       updateModelContext(workspacePath, result.diagram)
       setNotice(`已复制为 ${result.diagram.name}`)
     } catch (cause) {
@@ -739,8 +769,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   async function updateSelectedCanvasFromConversation() {
     if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
     const compact = canvasSelection.elements.map((element) => {
-      if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label }
-      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height }
+      if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked }
     })
     await sendModification([
       '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
@@ -960,6 +990,23 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               </select>
             </div>
             <button className="thread-new-button" type="button" onClick={() => setAiOpen(true)}>新图</button>
+            {threadTabs.length > 0 ? (
+              <div className="thread-diagram-tabs" aria-label="当前对话图表">
+                {threadTabs.map((path) => {
+                  const diagram = snapshot.diagrams.find((item) => item.path === path)
+                  if (!diagram) return null
+                  return (
+                    <div key={path} className={`thread-diagram-tab${selected?.path === path ? ' is-active' : ''}`}>
+                      <button type="button" className="thread-diagram-tab-main" onClick={() => void selectDiagram(path)} title={path}>
+                        <span>{diagram.name}</span>
+                        <small>{diagramLabel(diagram.type)}</small>
+                      </button>
+                      <button type="button" className="thread-diagram-tab-close" aria-label={`关闭 ${diagram.name}`} onClick={() => closeThreadTab(path)}>×</button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
             {selected ? (
               <div className="thread-chat-actions" aria-label="对话联动操作">
                 <button type="button" disabled={aiSending || dirty} onClick={updateFromConversation}>按对话更新</button>
@@ -1604,8 +1651,8 @@ async function sendCodexMessage(text: string): Promise<void> {
 
 function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
   const selectedCanvasElements = canvasSelection?.elements.map((element) => {
-    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label }
-    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height }
+    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing }
+    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked }
   })
   void openai.modelContext?.update({
     content: [{
