@@ -236,6 +236,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .proposal-banner-actions { flex: 0 0 auto; display: flex; gap: 5px; }
 .proposal-banner-actions button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
 .proposal-banner-actions button.primary-button { border-color: var(--accent); background: var(--accent); color: white; }
+.impact-banner { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px 7px 14px; border-bottom: 1px solid color-mix(in srgb, #0ea5e9 26%, var(--border)); background: color-mix(in srgb, #0ea5e9 7%, var(--surface-panel)); }
+.impact-banner > div:first-child { min-width: 0; display: grid; gap: 2px; }
+.impact-banner strong { color: var(--text-primary); font-size: 12px; }
+.impact-banner span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .conflict-banner { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 10px 5px 14px; border-bottom: 1px solid color-mix(in srgb, #b7791f 28%, transparent); background: color-mix(in srgb, #b7791f 9%, var(--surface-panel)); color: var(--text-primary); font-size: 12px; }
 .conflict-banner button { height: 26px; padding: 0 8px; border: 1px solid color-mix(in srgb, #b7791f 34%, var(--border)); border-radius: 6px; background: var(--surface-panel); color: var(--text-primary); font-size: 12px; }
 
@@ -541,6 +545,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .proposal-review-panel { display: flex; flex-direction: column; }
 .proposal-review-panel .change-review-diff { flex: 1 1 auto; }
 .proposal-review-reason { padding: 8px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, #7c3aed 5%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.impact-review-panel { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.impact-review-body { min-height: 0; overflow: auto; padding: 10px 12px 18px; display: grid; gap: 16px; background: var(--app-bg); }
+.impact-review-body section { display: grid; gap: 6px; }
+.impact-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-secondary); font-size: 11px; }
+.impact-section-head strong { color: var(--text-primary); font-size: 12px; }
+.impact-base-ref > div:last-child { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.impact-base-ref input { min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-primary); font: 11px var(--font-mono); }
+.impact-base-ref button { height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
+.impact-bucket, .impact-file-row { min-width: 0; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-secondary); text-align: left; }
+.impact-bucket:hover, .impact-file-row:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--surface-raised); }
+.impact-bucket strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.impact-file-row code { min-width: 0; overflow: hidden; color: var(--text-primary); font: 10px/1.35 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.impact-file-row span { flex: 0 0 auto; color: var(--text-tertiary); font-size: 10px; }
+.impact-unmapped-list { display: grid; gap: 3px; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 7px; }
+.impact-unmapped-list code { overflow: hidden; color: var(--text-tertiary); font: 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.impact-empty { margin: 0; padding: 8px; color: var(--text-tertiary); font-size: 11px; }
 .proposal-scope-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel)); }
 .proposal-scope-summary strong { color: var(--accent); font: 10px var(--font-mono); letter-spacing: .08em; }
 .proposal-scope-summary span { color: var(--text-secondary); font-size: 11px; }

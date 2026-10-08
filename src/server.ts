@@ -10,6 +10,7 @@ import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { parseCanvasScene, serializeCanvasScene, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
 import { DiagramStore } from './store.js'
+import { readGitChanges } from './gitChanges.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
@@ -49,7 +50,8 @@ const server = new McpServer(
       'After diagram.thread is open, use diagram.get/create/update for data only; the existing panel follows the current thread state automatically.',
       'For conversational edits to an existing diagram, prefer diagram.proposeUpdate so the user can review the candidate diff in the side panel before it is written. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to the currently selected Canvas nodes, prefer diagram.proposeSubgraphUpdate and declare any new element ids so changes outside the subgraph are rejected server-side.',
-      'Use diagram.trace for upstream/downstream/impact exploration and diagram.upsertSourceNode after reading a real source file when only one architecture node needs to be created or refreshed.',
+      'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
+      'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
     ].join(' '),
@@ -75,6 +77,13 @@ interface ThreadDiagramProposal {
   newElementIds?: string[]
 }
 const threadProposals = new Map<string, ThreadDiagramProposal>()
+interface ThreadGitImpact {
+  workspacePath: string
+  path: string
+  updatedAt: string
+  report: Record<string, unknown>
+}
+const threadGitImpacts = new Map<string, ThreadGitImpact>()
 const ui = (
   resourceUri: string,
   entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
@@ -156,6 +165,7 @@ server.registerTool('diagram.threadState', {
     focusElementIds: state?.focusElementIds,
     trace: state?.trace,
     proposal: threadId ? proposalSummary(threadProposals.get(threadId)) : undefined,
+    gitImpact: threadId && threadGitImpacts.get(threadId)?.path === state?.path ? gitImpactSummary(threadGitImpacts.get(threadId)) : undefined,
     updatedAt: state?.updatedAt,
   }
   return {
@@ -320,6 +330,159 @@ server.registerTool('diagram.trace', {
   }
 })
 
+server.registerTool('diagram.gitChanges', {
+  title: 'Read workspace Git changes',
+  description: 'Read the real staged, unstaged and untracked files in the current Git workspace. Optionally include committed branch changes since a base ref.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    baseRef: z.string().min(1).max(200).optional(),
+    includeUntracked: z.boolean().default(true),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, baseRef, includeUntracked }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const git = await readGitChanges(store.workspacePath, { baseRef, includeUntracked })
+  return {
+    content: [{
+      type: 'text',
+      text: git.files.length
+        ? git.files.map((file) => `${file.path} [${file.kinds.join(', ')}]`).join('\n')
+        : 'No Git changes found in the current workspace.',
+    }],
+    structuredContent: { kind: 'diagram-git-changes', workspacePath: store.workspacePath, ...git },
+  }
+})
+
+server.registerTool('diagram.impactFromGit', {
+  title: 'Map Git changes to diagram impact',
+  description: 'Map real Git-changed files to Canvas nodes through sourcePaths, then trace direct and indirect graph impact. The right-side Diagram panel switches to the matching impact view.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    baseRef: z.string().min(1).max(200).optional(),
+    includeUntracked: z.boolean().default(true),
+    direction: z.enum(['upstream', 'downstream', 'both']).default('both'),
+    depth: z.number().int().min(1).max(5).default(2),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, path: diagramPath, baseRef, includeUntracked, direction, depth }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动 Canvas，请先打开或指定目标画板。')
+  const diagram = await store.get(targetPath)
+  if (diagram.type !== 'canvas') throw new Error('Git 影响分析仅支持自由 Canvas 图。')
+  const git = await readGitChanges(store.workspacePath, { baseRef, includeUntracked })
+  const scene = parseCanvasScene(diagram.source)
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const matchedFiles: Array<{ path: string; kinds: string[]; elementIds: string[] }> = []
+  const unmatchedFiles: Array<{ path: string; kinds: string[] }> = []
+  const direct = new Set<string>()
+  for (const file of git.files) {
+    const normalized = normalizeSourcePath(file.path)
+    const elementIds = boxes
+      .filter((item) => item.sourcePaths?.some((sourcePath) => sourcePathMatches(normalizeSourcePath(sourcePath), normalized)))
+      .map((item) => item.id)
+    if (elementIds.length) {
+      elementIds.forEach((id) => direct.add(id))
+      matchedFiles.push({ path: file.path, kinds: file.kinds, elementIds })
+    } else {
+      unmatchedFiles.push({ path: file.path, kinds: file.kinds })
+    }
+  }
+  const directElementIds = [...direct]
+  const trace = directElementIds.length
+    ? traceCanvasGraph(scene, directElementIds, direction, depth)
+    : { nodeIds: [] as string[], arrowIds: [] as string[], distanceById: {} as Record<string, number> }
+  const buckets = Array.from({ length: depth + 1 }, (_, distance) => ({
+    distance,
+    elementIds: trace.nodeIds.filter((id) => (trace.distanceById[id] ?? 0) === distance),
+  })).filter((bucket) => bucket.elementIds.length)
+  if (directElementIds.length) {
+    markThreadDiagram(extra._meta, diagram.path, trace.nodeIds, { seedElementIds: directElementIds, direction, depth })
+  } else {
+    markThreadDiagram(extra._meta, diagram.path)
+  }
+  const nodeMap = new Map(boxes.map((item) => [item.id, item]))
+  const impactUpdatedAt = new Date().toISOString()
+  const report = {
+    kind: 'diagram-git-impact',
+    updatedAt: impactUpdatedAt,
+    workspacePath: store.workspacePath,
+    path: diagram.path,
+    direction,
+    depth,
+    git,
+    matchedFiles,
+    unmatchedFiles,
+    directElementIds,
+    buckets,
+    trace: {
+      nodeIds: trace.nodeIds,
+      arrowIds: trace.arrowIds,
+      distanceById: trace.distanceById,
+      nodes: trace.nodeIds.map((id) => ({ id, text: nodeMap.get(id)?.text ?? id, distance: trace.distanceById[id] ?? 0 })),
+    },
+  }
+  if (threadId) {
+    threadGitImpacts.set(threadId, {
+      workspacePath: store.workspacePath,
+      path: diagram.path,
+      updatedAt: impactUpdatedAt,
+      report,
+    })
+  }
+  return {
+    content: [{
+      type: 'text',
+      text: [
+        `Git changed files: ${git.files.length}`,
+        `Mapped files: ${matchedFiles.length}`,
+        `Direct diagram nodes: ${directElementIds.length}`,
+        `Impacted diagram nodes: ${trace.nodeIds.length}`,
+        `Unmapped files: ${unmatchedFiles.length}`,
+      ].join('\n'),
+    }],
+    structuredContent: report,
+  }
+})
+
+server.registerTool('diagram.gitImpact', {
+  title: 'Read Git impact report for this conversation',
+  description: 'Internal app bridge for loading the latest Git-to-Canvas impact report produced in the current conversation.',
+  inputSchema: z.object({}),
+  annotations: readonly,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const current = threadId ? threadGitImpacts.get(threadId) : undefined
+  if (!current) throw new Error('当前聊天没有 Git 影响报告。')
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(current.report) }],
+    structuredContent: current.report,
+  }
+})
+
+server.registerTool('diagram.dismissGitImpact', {
+  title: 'Dismiss Git impact report for this conversation',
+  description: 'Internal app bridge for clearing the current conversation Git impact report without changing any diagram file.',
+  inputSchema: z.object({}),
+  annotations: readonly,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (threadId) {
+    threadGitImpacts.delete(threadId)
+    const current = threadSelection.get(threadId)
+    threadSelection.set(threadId, { ...current, updatedAt: new Date().toISOString() })
+  }
+  const payload = { kind: 'diagram-git-impact-dismissed' }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
 server.registerTool('diagram.upsertSourceNode', {
   title: 'Sync source file to diagram node',
   description: 'Create or update one Canvas node linked to a real source file in the current workspace. Use after reading code when the user wants the architecture diagram to reflect that file without rewriting the whole Canvas.',
@@ -421,6 +584,67 @@ server.registerTool('diagram.upsertSourceNode', {
   return {
     content: [{ type: 'text', text: `${created ? 'Created' : 'Updated'} Canvas node ${nodeId} for ${realSourcePath} in ${updated.path}` }],
     structuredContent: { kind: 'diagram-source-node', workspacePath: store.workspacePath, diagram: updated, nodeId, sourcePath: realSourcePath, created },
+  }
+})
+
+server.registerTool('diagram.upsertSourceNodes', {
+  title: 'Batch sync source files to diagram nodes',
+  description: 'Create or refresh multiple Canvas nodes from real workspace source files in one revision. Use after analyzing a module or changed file set; ambiguous existing links fail instead of guessing.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    nodes: z.array(z.object({
+      sourcePath: z.string().min(1).max(600),
+      elementId: z.string().min(1).optional(),
+      text: z.string().min(1).max(160).optional(),
+      subtitle: z.string().max(160).optional(),
+      description: z.string().max(2_000).optional(),
+      tags: z.array(z.string().min(1).max(80)).max(12).optional(),
+      icon: z.enum(['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']).optional(),
+      stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']).optional(),
+      c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
+      groupId: z.string().min(1).optional(),
+      laneId: z.string().min(1).optional(),
+    })).min(1).max(80),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, nodes }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动 Canvas，请先打开或指定目标画板。')
+  const diagram = await store.get(targetPath)
+  if (diagram.type !== 'canvas') throw new Error('批量源码节点同步仅支持自由 Canvas 图。')
+
+  const now = Date.now()
+  let cached = sourceIndexCache.get(store.workspacePath)
+  if (!cached || cached.expiresAt <= now) {
+    cached = { files: await store.listSourceFiles(), expiresAt: now + 15_000 }
+    sourceIndexCache.set(store.workspacePath, cached)
+  }
+  const scene = parseCanvasScene(diagram.source)
+  const results: Array<{ sourcePath: string; nodeId: string; created: boolean }> = []
+  for (const spec of nodes) {
+    const normalized = normalizeSourcePath(spec.sourcePath)
+    const realSourcePath = cached.files.find((file) => sourcePathMatches(normalizeSourcePath(file), normalized))
+    if (!realSourcePath) throw new Error(`工作区中不存在源码文件：${spec.sourcePath}`)
+    const result = upsertSourceNodeInScene(scene, realSourcePath, spec as SourceNodeSpec)
+    results.push({ sourcePath: realSourcePath, ...result })
+  }
+  const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
+  const nodeIds = [...new Set(results.map((item) => item.nodeId))]
+  markThreadDiagram(extra._meta, updated.path, nodeIds)
+  return {
+    content: [{
+      type: 'text',
+      text: `Synced ${results.length} source file(s) to ${nodeIds.length} Canvas node(s) in one revision. Created ${results.filter((item) => item.created).length}, updated ${results.filter((item) => !item.created).length}.`,
+    }],
+    structuredContent: {
+      kind: 'diagram-source-nodes',
+      workspacePath: store.workspacePath,
+      diagram: updated,
+      nodes: results,
+    },
   }
 })
 
@@ -829,6 +1053,79 @@ function sourcePathMatches(candidate: string, query: string): boolean {
   return candidate === query || candidate.endsWith(`/${query}`) || query.endsWith(`/${candidate}`)
 }
 
+interface SourceNodeSpec {
+  sourcePath: string
+  elementId?: string
+  text?: string
+  subtitle?: string
+  description?: string
+  tags?: string[]
+  icon?: CanvasIcon
+  stencil?: CanvasStencil
+  c4Type?: CanvasC4Type
+  groupId?: string
+  laneId?: string
+}
+
+function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spec: SourceNodeSpec): { nodeId: string; created: boolean } {
+  if (spec.groupId && !scene.groups?.some((group) => group.id === spec.groupId)) throw new Error(`Canvas 中不存在容器：${spec.groupId}`)
+  if (spec.laneId && !scene.lanes?.some((lane) => lane.id === spec.laneId)) throw new Error(`Canvas 中不存在泳道：${spec.laneId}`)
+  const boxes = scene.elements.filter((item): item is CanvasNode => item.type === 'node')
+  const normalizedRealPath = normalizeSourcePath(realSourcePath)
+  const linked = boxes.filter((item) => item.sourcePaths?.some((candidate) => sourcePathMatches(normalizeSourcePath(candidate), normalizedRealPath)))
+  let target = spec.elementId ? boxes.find((item) => item.id === spec.elementId) : undefined
+  if (spec.elementId && !target) throw new Error(`Canvas 中不存在节点：${spec.elementId}`)
+  if (!target && linked.length > 1) throw new Error(`源码 ${realSourcePath} 已关联多个 Canvas 节点，请传 elementId：${linked.map((item) => item.id).join(', ')}`)
+  if (!target) target = linked[0]
+  const cleanTags = spec.tags?.map((tag) => tag.trim()).filter(Boolean).slice(0, 12)
+  if (target) {
+    scene.elements = scene.elements.map((item) => {
+      if (item.id !== target!.id || item.type === 'arrow') return item
+      return {
+        ...item,
+        ...(spec.text ? { text: spec.text } : {}),
+        ...(spec.subtitle !== undefined ? { subtitle: spec.subtitle || undefined } : {}),
+        ...(spec.description !== undefined ? { description: spec.description || undefined } : {}),
+        ...(cleanTags ? { tags: cleanTags.length ? cleanTags : undefined } : {}),
+        ...(spec.icon ? { icon: spec.icon } : {}),
+        ...(spec.stencil ? { stencil: spec.stencil } : {}),
+        ...(spec.c4Type ? { c4Type: spec.c4Type } : {}),
+        ...(spec.groupId ? { groupId: spec.groupId } : {}),
+        ...(spec.laneId ? { laneId: spec.laneId } : {}),
+        sourcePaths: [...new Set([...(item.sourcePaths ?? []), realSourcePath])],
+      }
+    })
+    return { nodeId: target.id, created: false }
+  }
+
+  const nodeId = nextCanvasElementId('node', scene.elements)
+  const index = boxes.length
+  const columns = 4
+  const fileName = path.basename(realSourcePath).replace(/\.[^.]+$/, '')
+  const x = 120 + (index % columns) * 280
+  const y = 120 + Math.floor(index / columns) * 160
+  scene.height = Math.max(scene.height, y + 180)
+  scene.elements.push({
+    id: nodeId,
+    type: 'node',
+    x,
+    y,
+    width: 220,
+    height: 96,
+    text: spec.text ?? fileName,
+    ...(spec.subtitle ? { subtitle: spec.subtitle } : {}),
+    ...(spec.description ? { description: spec.description } : {}),
+    ...(cleanTags?.length ? { tags: cleanTags } : {}),
+    ...(spec.icon ? { icon: spec.icon } : {}),
+    ...(spec.stencil ? { stencil: spec.stencil } : {}),
+    ...(spec.c4Type ? { c4Type: spec.c4Type } : {}),
+    ...(spec.groupId ? { groupId: spec.groupId } : {}),
+    ...(spec.laneId ? { laneId: spec.laneId } : {}),
+    sourcePaths: [realSourcePath],
+  })
+  return { nodeId, created: true }
+}
+
 function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface, threadId?: string): Record<string, unknown> {
   const activeDiagramPath = threadId ? threadSelection.get(threadId)?.path : snapshot.activeDiagramPath
   return {
@@ -853,6 +1150,25 @@ function clearThreadDiagram(meta: unknown, deletedPath: string): void {
   const current = threadSelection.get(threadId)
   if (current?.path !== deletedPath) return
   threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
+  if (threadGitImpacts.get(threadId)?.path === deletedPath) threadGitImpacts.delete(threadId)
+}
+
+function gitImpactSummary(value: ThreadGitImpact | undefined) {
+  if (!value) return undefined
+  const report = value.report as {
+    git?: { files?: unknown[] }
+    directElementIds?: unknown[]
+    trace?: { nodeIds?: unknown[] }
+    unmatchedFiles?: unknown[]
+  }
+  return {
+    path: value.path,
+    updatedAt: value.updatedAt,
+    fileCount: report.git?.files?.length ?? 0,
+    directCount: report.directElementIds?.length ?? 0,
+    affectedCount: report.trace?.nodeIds?.length ?? 0,
+    unmatchedCount: report.unmatchedFiles?.length ?? 0,
+  }
 }
 
 function proposalSummary(proposal: ThreadDiagramProposal | undefined) {

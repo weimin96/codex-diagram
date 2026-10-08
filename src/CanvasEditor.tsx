@@ -16,6 +16,7 @@ interface CanvasEditorProps {
   onSelectionChange?: (selection: CanvasSelection | null) => void
   onOpenSource?: (path: string) => void
   onSearchSources?: (query: string) => Promise<string[]>
+  onAnalyzeGitImpact?: () => void | Promise<void>
   focusElementIds?: string[]
   focusKey?: string
   traceRequest?: { seedElementIds: string[]; direction: CanvasTraceDirection; depth: number; key: string }
@@ -35,7 +36,7 @@ const GRID = 16
 const MIN_ZOOM = 0.45
 const MAX_ZOOM = 4
 
-export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, focusElementIds, focusKey, traceRequest }: CanvasEditorProps) {
+export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, focusElementIds, focusKey, traceRequest }: CanvasEditorProps) {
   const parsed = useMemo(() => {
     try {
       return { scene: parseCanvasScene(source), error: null as string | null }
@@ -860,6 +861,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <option value="cache-aside">Cache Aside</option>
           </select>
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
+          {onAnalyzeGitImpact ? <button type="button" title="将当前 Git 改动映射到架构节点" onClick={() => void onAnalyzeGitImpact()}>改动影响</button> : null}
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>

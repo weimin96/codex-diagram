@@ -63,6 +63,7 @@ interface DiagramThreadStateResult {
   focusElementIds?: string[]
   trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
   proposal?: DiagramProposalSummary
+  gitImpact?: { path: string; updatedAt: string; fileCount: number; directCount: number; affectedCount: number; unmatchedCount: number }
   updatedAt?: string
 }
 
@@ -81,6 +82,31 @@ interface DiagramProposalSourceResult {
   proposal: DiagramProposalSummary
   before: DiagramDocument
   candidateSource: string
+}
+
+interface DiagramGitImpactResult {
+  kind: 'diagram-git-impact'
+  updatedAt: string
+  workspacePath: string
+  path: string
+  direction: 'upstream' | 'downstream' | 'both'
+  depth: number
+  git: {
+    repoRoot: string
+    workspacePrefix: string
+    baseRef?: string
+    files: Array<{ path: string; kinds: string[] }>
+  }
+  matchedFiles: Array<{ path: string; kinds: string[]; elementIds: string[] }>
+  unmatchedFiles: Array<{ path: string; kinds: string[] }>
+  directElementIds: string[]
+  buckets: Array<{ distance: number; elementIds: string[] }>
+  trace: {
+    nodeIds: string[]
+    arrowIds: string[]
+    distanceById: Record<string, number>
+    nodes: Array<{ id: string; text: string; distance: number }>
+  }
 }
 
 type ViewMode = 'preview' | 'source' | 'split'
@@ -229,6 +255,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
   const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string; trace?: DiagramThreadStateResult['trace'] } | null>(null)
+  const [gitImpactReport, setGitImpactReport] = useState<DiagramGitImpactResult | null>(null)
+  const [gitImpactOpen, setGitImpactOpen] = useState(false)
   const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [proposalReviewOpen, setProposalReviewOpen] = useState(false)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
@@ -267,6 +295,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setThreadTabs([])
     setCanvasSelection(null)
     setCanvasFocus(null)
+    setGitImpactReport(null)
+    setGitImpactOpen(false)
     setAiProposal(null)
     setProposalReviewOpen(false)
     setChangeReview(null)
@@ -331,6 +361,18 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             setAiProposal(null)
             setProposalReviewOpen(false)
           }
+          if (state.gitImpact && state.gitImpact.updatedAt !== gitImpactReport?.updatedAt) {
+            try {
+              const impact = await callTool<DiagramGitImpactResult>('diagram.gitImpact', {})
+              if (!disposed) {
+                setGitImpactReport(impact)
+                setGitImpactOpen(false)
+                setNotice(`Codex 已分析代码影响：${impact.git.files.length} 个改动文件 · ${impact.directElementIds.length} 个直接节点 · ${Math.max(0, impact.trace.nodeIds.length - impact.directElementIds.length)} 个间接节点`)
+              }
+            } catch {
+              // Git impact sync is best-effort; graph following can continue.
+            }
+          }
           if (!followConversation) return
           lastThreadStateAt.current = state.updatedAt
           const nextPath = state.activeDiagramPath
@@ -383,7 +425,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       disposed = true
       window.clearInterval(handle)
     }
-  }, [aiProposal, dirty, followConversation, isThread, onSnapshot, selected, snapshot, workspacePath])
+  }, [aiProposal, dirty, followConversation, gitImpactReport, isThread, onSnapshot, selected, snapshot, workspacePath])
 
   useEffect(() => {
     if (!isThread || selected || dirty) return
@@ -558,6 +600,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setChangeReview(null)
       setChangeReviewOpen(false)
     }
+    if (gitImpactReport?.path !== diagramPath) {
+      setGitImpactReport(null)
+      setGitImpactOpen(false)
+    }
     setLoadingPath(diagramPath)
     setError(null)
     try {
@@ -724,6 +770,74 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   async function searchSourceFiles(query: string): Promise<string[]> {
     const result = await callTool<SourceFilesResult>('diagram.sources', { workspacePath, query, limit: 40 })
     return result.files
+  }
+
+  async function analyzeGitImpact(baseRef?: string) {
+    if (!selected || selected.type !== 'canvas') return
+    setError(null)
+    try {
+      const result = await callTool<DiagramGitImpactResult>('diagram.impactFromGit', {
+        workspacePath,
+        path: selected.path,
+        ...(baseRef?.trim() ? { baseRef: baseRef.trim() } : {}),
+        direction: 'both',
+        depth: 2,
+        includeUntracked: true,
+      })
+      setGitImpactReport(result)
+      setGitImpactOpen(true)
+      setCanvasFocus(result.trace.nodeIds.length ? {
+        ids: result.trace.nodeIds,
+        key: `git-impact-${Date.now()}`,
+        trace: result.directElementIds.length ? {
+          seedElementIds: result.directElementIds,
+          direction: result.direction,
+          depth: result.depth,
+        } : undefined,
+      } : null)
+      setNotice(result.directElementIds.length
+        ? `代码影响：${result.git.files.length} 个改动文件 · ${result.directElementIds.length} 个直接节点 · ${Math.max(0, result.trace.nodeIds.length - result.directElementIds.length)} 个间接影响`
+        : `发现 ${result.git.files.length} 个 Git 改动文件，但当前图没有 sourcePaths 命中`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
+  async function explainGitImpact() {
+    if (!gitImpactReport) return
+    setAiSending(true)
+    setError(null)
+    try {
+      const direct = gitImpactReport.buckets.find((bucket) => bucket.distance === 0)?.elementIds ?? []
+      const oneHop = gitImpactReport.buckets.find((bucket) => bucket.distance === 1)?.elementIds ?? []
+      const twoHop = gitImpactReport.buckets.find((bucket) => bucket.distance === 2)?.elementIds ?? []
+      await sendCodexMessage([
+        '基于当前 Diagram 的 Git 影响报告分析这次代码改动。请先核对真实代码事实，再说明影响链路、风险点、需要回归的模块和可能遗漏的图节点。',
+        `图表：${gitImpactReport.path}`,
+        `Git 改动文件：${gitImpactReport.git.files.map((file) => file.path).join(', ') || '无'}`,
+        `直接命中节点：${direct.join(', ') || '无'}`,
+        `1 跳影响：${oneHop.join(', ') || '无'}`,
+        `2 跳影响：${twoHop.join(', ') || '无'}`,
+        `未映射文件：${gitImpactReport.unmatchedFiles.map((file) => file.path).join(', ') || '无'}`,
+        '不要仅复述列表；结合源码调用、数据流和外部依赖判断真实影响。对于架构上重要但未映射的真实源码，先阅读后可使用 diagram.upsertSourceNodes 批量补充节点；测试、文档、生成文件不要为了覆盖率机械加入架构图。',
+      ].join('\n'))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setAiSending(false)
+    }
+  }
+
+  async function clearGitImpact() {
+    setGitImpactReport(null)
+    setGitImpactOpen(false)
+    setCanvasFocus(null)
+    if (!isThread) return
+    try {
+      await callTool<{ kind: 'diagram-git-impact-dismissed' }>('diagram.dismissGitImpact', {})
+    } catch {
+      // Clearing the local visualization is still useful if the host bridge is temporarily unavailable.
+    }
   }
 
   async function createDiagram(type: DiagramType, title: string) {
@@ -1169,6 +1283,18 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             </div>
           </div>
         ) : null}
+        {gitImpactReport ? (
+          <div className="impact-banner" role="status">
+            <div>
+              <strong>代码改动影响</strong>
+              <span>{gitImpactReport.git.files.length} 个文件 · {gitImpactReport.directElementIds.length} 个直接节点 · {Math.max(0, gitImpactReport.trace.nodeIds.length - gitImpactReport.directElementIds.length)} 个间接节点</span>
+            </div>
+            <div className="proposal-banner-actions">
+              <button type="button" onClick={() => setGitImpactOpen(true)}>查看</button>
+              <button type="button" onClick={() => void clearGitImpact()}>清除</button>
+            </div>
+          </div>
+        ) : null}
         {notice ? <div className="notice-banner"><span>{notice}</span>{changeReview ? <button type="button" onClick={() => setChangeReviewOpen(true)}>查看变更</button> : null}</div> : null}
         {externalChange ? (
           <div className="conflict-banner">
@@ -1312,6 +1438,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                         onSelectionChange={setCanvasSelection}
                         onOpenSource={(path) => void openWorkspaceSource(path)}
                         onSearchSources={searchSourceFiles}
+                        onAnalyzeGitImpact={() => analyzeGitImpact()}
                         focusElementIds={canvasFocus?.ids}
                         focusKey={canvasFocus?.key}
                         traceRequest={canvasFocus?.trace ? { ...canvasFocus.trace, key: canvasFocus.key } : undefined}
@@ -1365,6 +1492,16 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onReject={() => void dismissAiProposal()}
           />
         ) : null}
+        {gitImpactReport && gitImpactOpen ? (
+          <GitImpactPanel
+            report={gitImpactReport}
+            onClose={() => setGitImpactOpen(false)}
+            onFocus={(ids) => setCanvasFocus(ids.length ? { ids, key: `impact-focus-${Date.now()}` } : null)}
+            onExplain={() => void explainGitImpact()}
+            onReanalyze={(baseRef) => void analyzeGitImpact(baseRef)}
+            explaining={aiSending}
+          />
+        ) : null}
         {selected && deleteConfirmOpen ? (
           <div className="confirm-overlay" role="presentation" onMouseDown={() => setDeleteConfirmOpen(false)}>
             <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-diagram-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -1391,6 +1528,71 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ) : null}
       </section>
     </main>
+  )
+}
+
+function GitImpactPanel({ report, onClose, onFocus, onExplain, onReanalyze, explaining }: {
+  report: DiagramGitImpactResult
+  onClose: () => void
+  onFocus: (ids: string[]) => void
+  onExplain: () => void
+  onReanalyze: (baseRef?: string) => void
+  explaining: boolean
+}) {
+  const [baseRef, setBaseRef] = useState(report.git.baseRef ?? '')
+  return (
+    <aside className="change-review-panel impact-review-panel" aria-label="代码改动影响报告">
+      <div className="change-review-head">
+        <div>
+          <div className="eyebrow">GIT IMPACT</div>
+          <strong>代码改动影响</strong>
+          <span>{report.git.files.length} files</span>
+        </div>
+        <button type="button" onClick={onClose}>关闭</button>
+      </div>
+      <div className="change-review-path">{report.path}</div>
+      <div className="impact-review-body">
+        <section className="impact-base-ref">
+          <div className="impact-section-head"><strong>比较基线</strong><span>{report.git.baseRef ? `${report.git.baseRef}...HEAD` : 'Working tree'}</span></div>
+          <div>
+            <input value={baseRef} onChange={(event) => setBaseRef(event.target.value)} placeholder="例如 origin/main" aria-label="Git 比较基线" />
+            <button type="button" onClick={() => onReanalyze(baseRef.trim() || undefined)}>重新分析</button>
+          </div>
+        </section>
+        <section>
+          <div className="impact-section-head"><strong>影响层级</strong><span>{report.trace.nodeIds.length} nodes</span></div>
+          {report.buckets.map((bucket) => (
+            <button key={bucket.distance} type="button" className="impact-bucket" onClick={() => onFocus(bucket.elementIds)}>
+              <span>{bucket.distance === 0 ? '直接修改' : `${bucket.distance} 跳影响`}</span>
+              <strong>{bucket.elementIds.length}</strong>
+            </button>
+          ))}
+          {!report.buckets.length ? <p className="impact-empty">当前图没有节点绑定这些改动文件。</p> : null}
+        </section>
+        <section>
+          <div className="impact-section-head"><strong>改动文件</strong><span>{report.matchedFiles.length}/{report.git.files.length} mapped</span></div>
+          {report.matchedFiles.map((file) => (
+            <button key={file.path} type="button" className="impact-file-row" title={file.path} onClick={() => onFocus(file.elementIds)}>
+              <code>{file.path}</code>
+              <span>{file.elementIds.length} nodes</span>
+            </button>
+          ))}
+        </section>
+        {report.unmatchedFiles.length ? (
+          <section>
+            <div className="impact-section-head"><strong>未映射文件</strong><span>{report.unmatchedFiles.length}</span></div>
+            <div className="impact-unmapped-list">
+              {report.unmatchedFiles.map((file) => <code key={file.path}>{file.path}</code>)}
+            </div>
+          </section>
+        ) : null}
+      </div>
+      <div className="change-review-actions">
+        <button type="button" disabled={explaining} onClick={onExplain}>{explaining ? '发送中…' : '交给 Codex 分析'}</button>
+        <button type="button" onClick={() => onFocus(report.directElementIds)}>定位直接修改</button>
+        <button className="primary-button" type="button" onClick={() => onFocus(report.trace.nodeIds)}>查看完整影响</button>
+      </div>
+    </aside>
   )
 }
 

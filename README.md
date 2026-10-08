@@ -57,7 +57,10 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - Canvas 节点可绑定一个或多个真实工作区源码文件；Inspector 支持真实源码搜索、绑定、移除和原生打开，绑定信息会同步给 Codex Model Context
 - MCP `diagram.findBySource` 可按源码文件反查关联的 Canvas 节点；唯一命中时会同步当前聊天 active diagram + element ids，右侧会自动切图、选中节点并聚焦视口
 - Canvas 节点可直接追踪上游 / 下游 / 双向邻域，支持 1～3 跳影响范围高亮；非相关区域自动降噪，距离层级逐级弱化。手工追踪状态会同步到当前聊天 Model Context，Codex 也可调用 `diagram.trace` 直接触发同样的右侧影响视图
+- Canvas 可把当前 Git staged / unstaged / untracked 改动真实映射到 `sourcePaths` 节点，并自动区分直接修改、1 跳、2 跳等影响层级；右侧“代码改动影响”报告列出已映射/未映射文件，可直接定位节点或把报告交给 Codex 做风险与回归分析
+- Git 影响分析支持可选 `baseRef`（例如 `origin/main`），把 `baseRef...HEAD` 分支提交差异与当前工作区改动统一映射到架构图；分析结果只作为临时视图状态，不写入 `.diagram.json`
 - MCP `diagram.upsertSourceNode` 可在 Codex 阅读真实源码后，只创建/刷新对应架构节点并绑定 sourcePath；不需要为了同步一个类或模块重写整张 Canvas，完成后右侧会自动定位该节点
+- MCP `diagram.upsertSourceNodes` 可一次同步最多 80 个真实源码文件，单次读取源码索引、单次写入 Canvas revision，适合 Codex 分析一个模块后批量补齐 Controller / Service / Repository / DB 节点
 - 对已有图的对话修改默认走 `diagram.proposeUpdate`：候选源码先进入右侧 Proposal Diff，不写盘；Canvas Proposal 可按稳定 element id 勾选部分节点/连线后只应用选中修改，也可全部接受或拒绝；写入仍使用原 revision 防止覆盖并发修改
 - “调整选中”现在走 `diagram.proposeSubgraphUpdate`：模型必须声明允许修改的现有 element ids 和新增 element ids，服务端会拒绝任何范围外已有元素、画布尺寸、容器或泳道元数据的越界修改，再进入右侧 Subgraph Proposal 审查
 - Canvas 选中元素会同步到当前聊天 Model Context；右侧可直接“调整选中”，让 Codex 只修改当前选区
@@ -115,7 +118,12 @@ pnpm plugin:install:desktop
 | `diagram.sources` | UI 内部搜索当前工作空间真实源码路径 |
 | `diagram.findBySource` | 按源码文件反查绑定的 Canvas 节点 |
 | `diagram.trace` | 从 Canvas 节点追踪上游 / 下游 / 双向关系，并联动右侧影响视图 |
+| `diagram.gitChanges` | 读取当前工作区真实 staged / unstaged / untracked Git 改动，可选 `baseRef...HEAD` |
+| `diagram.impactFromGit` | 将真实 Git 改动文件映射到 Canvas 节点并生成分层影响报告 |
+| `diagram.gitImpact` | UI 内部读取当前聊天最新 Git 影响报告 |
+| `diagram.dismissGitImpact` | UI 内部清除当前聊天 Git 影响报告 |
 | `diagram.upsertSourceNode` | 将真实源码文件增量创建/同步为当前 Canvas 节点 |
+| `diagram.upsertSourceNodes` | 批量将真实源码文件创建/同步为 Canvas 节点，单 revision 写入 |
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 | `diagram.proposeUpdate` | 提交不落盘的候选图表更新，供右侧 Diff 审查 |
