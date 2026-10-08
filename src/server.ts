@@ -64,7 +64,8 @@ const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
-const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; updatedAt: string }>()
+type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string }
+const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; activity?: ThreadDrawActivity; updatedAt: string }>()
 interface ThreadDiagramProposal {
   workspacePath: string
   path: string
@@ -164,6 +165,7 @@ server.registerTool('diagram.threadState', {
     activeDiagramPath: state?.path,
     focusElementIds: state?.focusElementIds,
     trace: state?.trace,
+    activity: state?.activity,
     proposal: threadId ? proposalSummary(threadProposals.get(threadId)) : undefined,
     gitImpact: threadId && threadGitImpacts.get(threadId)?.path === state?.path ? gitImpactSummary(threadGitImpacts.get(threadId)) : undefined,
     updatedAt: state?.updatedAt,
@@ -580,7 +582,7 @@ server.registerTool('diagram.upsertSourceNode', {
     })
   }
   const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
-  markThreadDiagram(extra._meta, updated.path, [nodeId])
+  markThreadDiagram(extra._meta, updated.path, [nodeId], undefined, 'source-sync')
   return {
     content: [{ type: 'text', text: `${created ? 'Created' : 'Updated'} Canvas node ${nodeId} for ${realSourcePath} in ${updated.path}` }],
     structuredContent: { kind: 'diagram-source-node', workspacePath: store.workspacePath, diagram: updated, nodeId, sourcePath: realSourcePath, created },
@@ -633,7 +635,7 @@ server.registerTool('diagram.upsertSourceNodes', {
   }
   const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
   const nodeIds = [...new Set(results.map((item) => item.nodeId))]
-  markThreadDiagram(extra._meta, updated.path, nodeIds)
+  markThreadDiagram(extra._meta, updated.path, nodeIds, undefined, 'source-sync')
   return {
     content: [{
       type: 'text',
@@ -660,7 +662,7 @@ server.registerTool('diagram.create', {
 }, async ({ workspacePath, type, title }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.create(type, title)
-  markThreadDiagram(extra._meta, diagram.path)
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'create')
   return {
     content: [{ type: 'text', text: `Created ${diagram.path}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -680,7 +682,7 @@ server.registerTool('diagram.update', {
 }, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.update(diagramPath, source, expectedModifiedAt)
-  markThreadDiagram(extra._meta, diagram.path)
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -794,7 +796,7 @@ server.registerTool('diagram.applyProposal', {
     : proposal.source
   const diagram = await store.update(proposal.path, source, proposal.baseModifiedAt)
   threadProposals.delete(threadId)
-  markThreadDiagram(extra._meta, diagram.path)
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal')
   return {
     content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram }) }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -1138,10 +1140,18 @@ function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface,
   }
 }
 
-function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[], trace?: ThreadTraceState): void {
+function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[], trace?: ThreadTraceState, activityKind?: ThreadDrawActivity['kind']): void {
   const threadId = toolThreadId(meta)
   if (!threadId) return
-  threadSelection.set(threadId, { path: diagramPath, focusElementIds, trace, updatedAt: new Date().toISOString() })
+  const current = threadSelection.get(threadId)
+  const now = new Date().toISOString()
+  threadSelection.set(threadId, {
+    path: diagramPath,
+    focusElementIds,
+    trace,
+    activity: activityKind ? { kind: activityKind, path: diagramPath, key: `${activityKind}:${diagramPath}:${now}` } : current?.activity,
+    updatedAt: now,
+  })
 }
 
 function clearThreadDiagram(meta: unknown, deletedPath: string): void {

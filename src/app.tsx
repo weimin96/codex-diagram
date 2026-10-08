@@ -10,7 +10,7 @@ import {
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
-import { CanvasEditor, type CanvasSelection } from './CanvasEditor.js'
+import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from './CanvasEditor.js'
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
@@ -62,6 +62,7 @@ interface DiagramThreadStateResult {
   activeDiagramPath?: string
   focusElementIds?: string[]
   trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
+  activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string }
   proposal?: DiagramProposalSummary
   gitImpact?: { path: string; updatedAt: string; fileCount: number; directCount: number; affectedCount: number; unmatchedCount: number }
   updatedAt?: string
@@ -255,6 +256,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
   const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string; trace?: DiagramThreadStateResult['trace'] } | null>(null)
+  const [canvasPlayback, setCanvasPlayback] = useState<CanvasPlaybackRequest | null>(null)
   const [gitImpactReport, setGitImpactReport] = useState<DiagramGitImpactResult | null>(null)
   const [gitImpactOpen, setGitImpactOpen] = useState(false)
   const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
@@ -267,6 +269,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
   const lastThreadStateAt = useRef<string | undefined>(undefined)
+  const lastPlaybackActivity = useRef<string | undefined>(undefined)
+  const pendingPlaybackActivity = useRef<DiagramThreadStateResult['activity'] | undefined>(undefined)
   const backgroundFailures = useRef({ thread: 0, revision: 0 })
   const dirty = Boolean(selected && source !== selected.source)
   const visibleDiagrams = useMemo(() => {
@@ -295,6 +299,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setThreadTabs([])
     setCanvasSelection(null)
     setCanvasFocus(null)
+    setCanvasPlayback(null)
+    pendingPlaybackActivity.current = undefined
     setGitImpactReport(null)
     setGitImpactOpen(false)
     setAiProposal(null)
@@ -342,6 +348,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           backgroundSyncSucceeded('thread')
           if (disposed) return
           if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
+          if (state.activity?.key && state.activity.key !== lastPlaybackActivity.current) {
+            lastPlaybackActivity.current = state.activity.key
+            pendingPlaybackActivity.current = state.activity
+          }
           if (state.proposal && state.proposal.updatedAt !== aiProposal?.summary.updatedAt) {
             try {
               const proposal = await callTool<DiagramProposalSourceResult>('diagram.proposal', {})
@@ -494,6 +504,16 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           if (disposed || dirty) return
           if (latest.diagram.source !== selected.source) {
             setChangeReview({ before: selected, after: latest.diagram })
+            if (isThread && selected.type === 'canvas' && latest.diagram.type === 'canvas') {
+              const activity = pendingPlaybackActivity.current
+              setCanvasPlayback({
+                key: activity?.path === selected.path ? activity.key : `sync:${selected.path}:${latest.diagram.modifiedAt}`,
+                mode: 'update',
+                fromSource: selected.source,
+                label: activity?.path === selected.path ? playbackActivityLabel(activity.kind) : '正在同步画板修改',
+              })
+              if (activity?.path === selected.path) pendingPlaybackActivity.current = undefined
+            }
           }
           setSelected(latest.diagram)
           setSource(latest.diagram.source)
@@ -608,6 +628,19 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setError(null)
     try {
       const result = await callTool<DiagramResult>('diagram.get', { workspacePath, path: diagramPath })
+      const activity = pendingPlaybackActivity.current
+      if (isThread && result.diagram.type === 'canvas' && activity?.path === result.diagram.path) {
+        const updatingCurrent = selected?.path === result.diagram.path && selected.type === 'canvas'
+        setCanvasPlayback({
+          key: activity.key,
+          mode: updatingCurrent ? 'update' : 'create',
+          ...(updatingCurrent ? { fromSource: selected.source } : {}),
+          label: playbackActivityLabel(activity.kind),
+        })
+        pendingPlaybackActivity.current = undefined
+      } else if (result.diagram.type !== 'canvas') {
+        setCanvasPlayback(null)
+      }
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
@@ -726,6 +759,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setError(null)
     try {
       const result = await callTool<DiagramResult>('diagram.applyProposal', elementIds?.length ? { elementIds } : {})
+      if (isThread && selected?.type === 'canvas' && result.diagram.type === 'canvas') {
+        setCanvasPlayback({
+          key: `proposal:${result.diagram.path}:${result.diagram.modifiedAt}`,
+          mode: 'update',
+          fromSource: selected.source,
+          label: 'Codex 正在应用候选修改',
+        })
+      }
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
@@ -1442,6 +1483,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                         focusElementIds={canvasFocus?.ids}
                         focusKey={canvasFocus?.key}
                         traceRequest={canvasFocus?.trace ? { ...canvasFocus.trace, key: canvasFocus.key } : undefined}
+                        playbackRequest={canvasPlayback}
+                        onPlaybackComplete={(key) => setCanvasPlayback((current) => current?.key === key ? null : current)}
                       />
                     : <MermaidPreview source={source} />}
                 </section>
@@ -2149,6 +2192,13 @@ function clearModelContext(workspacePath: string) {
 
 function diagramLabel(type: DiagramSummary['type']): string {
   return diagramTypes.find((item) => item.type === type)?.label ?? '图表'
+}
+
+function playbackActivityLabel(kind: NonNullable<DiagramThreadStateResult['activity']>['kind']): string {
+  if (kind === 'create') return 'Codex 正在创建画板'
+  if (kind === 'source-sync') return 'Codex 正在同步源码节点'
+  if (kind === 'proposal') return 'Codex 正在应用候选修改'
+  return 'Codex 正在更新画板'
 }
 
 function shortPath(value: string): string {
