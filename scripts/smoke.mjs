@@ -24,6 +24,7 @@ for (const marker of [
   'A software/system/module/service architecture request is NOT a flowchart request',
   'use type=canvas for software/system/module/service architecture',
   'diagram.beautifyArchitecture',
+  'diagram.routeArchitectureEdges',
   'deterministically adds architecture partitions',
 ]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)

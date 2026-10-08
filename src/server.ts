@@ -6,7 +6,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
-import { beautifyArchitectureScene } from './architectureDesign.js'
+import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
@@ -56,6 +56,7 @@ const server = new McpServer(
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When an architecture Canvas is visually flat, crowded, weakly grouped, or has crossing/overlapping relationships, use diagram.beautifyArchitecture. It deterministically adds architecture partitions, semantic tones, role/technology badges and orthogonal routing; do not try to solve those presentation problems only with prose prompting.',
+      'If the node placement is already acceptable and only relationship lines need cleanup, use diagram.routeArchitectureEdges instead of beautifyArchitecture so node positions and partitions stay unchanged.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for freeform drawing boards and architecture diagrams. Read an existing diagram before updating it.',
     ].join(' '),
@@ -501,8 +502,8 @@ server.registerTool('diagram.upsertSourceNode', {
     subtitle: z.string().max(160).optional(),
     description: z.string().max(2_000).optional(),
     tags: z.array(z.string().min(1).max(80)).max(12).optional(),
-    icon: z.enum(['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']).optional(),
-    stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']).optional(),
+    icon: z.enum(['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']).optional(),
+    stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']).optional(),
     c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
     groupId: z.string().min(1).optional(),
     laneId: z.string().min(1).optional(),
@@ -606,8 +607,8 @@ server.registerTool('diagram.upsertSourceNodes', {
       subtitle: z.string().max(160).optional(),
       description: z.string().max(2_000).optional(),
       tags: z.array(z.string().min(1).max(80)).max(12).optional(),
-      icon: z.enum(['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']).optional(),
-      stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']).optional(),
+      icon: z.enum(['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']).optional(),
+      stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']).optional(),
       c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
       groupId: z.string().min(1).optional(),
       laneId: z.string().min(1).optional(),
@@ -728,6 +729,31 @@ server.registerTool('diagram.beautifyArchitecture', {
       diagram,
       architectureDesign: result.summary,
     },
+  }
+})
+
+server.registerTool('diagram.routeArchitectureEdges', {
+  title: 'Route architecture relationships',
+  description: 'Recompute only Canvas relationship routes using obstacle-aware orthogonal routing. Keeps every node, lane, group and node coordinate unchanged. Use when the user asks to reduce crossing/overlapping lines without changing the layout.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动架构图，请先指定 Canvas 图表路径。')
+  const current = await store.get(targetPath)
+  if (current.type !== 'canvas') throw new Error('架构连线整理仅支持 Canvas 图。')
+  const scene = routeArchitectureEdges(parseCanvasScene(current.source))
+  const diagram = await store.update(current.path, serializeCanvasScene(scene), current.modifiedAt)
+  const routedEdges = scene.elements.filter((item) => item.type === 'arrow').length
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
+  return {
+    content: [{ type: 'text', text: `Routed ${routedEdges} architecture relationship(s) in ${diagram.path} without moving nodes.` }],
+    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram, routedEdges },
   }
 })
 

@@ -4,8 +4,8 @@ export type CanvasShape = 'rounded' | 'square' | 'pill'
 export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
-export type CanvasIcon = 'user' | 'web' | 'api' | 'service' | 'database' | 'cache' | 'queue' | 'cloud' | 'file' | 'external'
-export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'minio'
+export type CanvasIcon = 'user' | 'web' | 'api' | 'gateway' | 'service' | 'worker' | 'database' | 'cache' | 'queue' | 'search' | 'vector' | 'cloud' | 'file' | 'auth' | 'ai' | 'mcp' | 'scheduler' | 'external'
+export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'rabbitmq' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'elasticsearch' | 'mongodb' | 'minio' | 'nginx' | 'grpc' | 'oidc' | 'openai' | 'mcp'
 export type CanvasGroupKind = 'group' | 'boundary'
 export type CanvasLaneAxis = 'horizontal' | 'vertical'
 export type CanvasC4Type = 'person' | 'software-system' | 'container' | 'component'
@@ -205,8 +205,8 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
     const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
-    const roleGlyph = item.icon ? canvasIconGlyph(item.icon) : ''
-    const icon = roleGlyph ? `<g><circle cx="${item.x + 18}" cy="${item.y + 18}" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.12" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.45"/><text x="${item.x + 18}" y="${item.y + 18}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="700" fill="${escapeXml(palette.stroke)}">${escapeXml(roleGlyph)}</text></g>` : ''
+    const rolePaths = item.icon ? canvasIconPaths(item.icon) : []
+    const icon = rolePaths.length ? `<g transform="translate(${item.x + 8} ${item.y + 8})"><circle cx="10" cy="10" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.10" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.38"/><g transform="translate(3 3) scale(.5833)" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${rolePaths.map((d) => `<path d="${d}"/>`).join('')}</g></g>` : ''
     const stencil = item.stencil ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasStencilLabel(item.stencil))}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
@@ -443,8 +443,8 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
-  const icons: CanvasIcon[] = ['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']
-  const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']
+  const icons: CanvasIcon[] = ['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']
+  const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']
   const c4Types: CanvasC4Type[] = ['person', 'software-system', 'container', 'component']
   return {
     id: item.id,
@@ -517,15 +517,38 @@ function normalizeCanvasLanes(value: unknown[], width: number, height: number): 
 }
 
 export function canvasStencilLabel(stencil: CanvasStencil): string {
-  return ({ spring: 'SPRING', react: 'REACT', vue: 'VUE', postgres: 'PG', mysql: 'MYSQL', redis: 'REDIS', kafka: 'KAFKA', docker: 'DOCKER', kubernetes: 'K8S', qdrant: 'QDRANT', opensearch: 'OS', minio: 'S3' })[stencil]
+  return ({ spring: 'SPRING', react: 'REACT', vue: 'VUE', postgres: 'PG', mysql: 'MYSQL', redis: 'REDIS', kafka: 'KAFKA', rabbitmq: 'RABBITMQ', docker: 'DOCKER', kubernetes: 'K8S', qdrant: 'QDRANT', opensearch: 'OPENSEARCH', elasticsearch: 'ELASTIC', mongodb: 'MONGO', minio: 'S3', nginx: 'NGINX', grpc: 'gRPC', oidc: 'OIDC', openai: 'LLM', mcp: 'MCP' })[stencil]
 }
 
 export function canvasIconLabel(icon: CanvasIcon): string {
-  return ({ user: 'USR', web: 'WEB', api: 'API', service: 'SVC', database: 'DB', cache: 'CACHE', queue: 'MQ', cloud: 'CLOUD', file: 'FILE', external: 'EXT' })[icon]
+  return ({ user: 'USER', web: 'WEB', api: 'API', gateway: 'GATEWAY', service: 'SERVICE', worker: 'WORKER', database: 'DATABASE', cache: 'CACHE', queue: 'QUEUE', search: 'SEARCH', vector: 'VECTOR', cloud: 'CLOUD', file: 'STORAGE', auth: 'AUTH', ai: 'AI', mcp: 'MCP', scheduler: 'SCHEDULE', external: 'EXTERNAL' })[icon]
 }
 
 export function canvasIconGlyph(icon: CanvasIcon): string {
-  return ({ user: '◎', web: '▣', api: '↔', service: '◆', database: '▤', cache: '⚡', queue: '≋', cloud: '☁', file: '▥', external: '↗' })[icon]
+  return ({ user: '◎', web: '▣', api: '⇄', gateway: '◇', service: '◆', worker: '⚙', database: '▤', cache: '⚡', queue: '≋', search: '⌕', vector: '✣', cloud: '☁', file: '▥', auth: '◆', ai: '✦', mcp: '⌘', scheduler: '◷', external: '↗' })[icon]
+}
+
+export function canvasIconPaths(icon: CanvasIcon): string[] {
+  return ({
+    user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8', 'M4 21a8 8 0 0 1 16 0'],
+    web: ['M3 5h18v14H3z', 'M3 9h18', 'M7 7h.01 M10 7h.01'],
+    api: ['M5 7h5v5H5z', 'M14 12h5v5h-5z', 'M10 9h4 M12 9v6 M10 15h4'],
+    gateway: ['M12 3 21 12 12 21 3 12z', 'M8 12h8', 'M13 9l3 3-3 3'],
+    service: ['M12 3 20 7.5v9L12 21l-8-4.5v-9z', 'M8 10h8 M8 14h8'],
+    worker: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8', 'M12 2v3 M12 19v3 M4.9 4.9 7 7 M17 17l2.1 2.1 M2 12h3 M19 12h3 M4.9 19.1 7 17 M17 7l2.1-2.1'],
+    database: ['M4 6c0-2 16-2 16 0s-16 2-16 0', 'M4 6v12c0 2 16 2 16 0V6', 'M4 12c0 2 16 2 16 0'],
+    cache: ['M13 2 5 14h6l-1 8 9-13h-6z'],
+    queue: ['M5 7h14 M5 12h14 M5 17h14', 'M3 7h.01 M3 12h.01 M3 17h.01'],
+    search: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14', 'M16 16l5 5'],
+    vector: ['M5 6a2 2 0 1 0 0 .01 M19 6a2 2 0 1 0 0 .01 M12 18a2 2 0 1 0 0 .01', 'M7 7l4 9 M17 7l-4 9 M7 6h10'],
+    cloud: ['M7 18h11a4 4 0 0 0 .5-8A6 6 0 0 0 7 8.5 4.5 4.5 0 0 0 7 18'],
+    file: ['M6 3h8l4 4v14H6z', 'M14 3v5h5', 'M9 13h6 M9 17h6'],
+    auth: ['M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z', 'M9 12l2 2 4-5'],
+    ai: ['M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z', 'M18 3v4 M16 5h4'],
+    mcp: ['M6 7h5v5H6z M13 12h5v5h-5z', 'M11 9h4v5 M9 12v5h4'],
+    scheduler: ['M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16', 'M12 8v5l3 2', 'M8 2v3 M16 2v3'],
+    external: ['M8 16 16 8', 'M10 8h6v6', 'M5 5h6 M5 5v14h14v-6'],
+  } satisfies Record<CanvasIcon, string[]>)[icon]
 }
 
 export function c4Label(type: CanvasC4Type | 'software-system' | 'container'): string {

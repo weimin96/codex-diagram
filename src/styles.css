@@ -450,13 +450,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.freeform-node-role text { fill: var(--text-secondary); font-size: 10px !important; font-weight: 800; }
+.freeform-node-role-symbol { fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .freeform-box.tone-accent .freeform-node-role circle { fill: color-mix(in srgb, #818cf8 16%, transparent); stroke: #818cf8; }
-.freeform-box.tone-accent .freeform-node-role text { fill: #6366f1; }
+.freeform-box.tone-accent .freeform-node-role-symbol { stroke: #6366f1; }
 .freeform-box.tone-success .freeform-node-role circle { fill: color-mix(in srgb, #34d399 16%, transparent); stroke: #34d399; }
-.freeform-box.tone-success .freeform-node-role text { fill: #059669; }
+.freeform-box.tone-success .freeform-node-role-symbol { stroke: #059669; }
 .freeform-box.tone-warning .freeform-node-role circle { fill: color-mix(in srgb, #fbbf24 17%, transparent); stroke: #f59e0b; }
-.freeform-box.tone-warning .freeform-node-role text { fill: #b45309; }
+.freeform-box.tone-warning .freeform-node-role-symbol { stroke: #b45309; }
 .freeform-box .freeform-source-badge { fill: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .freeform-box .freeform-c4-badge { fill: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .03em; }
 .freeform-box .freeform-node-subtitle { fill: var(--text-tertiary); font-size: 10px; font-weight: 500; }

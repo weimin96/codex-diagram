@@ -48,10 +48,11 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - Canvas 支持右键菜单、前后图层调整和 MiniMap；锁定节点仍可选中查看，但不会被拖动、resize、对齐或 AI 无意重排
 - 内置 Architecture Diagram Skill + 确定性架构美化器：系统架构会优先按“外部与参与方 / 体验与入口 / 核心应用 / 处理与异步 / 数据与检索”自动分区，按真实 role/stencil 补单色图标和技术标签，并统一语义配色、节点尺寸、正交路由和并行连线 channel；右侧可直接选择企业架构 / 技术文档 / 汇报展示主题并点“美化”
 - MCP `diagram.beautifyArchitecture` 可对当前 Canvas 直接执行架构美化，不依赖模型手工重写整张 JSON；支持单独关闭 repartition / relayout / reroute，锁定节点位置始终保持不变
+- MCP `diagram.routeArchitectureEdges` 可只整理架构连线，不移动节点/分区：使用轻量 Manhattan obstacle router 避开其他节点，综合路径长度、拐点、线路交叉和通道重叠选择更干净的正交路径
 - Canvas 支持 AI 动态绘制回放：Codex 创建/更新/源码同步画板时，右侧会根据前后 Canvas diff 播放虚拟鼠标移动、工具高亮、节点落点、标题逐字输入、节点拖拽重排、连线逐条拉出与镜头自动跟随；绘制会优先按命名容器/泳道拆成区域，没有结构信息时再按空间自动聚类。新增节点先进入区域内的临时粗排位置，随后由 Cursor 框选并整理到最终布局；新增系统边界会播放“框选成员 → 拖出 Boundary → 自动分组”，已有边界变化会模拟 resize。节点属性变化会弹出临时 Inspector，并通过点击/下拉选择展示语义色、形状、角色、技术栈和 C4 等切换；创建连接时显示真实 from/to 锚点吸附。被 AI 删除的旧节点和连线会以 ghost 保留到 Delete 动作后再淡出。Cursor 旁只显示“添加服务层 / 连接缓存 / 整理位置”等可观察动作。区域完成后镜头会轻微 zoom-out 再进入下一块，最后 Fit 全图、高亮本轮修改并完成收尾轨迹。大图会自动加速播放；底层文件仍保持单次原子写入，不为动画制造额外 revision
 - Mermaid 预览会把 Mermaid 11 返回的 HTML-label / `foreignObject` SVG 先按浏览器语义解析、清理并规范化，再用于右侧预览和 PNG 导出；不会再因为严格 XML 二次解析误报“Mermaid 返回了无效 SVG”
 - Canvas 组合可升级为带名称和语义色的系统/领域容器；支持 `parentId` 嵌套边界，可表达 Software System → Container 的层级；编辑器提供全图与当前选区/容器的局部自动布局，并保留锁定元素位置
-- Canvas 节点支持 C4 `Person / Software System / Container / Component` 语义、`user/web/api/service/database/cache/queue/cloud/file/external` 运行角色，以及 Spring/React/Vue/Postgres/MySQL/Redis/Kafka/Docker/Kubernetes/Qdrant/OpenSearch/MinIO 技术 stencil；生成面板提供 C4 Context、C4 Container、C4 Component、服务拓扑、事件/数据流预设
+- Canvas 节点支持 C4 `Person / Software System / Container / Component` 语义，以及 user/web/api/gateway/service/worker/database/cache/queue/search/vector/cloud/file/auth/ai/mcp/scheduler/external 等架构角色；技术 stencil 覆盖 Spring/React/Vue/Postgres/MySQL/Redis/Kafka/RabbitMQ/Docker/Kubernetes/Qdrant/OpenSearch/Elasticsearch/MongoDB/MinIO/Nginx/gRPC/OIDC/LLM/MCP。角色图标使用内置 SVG 矢量符号，编辑器和 SVG/PNG 导出保持一致
 - Canvas 容器支持系统边界、命名、说明、语义色和折叠；折叠后内部节点隐藏，但跨边界依赖会汇聚到容器代理节点并显示数量，SVG/PNG 导出保持同样语义。泳道支持水平/垂直三分区、节点 lane 归属、lane 命名/色调以及按泳道自动布局
 - 大型 Canvas 提供“层级”导航面板，可按边界、泳道、节点浏览，并搜索节点标题、副标题、说明、标签和源码路径；点击结果会自动展开折叠祖先、选中并聚焦到目标节点。MiniMap 同时显示折叠边界代理
 - 节点 Inspector 默认保持紧凑；“详情”模式再展开职责说明、标签、泳道和源码绑定，避免聊天右侧窄面板长期被高级表单占满
@@ -131,6 +132,7 @@ pnpm plugin:install:desktop
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 | `diagram.beautifyArchitecture` | 对 Canvas 架构图执行自动分区、主题配色、角色/技术图标补全、布局和连线整理 |
+| `diagram.routeArchitectureEdges` | 仅重新计算 Canvas 架构关系的锚点、避障路径和线路通道，不移动节点 |
 | `diagram.proposeUpdate` | 提交不落盘的候选图表更新，供右侧 Diff 审查 |
 | `diagram.proposeSubgraphUpdate` | 提交受 element id 边界约束的 Canvas 子图候选修改 |
 | `diagram.proposal` | UI 内部读取当前聊天待审查 Proposal |

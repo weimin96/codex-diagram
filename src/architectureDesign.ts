@@ -5,6 +5,7 @@ import type {
   CanvasLane,
   CanvasNode,
   CanvasNote,
+  CanvasPoint,
   CanvasScene,
   CanvasStencil,
   CanvasTone,
@@ -171,9 +172,9 @@ export function applyArchitectureTheme(
 
 export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
-  const channelCounts = new Map<string, number>()
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const routed = new Map<string, CanvasArrow>()
+  const occupied: RouteSegment[] = []
 
   for (const arrow of arrows) {
     const from = boxes.get(arrow.from)
@@ -183,52 +184,177 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
     const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
     const dx = toCenter.x - fromCenter.x
     const dy = toCenter.y - fromCenter.y
-    const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.72
-    const channelKey = horizontal
-      ? `x:${from.laneId ?? 'none'}:${to.laneId ?? 'none'}`
-      : `y:${from.laneId ?? 'none'}:${to.laneId ?? 'none'}`
-    const channelIndex = channelCounts.get(channelKey) ?? 0
-    channelCounts.set(channelKey, channelIndex + 1)
-    const offset = ((channelIndex % 7) - 3) * 12
-    const asyncEdge = from.icon === 'queue' || to.icon === 'queue' || from.stencil === 'kafka' || to.stencil === 'kafka'
-
-    if (horizontal) {
-      const forward = dx >= 0
-      const startX = forward ? from.x + from.width : from.x
-      const endX = forward ? to.x : to.x + to.width
-      const trunkX = (startX + endX) / 2 + offset
-      routed.set(arrow.id, {
-        ...arrow,
-        routing: 'orthogonal',
-        fromAnchor: forward ? 'right' : 'left',
-        toAnchor: forward ? 'left' : 'right',
-        lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
-        points: Math.abs(endX - startX) > 72
-          ? [{ x: trunkX, y: fromCenter.y }, { x: trunkX, y: toCenter.y }]
-          : undefined,
-      })
-    } else {
-      const forward = dy >= 0
-      const startY = forward ? from.y + from.height : from.y
-      const endY = forward ? to.y : to.y + to.height
-      const trunkY = (startY + endY) / 2 + offset
-      routed.set(arrow.id, {
-        ...arrow,
-        routing: 'orthogonal',
-        fromAnchor: forward ? 'bottom' : 'top',
-        toAnchor: forward ? 'top' : 'bottom',
-        lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
-        points: Math.abs(endY - startY) > 64
-          ? [{ x: fromCenter.x, y: trunkY }, { x: toCenter.x, y: trunkY }]
-          : undefined,
-      })
+    const asyncEdge = from.icon === 'queue' || to.icon === 'queue'
+      || from.stencil === 'kafka' || to.stencil === 'kafka'
+      || from.stencil === 'rabbitmq' || to.stencil === 'rabbitmq'
+    const obstacles = [...boxes.values()]
+      .filter((item) => item.id !== from.id && item.id !== to.id)
+      .map((item) => expandRect(item, 18))
+    const pairs = preferredAnchorPairs(dx, dy)
+    let best: { score: number; fromAnchor: 'top' | 'right' | 'bottom' | 'left'; toAnchor: 'top' | 'right' | 'bottom' | 'left'; route: CanvasPoint[] } | undefined
+    for (const [fromAnchor, toAnchor] of pairs) {
+      const start = fixedAnchorPoint(from, fromAnchor)
+      const end = fixedAnchorPoint(to, toAnchor)
+      const route = findOrthogonalRoute(start, end, obstacles, occupied)
+      const score = scoreRoute(route, obstacles, occupied)
+        + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
+      if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
     }
+    if (!best) continue
+    const simplified = simplifyRoute(best.route)
+    addOccupiedSegments(simplified, occupied)
+    routed.set(arrow.id, {
+      ...arrow,
+      routing: 'orthogonal',
+      fromAnchor: best.fromAnchor,
+      toAnchor: best.toAnchor,
+      lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
+      points: simplified.length > 2 ? simplified.slice(1, -1) : undefined,
+    })
   }
 
   return {
     ...scene,
     elements: scene.elements.map((item) => item.type === 'arrow' ? routed.get(item.id) ?? item : item),
   }
+}
+
+type RouteRect = { x: number; y: number; width: number; height: number }
+type RouteSegment = { a: CanvasPoint; b: CanvasPoint }
+
+function preferredAnchorPairs(dx: number, dy: number): Array<['top' | 'right' | 'bottom' | 'left', 'top' | 'right' | 'bottom' | 'left']> {
+  const horizontal: ['right' | 'left', 'left' | 'right'] = dx >= 0 ? ['right', 'left'] : ['left', 'right']
+  const vertical: ['bottom' | 'top', 'top' | 'bottom'] = dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom']
+  return Math.abs(dx) >= Math.abs(dy)
+    ? [horizontal, vertical, [horizontal[0], vertical[1]], [vertical[0], horizontal[1]]]
+    : [vertical, horizontal, [vertical[0], horizontal[1]], [horizontal[0], vertical[1]]]
+}
+
+function fixedAnchorPoint(box: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>, anchor: 'top' | 'right' | 'bottom' | 'left'): CanvasPoint {
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+  if (anchor === 'top') return { x: cx, y: box.y }
+  if (anchor === 'right') return { x: box.x + box.width, y: cy }
+  if (anchor === 'bottom') return { x: cx, y: box.y + box.height }
+  return { x: box.x, y: cy }
+}
+
+function expandRect(box: RouteRect, margin: number): RouteRect {
+  return { x: box.x - margin, y: box.y - margin, width: box.width + margin * 2, height: box.height + margin * 2 }
+}
+
+function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: RouteRect[], occupied: RouteSegment[]): CanvasPoint[] {
+  const margin = 24
+  const xCandidates = uniqueNumbers([
+    (start.x + end.x) / 2,
+    start.x + Math.sign(end.x - start.x || 1) * 56,
+    end.x - Math.sign(end.x - start.x || 1) * 56,
+    ...obstacles.flatMap((item) => [item.x - margin, item.x + item.width + margin]),
+  ]).sort((a, b) => Math.abs(a - (start.x + end.x) / 2) - Math.abs(b - (start.x + end.x) / 2)).slice(0, 28)
+  const yCandidates = uniqueNumbers([
+    (start.y + end.y) / 2,
+    start.y + Math.sign(end.y - start.y || 1) * 48,
+    end.y - Math.sign(end.y - start.y || 1) * 48,
+    ...obstacles.flatMap((item) => [item.y - margin, item.y + item.height + margin]),
+  ]).sort((a, b) => Math.abs(a - (start.y + end.y) / 2) - Math.abs(b - (start.y + end.y) / 2)).slice(0, 28)
+
+  const candidates: CanvasPoint[][] = [
+    [start, { x: end.x, y: start.y }, end],
+    [start, { x: start.x, y: end.y }, end],
+    ...xCandidates.map((x) => [start, { x, y: start.y }, { x, y: end.y }, end]),
+    ...yCandidates.map((y) => [start, { x: start.x, y }, { x: end.x, y }, end]),
+  ]
+  let best = candidates[0]
+  let bestScore = Number.POSITIVE_INFINITY
+  for (const candidate of candidates) {
+    const simplified = simplifyRoute(candidate)
+    const score = scoreRoute(simplified, obstacles, occupied)
+    if (score < bestScore) {
+      best = simplified
+      bestScore = score
+    }
+  }
+  return best
+}
+
+function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: RouteSegment[]): number {
+  let length = 0
+  let collisions = 0
+  let overlapPenalty = 0
+  let crossingPenalty = 0
+  for (let index = 0; index < route.length - 1; index += 1) {
+    const segment = { a: route[index], b: route[index + 1] }
+    length += Math.abs(segment.b.x - segment.a.x) + Math.abs(segment.b.y - segment.a.y)
+    collisions += obstacles.filter((rect) => segmentIntersectsRect(segment, rect)).length
+    for (const used of occupied) {
+      overlapPenalty += segmentOverlap(segment, used) * 4
+      if (segmentsCross(segment, used)) crossingPenalty += 110
+    }
+  }
+  return length + Math.max(0, route.length - 2) * 22 + collisions * 100_000 + overlapPenalty + crossingPenalty
+}
+
+function segmentIntersectsRect(segment: RouteSegment, rect: RouteRect): boolean {
+  const minX = Math.min(segment.a.x, segment.b.x)
+  const maxX = Math.max(segment.a.x, segment.b.x)
+  const minY = Math.min(segment.a.y, segment.b.y)
+  const maxY = Math.max(segment.a.y, segment.b.y)
+  if (segment.a.y === segment.b.y) {
+    const y = segment.a.y
+    return y > rect.y && y < rect.y + rect.height && maxX > rect.x && minX < rect.x + rect.width
+  }
+  if (segment.a.x === segment.b.x) {
+    const x = segment.a.x
+    return x > rect.x && x < rect.x + rect.width && maxY > rect.y && minY < rect.y + rect.height
+  }
+  return false
+}
+
+function segmentOverlap(left: RouteSegment, right: RouteSegment): number {
+  const leftHorizontal = left.a.y === left.b.y
+  const rightHorizontal = right.a.y === right.b.y
+  if (leftHorizontal !== rightHorizontal) return 0
+  if (leftHorizontal) {
+    if (Math.abs(left.a.y - right.a.y) > 8) return 0
+    return intervalOverlap(left.a.x, left.b.x, right.a.x, right.b.x)
+  }
+  if (Math.abs(left.a.x - right.a.x) > 8) return 0
+  return intervalOverlap(left.a.y, left.b.y, right.a.y, right.b.y)
+}
+
+function segmentsCross(left: RouteSegment, right: RouteSegment): boolean {
+  const leftHorizontal = left.a.y === left.b.y
+  const rightHorizontal = right.a.y === right.b.y
+  if (leftHorizontal === rightHorizontal) return false
+  const horizontal = leftHorizontal ? left : right
+  const vertical = leftHorizontal ? right : left
+  const hx1 = Math.min(horizontal.a.x, horizontal.b.x)
+  const hx2 = Math.max(horizontal.a.x, horizontal.b.x)
+  const vy1 = Math.min(vertical.a.y, vertical.b.y)
+  const vy2 = Math.max(vertical.a.y, vertical.b.y)
+  return vertical.a.x > hx1 && vertical.a.x < hx2 && horizontal.a.y > vy1 && horizontal.a.y < vy2
+}
+
+function intervalOverlap(a1: number, a2: number, b1: number, b2: number): number {
+  return Math.max(0, Math.min(Math.max(a1, a2), Math.max(b1, b2)) - Math.max(Math.min(a1, a2), Math.min(b1, b2)))
+}
+
+function simplifyRoute(points: CanvasPoint[]): CanvasPoint[] {
+  const deduped = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y)
+  return deduped.filter((point, index) => {
+    if (index === 0 || index === deduped.length - 1) return true
+    const before = deduped[index - 1]
+    const after = deduped[index + 1]
+    return !((before.x === point.x && point.x === after.x) || (before.y === point.y && point.y === after.y))
+  })
+}
+
+function addOccupiedSegments(route: CanvasPoint[], occupied: RouteSegment[]) {
+  for (let index = 0; index < route.length - 1; index += 1) occupied.push({ a: route[index], b: route[index + 1] })
+}
+
+function uniqueNumbers(values: number[]): number[] {
+  return [...new Set(values.filter(Number.isFinite).map((value) => Math.round(value)))]
 }
 
 function buildArchitectureLanes(
@@ -303,12 +429,12 @@ function enrichArchitectureBox<T extends CanvasNode | CanvasNote>(item: T): T {
 function classifyArchitectureBox(item: CanvasNode | CanvasNote): ArchitecturePartition {
   if (item.icon === 'user' || item.icon === 'external') return 'external'
   if (item.icon === 'web') return 'experience'
-  if (item.icon === 'queue') return 'processing'
-  if (item.icon === 'database' || item.icon === 'cache' || item.icon === 'file') return 'data'
-  if (item.icon === 'api' || item.icon === 'service' || item.icon === 'cloud') return 'application'
+  if (item.icon === 'queue' || item.icon === 'worker' || item.icon === 'scheduler') return 'processing'
+  if (item.icon === 'database' || item.icon === 'cache' || item.icon === 'file' || item.icon === 'search' || item.icon === 'vector') return 'data'
+  if (item.icon === 'api' || item.icon === 'gateway' || item.icon === 'service' || item.icon === 'cloud' || item.icon === 'auth' || item.icon === 'ai' || item.icon === 'mcp') return 'application'
   if (item.stencil === 'react' || item.stencil === 'vue') return 'experience'
-  if (item.stencil === 'kafka') return 'processing'
-  if (['postgres', 'mysql', 'redis', 'qdrant', 'opensearch', 'minio'].includes(item.stencil ?? '')) return 'data'
+  if (item.stencil === 'kafka' || item.stencil === 'rabbitmq') return 'processing'
+  if (['postgres', 'mysql', 'redis', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio'].includes(item.stencil ?? '')) return 'data'
   return 'application'
 }
 
@@ -322,11 +448,19 @@ function inferStencil(text: string, subtitle?: string): CanvasStencil | undefine
     ['mysql', /\bmysql\b/],
     ['redis', /\bredis\b/],
     ['kafka', /\bkafka\b/],
+    ['rabbitmq', /\brabbit\s*mq\b|\brabbitmq\b/],
     ['docker', /\bdocker\b/],
     ['kubernetes', /\bkubernetes\b|\bk8s\b/],
     ['qdrant', /\bqdrant\b/],
     ['opensearch', /\bopensearch\b/],
+    ['elasticsearch', /\belasticsearch\b|\belastic\s+search\b/],
+    ['mongodb', /\bmongo(?:db)?\b/],
     ['minio', /\bminio\b|\bs3\b/],
+    ['nginx', /\bnginx\b/],
+    ['grpc', /\bgrpc\b/],
+    ['oidc', /\boidc\b|\bopenid\s+connect\b/],
+    ['openai', /\bopenai\b|\bllm\b|\bembedding provider\b|大模型|模型服务/],
+    ['mcp', /\bmcp\b|model context protocol/],
   ]
   return entries.find(([, pattern]) => pattern.test(value))?.[0]
 }
@@ -334,14 +468,22 @@ function inferStencil(text: string, subtitle?: string): CanvasStencil | undefine
 function inferIcon(text: string, subtitle?: string): CanvasIcon | undefined {
   const value = `${text} ${subtitle ?? ''}`.toLowerCase()
   if (/\b(browser|frontend|front-end|web app|ui)\b|前端|浏览器/.test(value)) return 'web'
-  if (/\b(api|gateway|rest|graphql|mcp server)\b|接口|网关/.test(value)) return 'api'
-  if (/\b(worker|service|runtime|agent|processor|parser|indexer|sync)\b|服务|任务|解析|索引/.test(value)) return 'service'
+  if (/\b(gateway|reverse proxy|proxy)\b|网关|反向代理/.test(value)) return 'gateway'
+  if (/\b(api|rest|graphql)\b|接口/.test(value)) return 'api'
+  if (/\bmcp\b|model context protocol/.test(value)) return 'mcp'
+  if (/\b(worker|processor|parser|indexer|sync worker|consumer)\b|任务|解析|索引|采集/.test(value)) return 'worker'
+  if (/\b(scheduler|cron|schedule|timer)\b|调度|定时/.test(value)) return 'scheduler'
+  if (/\b(agent|llm|model runtime|embedding provider|ai runtime)\b|大模型|智能体|模型服务/.test(value)) return 'ai'
+  if (/\b(service|runtime|application)\b|服务/.test(value)) return 'service'
   if (/\b(cache)\b|缓存/.test(value)) return 'cache'
   if (/\b(queue|topic|broker|event bus|mq)\b|队列|消息/.test(value)) return 'queue'
-  if (/\b(database|db|sql|vector store|search index)\b|数据库|向量|检索/.test(value)) return 'database'
+  if (/\b(qdrant|vector db|vector store|vector index)\b|向量库|向量检索/.test(value)) return 'vector'
+  if (/\b(opensearch|elasticsearch|search index|search engine)\b|搜索引擎|全文检索|搜索索引/.test(value)) return 'search'
+  if (/\b(database|db|sql)\b|数据库/.test(value)) return 'database'
   if (/\b(file|blob|object storage|storage)\b|文件|对象存储/.test(value)) return 'file'
   if (/\b(user|person|client)\b|用户|员工/.test(value)) return 'user'
-  if (/\b(provider|external|third[- ]party|oidc)\b|外部|第三方/.test(value)) return 'external'
+  if (/\b(auth|identity|oidc|oauth|sso)\b|认证|身份/.test(value)) return 'auth'
+  if (/\b(provider|external|third[- ]party)\b|外部|第三方/.test(value)) return 'external'
   return undefined
 }
 
@@ -350,10 +492,17 @@ function iconForStencil(stencil?: CanvasStencil): CanvasIcon | undefined {
   if (stencil === 'react' || stencil === 'vue') return 'web'
   if (stencil === 'spring') return 'service'
   if (stencil === 'redis') return 'cache'
-  if (stencil === 'kafka') return 'queue'
-  if (stencil === 'postgres' || stencil === 'mysql' || stencil === 'qdrant' || stencil === 'opensearch') return 'database'
+  if (stencil === 'kafka' || stencil === 'rabbitmq') return 'queue'
+  if (stencil === 'qdrant') return 'vector'
+  if (stencil === 'opensearch' || stencil === 'elasticsearch') return 'search'
+  if (stencil === 'postgres' || stencil === 'mysql' || stencil === 'mongodb') return 'database'
   if (stencil === 'minio') return 'file'
   if (stencil === 'docker' || stencil === 'kubernetes') return 'cloud'
+  if (stencil === 'nginx') return 'gateway'
+  if (stencil === 'oidc') return 'auth'
+  if (stencil === 'openai') return 'ai'
+  if (stencil === 'mcp') return 'mcp'
+  if (stencil === 'grpc') return 'api'
   return undefined
 }
 
@@ -366,12 +515,13 @@ function partitionColumns(count: number): number {
 function architectureSortKey(item: CanvasNode | CanvasNote): number {
   if (item.icon === 'user' || item.icon === 'external') return 0
   if (item.icon === 'web') return 10
-  if (item.icon === 'api') return 20
-  if (item.icon === 'service') return 30
-  if (item.icon === 'queue') return 40
+  if (item.icon === 'gateway' || item.icon === 'api' || item.icon === 'auth' || item.icon === 'mcp') return 20
+  if (item.icon === 'service' || item.icon === 'ai') return 30
+  if (item.icon === 'worker' || item.icon === 'scheduler' || item.icon === 'queue') return 40
   if (item.icon === 'cache') return 50
-  if (item.icon === 'database') return 60
-  if (item.icon === 'file') return 70
+  if (item.icon === 'search' || item.icon === 'vector') return 60
+  if (item.icon === 'database') return 70
+  if (item.icon === 'file') return 80
   return 80
 }
 

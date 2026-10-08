@@ -15,5 +15,6 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '依赖关系优先正交路由；并行关系错开 routing channel，异步消息链使用 dashed；减少穿过节点和多条线完全重叠。',
     '图上文字保持短：节点标题表达职责，subtitle 表达技术/协议；长解释放 description，不把段落塞进节点。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
+    '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',
   ]
 }

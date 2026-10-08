@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { beautifyArchitectureScene, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconGlyph, canvasIconLabel, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { beautifyArchitectureScene, routeArchitectureEdges, type ArchitectureTheme } from './architectureDesign.js'
+import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -873,6 +873,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setViewport({ x: 0, y: 0, zoom: 1 })
   }
 
+  function tidyArchitectureRoutes() {
+    commit(routeArchitectureEdges(currentScene()))
+  }
+
   function recordGesture(before: string) {
     if (before === sourceRef.current) return
     undoStack.current.push(before)
@@ -1448,6 +1452,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <option value="presentation">汇报展示</option>
           </select>
           <button type="button" title="自动分区、配色、补图标并整理连线" onClick={beautifyArchitecture}>美化</button>
+          <button type="button" title="保留节点位置，仅重新计算锚点、避障路径和线路通道" onClick={tidyArchitectureRoutes}>理线</button>
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
           {onAnalyzeGitImpact ? <button type="button" title="将当前 Git 改动映射到架构节点" onClick={() => void onAnalyzeGitImpact()}>改动影响</button> : null}
           <span className="freeform-toolbar-separator" />
@@ -1585,12 +1590,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <option value="user">用户</option>
                     <option value="web">Web / 前端</option>
                     <option value="api">API / 网关</option>
+                    <option value="gateway">网关 / Proxy</option>
                     <option value="service">服务</option>
+                    <option value="worker">Worker / Processor</option>
                     <option value="database">数据库</option>
                     <option value="cache">缓存</option>
                     <option value="queue">消息队列</option>
+                    <option value="search">搜索 / 索引</option>
+                    <option value="vector">向量检索</option>
                     <option value="cloud">云 / 平台</option>
                     <option value="file">文件 / 对象</option>
+                    <option value="auth">认证 / 身份</option>
+                    <option value="ai">AI / 模型</option>
+                    <option value="mcp">MCP</option>
+                    <option value="scheduler">调度 / 定时</option>
                     <option value="external">外部系统</option>
                   </select>
                 </label>
@@ -1605,11 +1618,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <option value="mysql">MySQL</option>
                     <option value="redis">Redis</option>
                     <option value="kafka">Kafka</option>
+                    <option value="rabbitmq">RabbitMQ</option>
                     <option value="docker">Docker</option>
                     <option value="kubernetes">Kubernetes</option>
                     <option value="qdrant">Qdrant</option>
                     <option value="opensearch">OpenSearch</option>
+                    <option value="elasticsearch">Elasticsearch</option>
+                    <option value="mongodb">MongoDB</option>
                     <option value="minio">MinIO / S3</option>
+                    <option value="nginx">Nginx</option>
+                    <option value="grpc">gRPC</option>
+                    <option value="oidc">OIDC</option>
+                    <option value="openai">LLM / OpenAI-compatible</option>
+                    <option value="mcp">MCP</option>
                   </select>
                 </label>
                 {detailsExpanded ? (
@@ -1927,7 +1948,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               {item.icon ? (
                 <g className="freeform-node-role" transform="translate(18 18)">
                   <circle r="10" />
-                  <text textAnchor="middle" dominantBaseline="middle">{canvasIconGlyph(item.icon)}</text>
+                  <g className="freeform-node-role-symbol" transform="translate(-7 -7) scale(.5833)">
+                    {canvasIconPaths(item.icon).map((path, index) => <path key={`${item.icon}-${index}`} d={path} />)}
+                  </g>
                 </g>
               ) : null}
               {item.stencil ? <text className="freeform-node-icon" x={item.icon ? 34 : 13} y="19">{canvasStencilLabel(item.stencil)}</text> : null}

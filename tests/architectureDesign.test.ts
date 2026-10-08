@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { beautifyArchitectureScene } from '../src/architectureDesign.js'
-import type { CanvasScene } from '../src/canvas.js'
+import { anchorPoint, type CanvasScene } from '../src/canvas.js'
 
 function sampleScene(): CanvasScene {
   return {
@@ -47,7 +47,8 @@ test('spreads architecture relationships with orthogonal channels and async styl
   const arrows = new Map(scene.elements.filter((item) => item.type === 'arrow').map((item) => [item.id, item]))
 
   assert.equal(arrows.get('a2')?.routing, 'orthogonal')
-  assert.ok((arrows.get('a2')?.points?.length ?? 0) >= 2)
+  assert.ok(['left', 'right', 'top', 'bottom'].includes(arrows.get('a2')?.fromAnchor ?? ''))
+  assert.ok(['left', 'right', 'top', 'bottom'].includes(arrows.get('a2')?.toAnchor ?? ''))
   assert.equal(arrows.get('a3')?.lineStyle, 'dashed')
   assert.ok(['left', 'right', 'top', 'bottom'].includes(arrows.get('a4')?.fromAnchor ?? ''))
 })
@@ -66,3 +67,66 @@ test('keeps locked architecture nodes at their authored coordinates', () => {
   assert.equal(after.x, 77)
   assert.equal(after.y, 233)
 })
+
+test('routes architecture relationships around blocking nodes', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Obstacle routing',
+    width: 1200,
+    height: 700,
+    elements: [
+      { id: 'from', type: 'node', x: 80, y: 240, width: 180, height: 90, text: 'API Gateway', icon: 'gateway' },
+      { id: 'blocker', type: 'node', x: 450, y: 210, width: 220, height: 150, text: 'Application Service', icon: 'service' },
+      { id: 'to', type: 'node', x: 860, y: 240, width: 180, height: 90, text: 'PostgreSQL', icon: 'database' },
+      { id: 'edge', type: 'arrow', from: 'from', to: 'to' },
+    ],
+  }
+  const result = beautifyArchitectureScene(scene, { repartition: false, relayout: false, reroute: true }).scene
+  const boxes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
+  const edge = result.elements.find((item) => item.id === 'edge')
+  assert.ok(edge?.type === 'arrow')
+  const from = boxes.get('from')!
+  const to = boxes.get('to')!
+  const start = anchorPoint(from, edge.fromAnchor, { x: to.x, y: to.y })
+  const end = anchorPoint(to, edge.toAnchor, { x: from.x, y: from.y })
+  const route = [start, ...(edge.points ?? []), end]
+  assert.ok(route.length >= 4)
+  for (let index = 0; index < route.length - 1; index += 1) {
+    assert.equal(segmentCutsBox(route[index], route[index + 1], boxes.get('blocker')!), false)
+  }
+})
+
+test('recognizes architecture-specific roles beyond generic service and database', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Knowledge platform',
+    width: 1400,
+    height: 800,
+    elements: [
+      { id: 'mcp', type: 'node', x: 40, y: 40, width: 200, height: 90, text: 'MCP Server' },
+      { id: 'worker', type: 'node', x: 40, y: 180, width: 200, height: 90, text: 'Parse Worker' },
+      { id: 'search', type: 'node', x: 40, y: 320, width: 200, height: 90, text: 'OpenSearch' },
+      { id: 'vector', type: 'node', x: 40, y: 460, width: 200, height: 90, text: 'Qdrant Vector DB' },
+      { id: 'auth', type: 'node', x: 40, y: 600, width: 200, height: 90, text: 'Enterprise OIDC Provider' },
+    ],
+  }
+  const result = beautifyArchitectureScene(scene, { relayout: false }).scene
+  const nodes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
+  assert.equal(nodes.get('mcp')?.icon, 'mcp')
+  assert.equal(nodes.get('worker')?.icon, 'worker')
+  assert.equal(nodes.get('search')?.icon, 'search')
+  assert.equal(nodes.get('vector')?.icon, 'vector')
+  assert.equal(nodes.get('auth')?.icon, 'auth')
+})
+
+function segmentCutsBox(a: { x: number; y: number }, b: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }): boolean {
+  const left = box.x - 1
+  const right = box.x + box.width + 1
+  const top = box.y - 1
+  const bottom = box.y + box.height + 1
+  if (a.y === b.y) return a.y > top && a.y < bottom && Math.max(a.x, b.x) > left && Math.min(a.x, b.x) < right
+  if (a.x === b.x) return a.x > left && a.x < right && Math.max(a.y, b.y) > top && Math.min(a.y, b.y) < bottom
+  return false
+}
