@@ -61,7 +61,23 @@ interface DiagramThreadStateResult {
   kind: 'diagram-thread-state'
   activeDiagramPath?: string
   focusElementIds?: string[]
+  proposal?: DiagramProposalSummary
   updatedAt?: string
+}
+
+interface DiagramProposalSummary {
+  path: string
+  reason?: string
+  baseModifiedAt: string
+  updatedAt: string
+}
+
+interface DiagramProposalSourceResult {
+  kind: 'diagram-proposal-source'
+  workspacePath: string
+  proposal: DiagramProposalSummary
+  before: DiagramDocument
+  candidateSource: string
 }
 
 type ViewMode = 'preview' | 'source' | 'split'
@@ -210,6 +226,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
   const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string } | null>(null)
+  const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
+  const [proposalReviewOpen, setProposalReviewOpen] = useState(false)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
@@ -246,6 +264,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setThreadTabs([])
     setCanvasSelection(null)
     setCanvasFocus(null)
+    setAiProposal(null)
+    setProposalReviewOpen(false)
     setChangeReview(null)
     setChangeReviewOpen(false)
     setSource('')
@@ -289,6 +309,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           backgroundSyncSucceeded('thread')
           if (disposed) return
           if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
+          if (state.proposal && state.proposal.updatedAt !== aiProposal?.summary.updatedAt) {
+            try {
+              const proposal = await callTool<DiagramProposalSourceResult>('diagram.proposal', {})
+              if (!disposed) {
+                const after: DiagramDocument = {
+                  ...proposal.before,
+                  source: proposal.candidateSource,
+                }
+                setAiProposal({ summary: proposal.proposal, before: proposal.before, after })
+                setProposalReviewOpen(true)
+                setNotice('Codex 提交了一版候选修改，文件尚未写入')
+              }
+            } catch {
+              // Proposal sync is best-effort; normal thread following can continue.
+            }
+          } else if (!state.proposal && aiProposal) {
+            setAiProposal(null)
+            setProposalReviewOpen(false)
+          }
           if (!followConversation) return
           lastThreadStateAt.current = state.updatedAt
           const nextPath = state.activeDiagramPath
@@ -333,7 +372,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       disposed = true
       window.clearInterval(handle)
     }
-  }, [dirty, followConversation, isThread, onSnapshot, selected, snapshot, workspacePath])
+  }, [aiProposal, dirty, followConversation, isThread, onSnapshot, selected, snapshot, workspacePath])
 
   useEffect(() => {
     if (!isThread || selected || dirty) return
@@ -624,6 +663,43 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function acceptAiProposal() {
+    if (!aiProposal || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await callTool<DiagramResult>('diagram.applyProposal', {})
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      setAiProposal(null)
+      setProposalReviewOpen(false)
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      updateModelContext(workspacePath, result.diagram)
+      setNotice('已接受 Codex 候选修改')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function dismissAiProposal() {
+    if (!aiProposal) return
+    setError(null)
+    try {
+      await callTool<{ kind: 'diagram-proposal-dismissed' }>('diagram.dismissProposal', {})
+      setAiProposal(null)
+      setProposalReviewOpen(false)
+      setNotice('已拒绝 Codex 候选修改，当前文件未改变')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
   async function refreshList() {
     setError(null)
     try {
@@ -766,7 +842,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     try {
       await sendCodexMessage(buildModificationPrompt(workspacePath, selected, instruction))
       setAiOpen(false)
-      setNotice('已发送到当前 Codex 对话，文件更新后会自动同步')
+      setNotice('已发送到当前 Codex 对话；Codex 返回候选修改后会先进入 Proposal 审查')
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -778,7 +854,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
     const compact = canvasSelection.elements.map((element) => {
       if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
-      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
     })
     await sendModification([
       '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
@@ -1046,6 +1122,19 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <span>不会影响当前图查看与编辑</span>
           </div>
         ) : null}
+        {aiProposal ? (
+          <div className="proposal-banner" role="status">
+            <div>
+              <strong>Codex 候选修改</strong>
+              <span>{aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
+            </div>
+            <div className="proposal-banner-actions">
+              <button type="button" onClick={() => setProposalReviewOpen(true)}>查看</button>
+              <button type="button" onClick={() => void dismissAiProposal()}>拒绝</button>
+              <button className="primary-button compact" type="button" disabled={saving} onClick={() => void acceptAiProposal()}>接受</button>
+            </div>
+          </div>
+        ) : null}
         {notice ? <div className="notice-banner"><span>{notice}</span>{changeReview ? <button type="button" onClick={() => setChangeReviewOpen(true)}>查看变更</button> : null}</div> : null}
         {externalChange ? (
           <div className="conflict-banner">
@@ -1077,6 +1166,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 {changeReview ? (
                   <button className="change-review-trigger" type="button" onClick={() => setChangeReviewOpen(true)}>变更</button>
                 ) : null}
+                {aiProposal ? <button className="proposal-review-trigger" type="button" onClick={() => setProposalReviewOpen(true)}>Proposal</button> : null}
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
                 {!isThread ? <div className="document-actions">
@@ -1227,6 +1317,17 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onRestore={() => void restorePreviousChange()}
           />
         ) : null}
+        {aiProposal && proposalReviewOpen ? (
+          <ProposalReviewPanel
+            before={aiProposal.before}
+            after={aiProposal.after}
+            reason={aiProposal.summary.reason}
+            applying={saving}
+            onClose={() => setProposalReviewOpen(false)}
+            onAccept={() => void acceptAiProposal()}
+            onReject={() => void dismissAiProposal()}
+          />
+        ) : null}
         {selected && deleteConfirmOpen ? (
           <div className="confirm-overlay" role="presentation" onMouseDown={() => setDeleteConfirmOpen(false)}>
             <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-diagram-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -1288,6 +1389,46 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
       <div className="change-review-actions">
         <button type="button" disabled={restoring} onClick={onRestore}>{restoring ? '恢复中…' : '恢复旧版'}</button>
         <button className="primary-button" type="button" onClick={onClose}>保留新版</button>
+      </div>
+    </aside>
+  )
+}
+
+function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccept, onReject }: {
+  before: DiagramDocument
+  after: DiagramDocument
+  reason?: string
+  applying: boolean
+  onClose: () => void
+  onAccept: () => void
+  onReject: () => void
+}) {
+  const diff = useMemo(() => buildLineDiff(before.source, after.source), [after.source, before.source])
+  const added = diff.filter((line) => line.kind === 'add').length
+  const removed = diff.filter((line) => line.kind === 'remove').length
+  return (
+    <aside className="change-review-panel proposal-review-panel" aria-label="Codex 候选修改">
+      <div className="change-review-head">
+        <div>
+          <div className="eyebrow">AI PROPOSAL</div>
+          <strong>候选修改</strong>
+          <span>+{added} / −{removed}</span>
+        </div>
+        <button type="button" onClick={onClose}>关闭</button>
+      </div>
+      <div className="change-review-path">{after.path}</div>
+      {reason ? <div className="proposal-review-reason">{reason}</div> : null}
+      <div className="change-review-diff" role="log" aria-label="候选源码差异">
+        {diff.map((line, index) => (
+          <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
+            <span>{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
+            <code>{line.text || ' '}</code>
+          </div>
+        ))}
+      </div>
+      <div className="change-review-actions">
+        <button type="button" disabled={applying} onClick={onReject}>拒绝</button>
+        <button className="primary-button" type="button" disabled={applying} onClick={onAccept}>{applying ? '应用中…' : '接受并写入'}</button>
       </div>
     </aside>
   )
@@ -1681,7 +1822,7 @@ async function sendCodexMessage(text: string): Promise<void> {
 function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
   const selectedCanvasElements = canvasSelection?.elements.map((element) => {
     if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
-    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
+    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
   })
   void openai.modelContext?.update({
     content: [{

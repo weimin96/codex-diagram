@@ -1,4 +1,4 @@
-import type { CanvasArrow, CanvasElement, CanvasNode, CanvasNote, CanvasScene } from './canvas.js'
+import type { CanvasArrow, CanvasElement, CanvasGroup, CanvasNode, CanvasNote, CanvasScene } from './canvas.js'
 
 export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasElement[] {
   const chosen = new Set(ids)
@@ -41,20 +41,27 @@ export function pasteCanvasSelection(scene: CanvasScene, copied: CanvasElement[]
     used.push(pasted)
     return [pasted]
   })
+  const copiedGroups = [...groupMap.entries()].map(([oldId, newId]) => {
+    const sourceGroup = scene.groups?.find((group) => group.id === oldId)
+    return sourceGroup ? { ...sourceGroup, id: newId, label: sourceGroup.label ? `${sourceGroup.label} Copy` : undefined } : { id: newId }
+  })
   return {
-    scene: { ...scene, elements: [...scene.elements, ...boxes, ...arrows] },
+    scene: { ...scene, elements: [...scene.elements, ...boxes, ...arrows], groups: copiedGroups.length ? [...(scene.groups ?? []), ...copiedGroups] : scene.groups },
     selectedIds: boxes.map((item) => item.id),
   }
 }
 
 export function deleteCanvasSelection(scene: CanvasScene, ids: string[]): CanvasScene {
   const removed = new Set(ids)
+  const elements = scene.elements.filter((item) => (
+    !removed.has(item.id)
+    && !(item.type === 'arrow' && (removed.has(item.from) || removed.has(item.to)))
+  ))
+  const usedGroups = new Set(elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!))
   return {
     ...scene,
-    elements: scene.elements.filter((item) => (
-      !removed.has(item.id)
-      && !(item.type === 'arrow' && (removed.has(item.from) || removed.has(item.to)))
-    )),
+    elements,
+    groups: scene.groups?.filter((group) => usedGroups.has(group.id)),
   }
 }
 
@@ -133,6 +140,7 @@ export function groupCanvasSelection(scene: CanvasScene, ids: string[]): { scene
     scene: {
       ...scene,
       elements: scene.elements.map((item) => item.type !== 'arrow' && ids.includes(item.id) ? { ...item, groupId } : item),
+      groups: upsertCanvasGroup(scene.groups, { id: groupId, label: scene.groups?.find((group) => group.id === groupId)?.label ?? `Group ${groupId.replace(/^group-/, '')}` }),
     },
   }
 }
@@ -142,14 +150,89 @@ export function ungroupCanvasSelection(scene: CanvasScene, ids: string[]): Canva
     .filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id) && Boolean(item.groupId))
     .map((item) => item.groupId!))
   if (groupIds.size === 0) return scene
+  const nextElements = scene.elements.map((item) => {
+    if (item.type === 'arrow' || !item.groupId || !groupIds.has(item.groupId)) return item
+    const { groupId: _groupId, ...rest } = item
+    return rest
+  })
+  const stillUsed = new Set(nextElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!))
   return {
     ...scene,
-    elements: scene.elements.map((item) => {
-      if (item.type === 'arrow' || !item.groupId || !groupIds.has(item.groupId)) return item
-      const { groupId: _groupId, ...rest } = item
-      return rest
-    }),
+    elements: nextElements,
+    groups: scene.groups?.filter((group) => !groupIds.has(group.id) || stillUsed.has(group.id)),
   }
+}
+
+export function updateCanvasGroup(scene: CanvasScene, groupId: string, patch: Partial<Omit<CanvasGroup, 'id'>>): CanvasScene {
+  return { ...scene, groups: upsertCanvasGroup(scene.groups, { id: groupId, ...patch }) }
+}
+
+export type CanvasLayoutMode = 'horizontal' | 'vertical' | 'grid'
+
+export function layoutCanvasScene(scene: CanvasScene, mode: CanvasLayoutMode, grid = 16): CanvasScene {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const mutable = boxes.filter((item) => !item.locked)
+  if (mutable.length < 2) return scene
+
+  if (mode === 'grid') {
+    const columns = Math.max(2, Math.ceil(Math.sqrt(mutable.length)))
+    const positions = new Map<string, { x: number; y: number }>()
+    mutable.forEach((item, index) => {
+      positions.set(item.id, {
+        x: snap(96 + (index % columns) * 300, grid),
+        y: snap(96 + Math.floor(index / columns) * 190, grid),
+      })
+    })
+    return applyLayoutPositions(scene, positions)
+  }
+
+  const mutableIds = new Set(mutable.map((item) => item.id))
+  const incoming = new Map<string, number>()
+  const outgoing = new Map<string, string[]>()
+  mutable.forEach((item) => {
+    incoming.set(item.id, 0)
+    outgoing.set(item.id, [])
+  })
+  scene.elements.forEach((item) => {
+    if (item.type !== 'arrow' || item.from === item.to || !mutableIds.has(item.from) || !mutableIds.has(item.to)) return
+    incoming.set(item.to, (incoming.get(item.to) ?? 0) + 1)
+    outgoing.get(item.from)?.push(item.to)
+  })
+  const layerById = new Map<string, number>()
+  const queue = mutable.filter((item) => (incoming.get(item.id) ?? 0) === 0).map((item) => item.id)
+  if (queue.length === 0) queue.push(mutable[0].id)
+  queue.forEach((id) => layerById.set(id, 0))
+  for (let index = 0; index < queue.length; index += 1) {
+    const id = queue[index]
+    const base = layerById.get(id) ?? 0
+    for (const next of outgoing.get(id) ?? []) {
+      layerById.set(next, Math.max(layerById.get(next) ?? 0, base + 1))
+      incoming.set(next, Math.max(0, (incoming.get(next) ?? 0) - 1))
+      if ((incoming.get(next) ?? 0) === 0) queue.push(next)
+    }
+  }
+  let fallbackLayer = Math.max(0, ...layerById.values()) + 1
+  mutable.forEach((item) => {
+    if (!layerById.has(item.id)) layerById.set(item.id, fallbackLayer++)
+  })
+
+  const layers = new Map<number, Array<CanvasNode | CanvasNote>>()
+  mutable.forEach((item) => {
+    const layer = layerById.get(item.id) ?? 0
+    const entries = layers.get(layer) ?? []
+    entries.push(item)
+    layers.set(layer, entries)
+  })
+  const positions = new Map<string, { x: number; y: number }>()
+  ;[...layers.entries()].sort(([a], [b]) => a - b).forEach(([layer, items]) => {
+    items.sort((a, b) => a.y - b.y || a.x - b.x)
+    items.forEach((item, index) => {
+      positions.set(item.id, mode === 'horizontal'
+        ? { x: snap(96 + layer * 330, grid), y: snap(96 + index * 170, grid) }
+        : { x: snap(96 + index * 330, grid), y: snap(96 + layer * 170, grid) })
+    })
+  })
+  return applyLayoutPositions(scene, positions)
 }
 
 export function expandCanvasGroupSelection(scene: CanvasScene, ids: string[]): string[] {
@@ -187,6 +270,29 @@ export function nextCanvasElementId(prefix: string, elements: Array<Pick<CanvasE
 
 function snap(value: number, grid: number) {
   return Math.round(value / grid) * grid
+}
+
+function applyLayoutPositions(scene: CanvasScene, positions: Map<string, { x: number; y: number }>): CanvasScene {
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || item.locked) return item
+      const position = positions.get(item.id)
+      if (!position) return item
+      return {
+        ...item,
+        x: clamp(position.x, 0, scene.width - item.width),
+        y: clamp(position.y, 0, scene.height - item.height),
+      }
+    }),
+  }
+}
+
+function upsertCanvasGroup(groups: CanvasGroup[] | undefined, next: CanvasGroup): CanvasGroup[] {
+  const current = groups ?? []
+  return current.some((group) => group.id === next.id)
+    ? current.map((group) => group.id === next.id ? { ...group, ...next } : group)
+    : [...current, next]
 }
 
 function clamp(value: number, min: number, max: number) {

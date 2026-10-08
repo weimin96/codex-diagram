@@ -212,6 +212,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .save-state.is-dirty { color: var(--text-primary); }
 .change-review-trigger { height: 27px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; }
 .change-review-trigger:hover { background: color-mix(in srgb, var(--accent) 11%, var(--surface-panel)); color: var(--text-primary); }
+.proposal-review-trigger { height: 27px; padding: 0 8px; border: 1px solid color-mix(in srgb, #7c3aed 32%, var(--border)); border-radius: 6px; background: color-mix(in srgb, #7c3aed 7%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; }
+.proposal-review-trigger:hover { background: color-mix(in srgb, #7c3aed 12%, var(--surface-panel)); color: var(--text-primary); }
 
 .notice-banner {
   min-height: 34px;
@@ -227,6 +229,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .notice-banner button { height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
 .notice-banner button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.proposal-banner { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px 7px 14px; border-bottom: 1px solid color-mix(in srgb, #7c3aed 24%, var(--border)); background: color-mix(in srgb, #7c3aed 7%, var(--surface-panel)); }
+.proposal-banner > div:first-child { min-width: 0; display: grid; gap: 2px; }
+.proposal-banner strong { color: var(--text-primary); font-size: 12px; }
+.proposal-banner span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.proposal-banner-actions { flex: 0 0 auto; display: flex; gap: 5px; }
+.proposal-banner-actions button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
+.proposal-banner-actions button.primary-button { border-color: var(--accent); background: var(--accent); color: white; }
 .conflict-banner { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 10px 5px 14px; border-bottom: 1px solid color-mix(in srgb, #b7791f 28%, transparent); background: color-mix(in srgb, #b7791f 9%, var(--surface-panel)); color: var(--text-primary); font-size: 12px; }
 .conflict-banner button { height: 26px; padding: 0 8px; border: 1px solid color-mix(in srgb, #b7791f 34%, var(--border)); border-radius: 6px; background: var(--surface-panel); color: var(--text-primary); font-size: 12px; }
 
@@ -292,6 +301,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-floating-toolbar button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .freeform-floating-toolbar button.is-active { background: var(--text-primary); color: var(--surface-panel); }
 .freeform-floating-toolbar button:disabled { opacity: .35; }
+.freeform-layout-select { height: 28px; max-width: 94px; padding: 0 22px 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 10px; }
+.freeform-layout-select:hover { background: var(--surface-hover); color: var(--text-primary); }
 .freeform-toolbar-separator { width: 1px; height: 18px; margin: 0 3px; background: var(--border); }
 .freeform-inspector {
   position: absolute;
@@ -329,6 +340,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-source-options { position: absolute; z-index: 14; top: calc(100% + 4px); left: 0; right: 0; max-height: 170px; overflow: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-panel); box-shadow: 0 12px 30px rgba(0,0,0,.12); }
 .freeform-source-options > span { display: block; padding: 6px 8px; color: var(--text-tertiary); font-size: 10px; }
 .freeform-source-options button { width: 100%; display: block; overflow: hidden; border: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-group-inspector { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--border); }
+.freeform-section-caption { color: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .freeform-status {
   position: absolute;
   z-index: 6;
@@ -372,10 +385,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-arrow-head { fill: var(--border-strong); }
 .freeform-arrow-point { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
 .freeform-group-outline { fill: color-mix(in srgb, var(--accent) 4%, transparent); stroke: color-mix(in srgb, var(--accent) 65%, transparent); stroke-width: 1.5; stroke-dasharray: 10 7; pointer-events: none; vector-effect: non-scaling-stroke; }
+.freeform-group-frame rect { fill: color-mix(in srgb, var(--surface-muted) 30%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 42%, transparent); stroke-width: 1.3; stroke-dasharray: 9 6; vector-effect: non-scaling-stroke; }
+.freeform-group-frame text { fill: var(--text-tertiary); font-size: 12px; font-weight: 650; font-family: var(--font-sans); }
+.freeform-group-frame.tone-accent rect { stroke: #818cf8; fill: color-mix(in srgb, #818cf8 5%, transparent); }
+.freeform-group-frame.tone-success rect { stroke: #34d399; fill: color-mix(in srgb, #34d399 5%, transparent); }
+.freeform-group-frame.tone-warning rect { stroke: #f59e0b; fill: color-mix(in srgb, #f59e0b 5%, transparent); }
+.freeform-group-frame.tone-danger rect { stroke: #f87171; fill: color-mix(in srgb, #f87171 5%, transparent); }
+.freeform-group-frame.is-selected rect { stroke-width: 2.2; stroke-dasharray: 7 4; }
 .freeform-box { cursor: grab; }
 .freeform-box:active { cursor: grabbing; }
 .freeform-box rect { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.6; }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
+.freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-box .freeform-source-badge { fill: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .freeform-note rect { fill: color-mix(in srgb, #f7c948 26%, var(--surface-panel)); }
 .freeform-box.tone-accent rect { fill: color-mix(in srgb, #818cf8 15%, var(--surface-panel)); stroke: #818cf8; }
@@ -466,6 +487,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .change-review-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-panel); }
 .change-review-actions button { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12px; }
 .change-review-actions button.primary-button { border-color: var(--accent); background: var(--accent); color: white; }
+.proposal-review-reason { padding: 8px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, #7c3aed 5%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
 .ai-panel-head {
   position: sticky;
   z-index: 2;

@@ -46,6 +46,7 @@ const server = new McpServer(
       'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
       'When the user asks to draw, create, inspect or modify a diagram and wants to see it beside the conversation, call diagram.thread first. It is the single tool responsible for opening the persistent right-side Diagram panel.',
       'After diagram.thread is open, use diagram.get/create/update for data only; the existing panel follows the current thread state automatically.',
+      'For conversational edits to an existing diagram, prefer diagram.proposeUpdate so the user can review the candidate diff in the side panel before it is written. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
     ].join(' '),
@@ -58,6 +59,7 @@ const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; updatedAt: string }>()
+const threadProposals = new Map<string, { workspacePath: string; path: string; source: string; baseSource: string; reason?: string; baseModifiedAt: string; updatedAt: string }>()
 const ui = (
   resourceUri: string,
   entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
@@ -137,6 +139,7 @@ server.registerTool('diagram.threadState', {
     kind: 'diagram-thread-state',
     activeDiagramPath: state?.path,
     focusElementIds: state?.focusElementIds,
+    proposal: threadId ? proposalSummary(threadProposals.get(threadId)) : undefined,
     updatedAt: state?.updatedAt,
   }
   return {
@@ -296,6 +299,92 @@ server.registerTool('diagram.update', {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
   }
+})
+
+server.registerTool('diagram.proposeUpdate', {
+  title: 'Propose diagram update',
+  description: 'Prepare a candidate full-source update for an existing Mermaid or Canvas diagram without writing it to disk. Prefer this for conversational edits so the user can review the diff in Diagram first.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    source: z.string().min(1),
+    reason: z.string().max(2_000).optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, source, reason }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (!threadId) throw new Error('当前调用没有聊天上下文，无法创建可审查的 Diagram Proposal。')
+  const store = await resolveStore(workspacePath, threadId)
+  const current = await store.get(diagramPath)
+  const proposal = { workspacePath: store.workspacePath, path: current.path, source, baseSource: current.source, reason, baseModifiedAt: current.modifiedAt, updatedAt: new Date().toISOString() }
+  threadProposals.set(threadId, proposal)
+  markThreadDiagram(extra._meta, current.path)
+  return {
+    content: [{ type: 'text', text: `Prepared a Diagram proposal for ${current.path}. The file was not modified; wait for the user to accept or reject it in the Diagram panel.` }],
+    structuredContent: { kind: 'diagram-proposal', workspacePath: store.workspacePath, proposal: proposalSummary(proposal) },
+  }
+})
+
+server.registerTool('diagram.proposal', {
+  title: 'Read diagram proposal',
+  description: 'Internal app bridge for loading the pending candidate source for the current conversation.',
+  inputSchema: z.object({}),
+  annotations: readonly,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const proposal = threadId ? threadProposals.get(threadId) : undefined
+  if (!proposal) throw new Error('当前聊天没有待审查的 Diagram Proposal。')
+  const store = await DiagramStore.open(proposal.workspacePath)
+  const current = await store.get(proposal.path)
+  const before = { ...current, source: proposal.baseSource, modifiedAt: proposal.baseModifiedAt }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram-proposal-source', path: proposal.path, source: proposal.source }) }],
+    structuredContent: {
+      kind: 'diagram-proposal-source',
+      workspacePath: store.workspacePath,
+      proposal: proposalSummary(proposal),
+      before,
+      candidateSource: proposal.source,
+    },
+  }
+})
+
+server.registerTool('diagram.applyProposal', {
+  title: 'Apply diagram proposal',
+  description: 'Internal app bridge for accepting the pending Diagram proposal after user review.',
+  inputSchema: z.object({}),
+  annotations: write,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (!threadId) throw new Error('当前调用没有聊天上下文。')
+  const proposal = threadProposals.get(threadId)
+  if (!proposal) throw new Error('当前聊天没有待应用的 Diagram Proposal。')
+  const store = await DiagramStore.open(proposal.workspacePath)
+  const diagram = await store.update(proposal.path, proposal.source, proposal.baseModifiedAt)
+  threadProposals.delete(threadId)
+  markThreadDiagram(extra._meta, diagram.path)
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram }) }],
+    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.dismissProposal', {
+  title: 'Dismiss diagram proposal',
+  description: 'Internal app bridge for rejecting the pending Diagram proposal without changing the file.',
+  inputSchema: z.object({}),
+  annotations: write,
+  _meta: appOnly,
+}, async (_args, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (threadId) {
+    threadProposals.delete(threadId)
+    const current = threadSelection.get(threadId)
+    threadSelection.set(threadId, { ...current, updatedAt: new Date().toISOString() })
+  }
+  return { content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram-proposal-dismissed' }) }], structuredContent: { kind: 'diagram-proposal-dismissed' } }
 })
 
 server.registerTool('diagram.rename', {
@@ -558,6 +647,16 @@ function clearThreadDiagram(meta: unknown, deletedPath: string): void {
   const current = threadSelection.get(threadId)
   if (current?.path !== deletedPath) return
   threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
+}
+
+function proposalSummary(proposal: { path: string; reason?: string; baseModifiedAt: string; updatedAt: string } | undefined) {
+  if (!proposal) return undefined
+  return {
+    path: proposal.path,
+    reason: proposal.reason,
+    baseModifiedAt: proposal.baseModifiedAt,
+    updatedAt: proposal.updatedAt,
+  }
 }
 
 interface CodexDesktopState {

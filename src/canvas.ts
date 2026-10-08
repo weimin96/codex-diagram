@@ -4,7 +4,14 @@ export type CanvasShape = 'rounded' | 'square' | 'pill'
 export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
+export type CanvasIcon = 'user' | 'web' | 'api' | 'service' | 'database' | 'cache' | 'queue' | 'cloud' | 'file' | 'external'
 export interface CanvasPoint { x: number; y: number }
+
+export interface CanvasGroup {
+  id: string
+  label?: string
+  tone?: CanvasTone
+}
 
 export interface CanvasScene {
   type: 'codex-diagram-canvas'
@@ -13,6 +20,7 @@ export interface CanvasScene {
   width: number
   height: number
   elements: CanvasElement[]
+  groups?: CanvasGroup[]
 }
 
 export interface CanvasNode {
@@ -28,6 +36,7 @@ export interface CanvasNode {
   locked?: boolean
   groupId?: string
   sourcePaths?: string[]
+  icon?: CanvasIcon
 }
 
 export interface CanvasNote {
@@ -43,6 +52,7 @@ export interface CanvasNote {
   locked?: boolean
   groupId?: string
   sourcePaths?: string[]
+  icon?: CanvasIcon
 }
 
 export interface CanvasArrow {
@@ -92,6 +102,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     width: positive(scene.width, 1600),
     height: positive(scene.height, 1000),
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
+    ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
   }
 }
 
@@ -126,9 +137,20 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
     const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${texts}</g>`
+    const icon = item.icon ? `<text x="${item.x + 14}" y="${item.y + 20}" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasIconLabel(item.icon))}</text>` : ''
+    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${texts}</g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${arrows}${shapes}</svg>`
+  const groups = (scene.groups ?? []).map((group) => {
+    const members = [...nodes.values()].filter((item) => item.groupId === group.id)
+    if (members.length < 2) return ''
+    const minX = Math.min(...members.map((item) => item.x)) - 24
+    const minY = Math.min(...members.map((item) => item.y)) - 42
+    const maxX = Math.max(...members.map((item) => item.x + item.width)) + 24
+    const maxY = Math.max(...members.map((item) => item.y + item.height)) + 24
+    const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
+    return `<g><rect x="${minX}" y="${minY}" width="${maxX - minX}" height="${maxY - minY}" rx="18" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="8 6"/>${group.label ? `<text x="${minX + 14}" y="${minY + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(group.label)}</text>` : ''}</g>`
+  }).join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${groups}${arrows}${shapes}</svg>`
 }
 
 function centerOfCanvasBox(item: CanvasNode | CanvasNote) {
@@ -221,6 +243,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
+  const icons: CanvasIcon[] = ['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']
   return {
     id: item.id,
     type: item.type,
@@ -234,7 +257,29 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(item.locked === true ? { locked: true } : {}),
     ...(typeof item.groupId === 'string' && item.groupId.trim() ? { groupId: item.groupId.trim() } : {}),
     ...(Array.isArray(item.sourcePaths) ? { sourcePaths: item.sourcePaths.filter((path) => typeof path === 'string' && path.trim()).map((path) => path.trim()).slice(0, 12) } : {}),
+    ...(item.icon && icons.includes(item.icon) ? { icon: item.icon } : {}),
   }
+}
+
+function normalizeCanvasGroups(value: unknown[]): CanvasGroup[] {
+  const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
+  const seen = new Set<string>()
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object') return []
+    const item = raw as Record<string, unknown>
+    if (typeof item.id !== 'string' || !item.id.trim() || seen.has(item.id.trim())) return []
+    const id = item.id.trim()
+    seen.add(id)
+    return [{
+      id,
+      ...(typeof item.label === 'string' && item.label.trim() ? { label: item.label.trim() } : {}),
+      ...(typeof item.tone === 'string' && tones.includes(item.tone as CanvasTone) ? { tone: item.tone as CanvasTone } : {}),
+    }]
+  })
+}
+
+export function canvasIconLabel(icon: CanvasIcon): string {
+  return ({ user: 'USR', web: 'WEB', api: 'API', service: 'SVC', database: 'DB', cache: 'CACHE', queue: 'MQ', cloud: 'CLOUD', file: 'FILE', external: 'EXT' })[icon]
 }
 
 function escapeXml(value: string): string {

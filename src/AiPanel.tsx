@@ -24,6 +24,10 @@ const generationTemplates: Array<{ label: string; type: DiagramType; title: stri
   { label: '数据模型', type: 'er', title: '数据模型', instructions: '从实体、表结构或模型定义提取核心实体、主外键和主要关系，不展开无关字段。' },
   { label: '状态流转', type: 'state', title: '状态流转', instructions: '从枚举、状态字段和业务分支还原合法状态、触发条件以及失败或终止状态。' },
   { label: '架构画布', type: 'canvas', title: '架构画布', instructions: '用自由画布组织核心模块、外部系统、数据存储和关键说明，保持留白和清晰的空间分组。' },
+  { label: 'C4 Context', type: 'canvas', title: 'C4 系统上下文', instructions: '按 C4 Context 层级只展示用户/角色、当前系统和关键外部系统。使用 group label 表示系统边界，节点使用 user/external/service 等角色图标，连线写明关系，不展开内部类或低级组件。' },
+  { label: 'C4 Container', type: 'canvas', title: 'C4 容器架构', instructions: '按 C4 Container 层级识别 Web/客户端、API/网关、应用服务、数据库、缓存、消息队列和关键外部系统。用有名称的 group 表示边界/领域，节点绑定最相关源码路径，主要关系使用正交连线。' },
+  { label: '服务拓扑', type: 'canvas', title: '服务拓扑', instructions: '从部署配置、服务注册、HTTP/RPC/MQ 调用关系提取真实服务拓扑。使用 service/api/database/cache/queue/cloud/external 节点角色，按边界分组，并区分同步调用和异步消息。' },
+  { label: '事件/数据流', type: 'canvas', title: '事件与数据流', instructions: '展示事件产生者、Topic/Queue、消费者、数据存储和下游系统，优先从 Kafka/MQ/任务代码和配置还原真实流向；用 queue/database/service 角色和正交连线。' },
 ]
 
 export function AiPanel({ selected, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
