@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { beautifyArchitectureScene, routeArchitectureEdges, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArrowPath, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { anchorPoint, canvasArchitectureHeader, canvasArrowLabelLayouts, canvasArrowPath, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -85,7 +85,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
   }, [source])
   const [tool, setTool] = useState<CanvasTool>('select')
-  const [architectureTheme, setArchitectureTheme] = useState<ArchitectureTheme>('enterprise')
+  const [architectureTheme, setArchitectureTheme] = useState<ArchitectureTheme>(parsed.scene?.architecture?.theme ?? 'enterprise')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [connectFromAnchor, setConnectFromAnchor] = useState<CanvasAnchor>('auto')
@@ -829,6 +829,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const visibleRenderArrows = playbackVisibleIds ? renderArrows.filter((item) => playbackVisibleIds.has(item.id)) : renderArrows
   const collapsedConnections = canvasCollapsedConnections(scene, groupBounds)
   const relationBundleTrunks = playback?.active ? [] : canvasBundleTrunks(scene)
+  const relationLabelLayouts = canvasArrowLabelLayouts(scene)
+  const architectureHeader = canvasArchitectureHeader(scene)
+  const architectureLegendStart = architectureHeader
+    ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)
+    : 0
   const selectedLane = selectedBox?.laneId ? scene.lanes?.find((lane) => lane.id === selectedBox.laneId) : undefined
   const layerNeedle = layerQuery.trim().toLocaleLowerCase()
   const layerBoxes = layerNeedle
@@ -1817,11 +1822,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </defs>
           <rect width={scene.width} height={scene.height} className="freeform-background" pointerEvents="none" />
           <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
+          {architectureHeader ? (
+            <g className="freeform-architecture-header" pointerEvents="none">
+              <rect width={scene.width} height={architectureHeader.height} />
+              <path className="freeform-architecture-header-rule" d={`M 28 ${architectureHeader.height - 1} H ${scene.width - 28}`} />
+              <text className="freeform-architecture-eyebrow" x="32" y="24">{architectureHeader.eyebrow}</text>
+              <text className="freeform-architecture-title" x="32" y="52">{truncate(architectureHeader.title, 42)}</text>
+              <text className="freeform-architecture-subtitle" x="32" y="72">{architectureHeader.subtitle}</text>
+              {architectureHeader.legend.map((item, index) => {
+                const x = architectureLegendStart + index * 92
+                return (
+                  <g key={item.kind} className={`freeform-architecture-legend kind-${item.kind}`} transform={`translate(${x} 50)`}>
+                    <path d="M 0 0 H 26" />
+                    <text x="34" y="4">{item.label}</text>
+                  </g>
+                )
+              })}
+            </g>
+          ) : null}
           {(scene.lanes ?? []).map((lane) => {
             const x = lane.axis === 'vertical' ? lane.start : 0
-            const y = lane.axis === 'horizontal' ? lane.start : 0
+            const y = lane.axis === 'horizontal' ? lane.start : architectureHeader?.height ?? 0
             const width = lane.axis === 'vertical' ? lane.size : scene.width
-            const height = lane.axis === 'horizontal' ? lane.size : scene.height
+            const height = lane.axis === 'horizontal' ? lane.size : scene.height - (architectureHeader?.height ?? 0)
             return (
               <g key={lane.id} className={`freeform-lane tone-${lane.tone ?? 'muted'}`} pointerEvents="none">
                 <rect className="freeform-lane-body" x={x} y={y} width={width} height={height} rx="14" />
@@ -1880,11 +1903,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
             const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
             const path = canvasArrowPath(start, end, arrow)
-            const labelPoint = pathLabelPoint(start, end, arrow.points)
+            const labelLayout = relationLabelLayouts.get(arrow.id)
             return (
               <g key={arrow.id} className={`freeform-arrow emphasis-${arrow.emphasis ?? 'secondary'}${arrow.bundleKey ? ' is-bundled' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(arrow.from) || activePlaybackRegionIds.has(arrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
-                {arrow.label ? <text x={labelPoint.x} y={labelPoint.y - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
+                {arrow.label && labelLayout ? (
+                  <g className="freeform-arrow-label" pointerEvents="none">
+                    <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={labelLayout.height / 2} />
+                    <text x={labelLayout.x} y={labelLayout.y + 4} textAnchor="middle">{truncate(arrow.label, 30)}</text>
+                  </g>
+                ) : null}
                 {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
                   <circle
                     key={`${arrow.id}-point-${index}`}
@@ -1935,10 +1963,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const displayX = playbackPosition?.x ?? item.x
             const displayY = playbackPosition?.y ?? item.y
             const displayText = playback?.typing?.id === item.id ? playback.typing.text : item.text
+            const architectureCard = item.type === 'node' && Boolean(item.icon || item.stencil || item.c4Type)
+            const cardMeta = item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : undefined
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'} emphasis-${item.emphasis ?? 'secondary'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'} emphasis-${item.emphasis ?? 'secondary'}${architectureCard ? ' is-architecture-card' : ''}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -1964,12 +1994,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </g>
                 </g>
               ) : null}
-              {item.stencil ? <text className="freeform-node-icon" x={item.icon ? 34 : 13} y="19">{canvasStencilLabel(item.stencil)}</text> : null}
+              {cardMeta ? <text className="freeform-node-icon" x={item.icon ? 34 : 13} y="19">{cardMeta}</text> : null}
               {item.c4Type ? <text className="freeform-c4-badge" x={item.width - 10} y={19} textAnchor="end">{c4Label(item.c4Type)}</text> : null}
-              <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">
-                {truncate(displayText, 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
+              <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureCard ? 16 : item.width / 2} y={architectureCard ? (item.subtitle ? 55 : 61) : item.height / 2} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+                {truncate(displayText, architectureCard ? 30 : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text>
-              {item.subtitle ? <text className="freeform-node-subtitle" x={item.width / 2} y={item.height - 12} textAnchor="middle">{truncate(item.subtitle, 32)}</text> : null}
+              {item.subtitle ? <text className="freeform-node-subtitle" x={architectureCard ? 16 : item.width / 2} y={item.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(item.subtitle, architectureCard ? 34 : 32)}</text> : null}
               {item.sourcePaths?.length ? <text className="freeform-source-badge" x={item.width - 10} y={item.c4Type ? 34 : 18} textAnchor="end">⌘ {item.sourcePaths.length}</text> : null}
               {(tool === 'connect' || selectedIds.includes(item.id)) ? (
                 <g className="freeform-anchor-points">
@@ -2559,13 +2589,6 @@ function groupHiddenByCollapsedAncestor(groupId: string, groups: CanvasGroup[]):
     current = group.parentId
   }
   return false
-}
-
-function pathLabelPoint(start: CanvasPoint, end: CanvasPoint, points?: CanvasPoint[]) {
-  if (!points?.length) return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
-  const path = [start, ...points, end]
-  const middle = Math.floor((path.length - 1) / 2)
-  return { x: (path[middle].x + path[middle + 1].x) / 2, y: (path[middle].y + path[middle + 1].y) / 2 }
 }
 
 function anchorOptions() {

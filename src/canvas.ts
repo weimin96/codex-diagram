@@ -5,6 +5,7 @@ export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasEmphasis = 'primary' | 'secondary' | 'muted'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
+export type CanvasArchitectureTheme = 'enterprise' | 'technical' | 'presentation'
 export type CanvasIcon = 'user' | 'web' | 'api' | 'gateway' | 'service' | 'worker' | 'database' | 'cache' | 'queue' | 'search' | 'vector' | 'cloud' | 'file' | 'auth' | 'ai' | 'mcp' | 'scheduler' | 'external'
 export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'rabbitmq' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'elasticsearch' | 'mongodb' | 'minio' | 'nginx' | 'grpc' | 'oidc' | 'openai' | 'mcp'
 export type CanvasGroupKind = 'group' | 'boundary'
@@ -41,6 +42,10 @@ export interface CanvasScene {
   elements: CanvasElement[]
   groups?: CanvasGroup[]
   lanes?: CanvasLane[]
+  architecture?: {
+    theme: CanvasArchitectureTheme
+    presentation?: boolean
+  }
 }
 
 export interface CanvasNode {
@@ -133,6 +138,22 @@ export interface CanvasBundleTrunk {
   count: number
 }
 
+export interface CanvasArrowLabelLayout {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface CanvasArchitectureHeader {
+  height: number
+  eyebrow: string
+  title: string
+  subtitle: string
+  legend: Array<{ kind: 'primary' | 'secondary' | 'async'; label: string }>
+}
+
 export function createCanvasSource(title: string): string {
   return serializeCanvasScene({
     type: 'codex-diagram-canvas',
@@ -160,6 +181,7 @@ export function parseCanvasScene(source: string): CanvasScene {
   if (scene.type !== 'codex-diagram-canvas' || scene.version !== 1 || !Array.isArray(scene.elements)) {
     throw new Error('不是受支持的 Codex Diagram Canvas 文档。')
   }
+  const architecture = normalizeArchitectureAppearance(scene.architecture)
   return {
     type: 'codex-diagram-canvas',
     version: 1,
@@ -169,6 +191,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
     ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
     ...(Array.isArray(scene.lanes) ? { lanes: normalizeCanvasLanes(scene.lanes, positive(scene.width, 1600), positive(scene.height, 1000)) } : {}),
+    ...(architecture ? { architecture } : {}),
   }
 }
 
@@ -186,6 +209,8 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const groupFrames = canvasGroupFrames(scene)
   const collapsedOwners = canvasCollapsedOwners(scene)
   const nodes = new Map([...allNodes.values()].filter((item) => !collapsedOwners.has(item.id)).map((item) => [item.id, item]))
+  const labelLayouts = canvasArrowLabelLayouts(scene)
+  const architectureHeader = canvasArchitectureHeader(scene)
   const bundleTrunks = canvasBundleTrunks(scene).map((bundle) => {
     const opacity = bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
     const width = bundle.emphasis === 'primary' ? 7 : 5.5
@@ -199,15 +224,15 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const toCenter = centerOfCanvasBox(to)
     const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
     const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
-    const x1 = start.x
-    const y1 = start.y
-    const x2 = end.x
-    const y2 = end.y
     const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
     const strokeWidth = arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
     const opacity = arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
-    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
+    const label = arrow.label ? labelLayouts.get(arrow.id) : undefined
+    const labelMarkup = arrow.label && label
+      ? `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(arrow.label, 30))}</text></g>`
+      : ''
+    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${labelMarkup}</g>`
   }).join('')
   const collapsedConnections = canvasCollapsedConnections(scene, groupFrames).map((connection) => {
     const fromCenter = centerOfCanvasBox(connection.fromBox)
@@ -222,13 +247,17 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
+    const architectureCard = item.type === 'node' && Boolean(item.icon || item.stencil || item.c4Type)
     const lines = item.text.split('\n').slice(0, 6)
-    const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
+    const texts = architectureCard
+      ? `<text x="${item.x + 16}" y="${item.y + (item.subtitle ? 55 : 61)}" font-size="15" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(lines.join(' '), 30))}</text>`
+      : lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
     const rolePaths = item.icon ? canvasIconPaths(item.icon) : []
     const icon = rolePaths.length ? `<g transform="translate(${item.x + 8} ${item.y + 8})"><circle cx="10" cy="10" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.10" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.38"/><g transform="translate(3 3) scale(.5833)" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${rolePaths.map((d) => `<path d="${d}"/>`).join('')}</g></g>` : ''
-    const stencil = item.stencil ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasStencilLabel(item.stencil))}</text>` : ''
+    const cardMeta = item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : ''
+    const stencil = cardMeta ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" letter-spacing="0.3" fill="${escapeXml(palette.stroke)}">${escapeXml(cardMeta)}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
-    const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
+    const subtitle = item.subtitle ? `<text x="${architectureCard ? item.x + 16 : item.x + item.width / 2}" y="${item.y + item.height - 16}"${architectureCard ? '' : ' text-anchor="middle"'} font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(truncateCanvasText(item.subtitle, 34))}</text>` : ''
     const strokeWidth = item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5
     const opacity = item.emphasis === 'muted' ? '0.72' : '1'
     const accent = item.emphasis === 'primary' ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
@@ -252,12 +281,13 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const lanes = (scene.lanes ?? []).map((lane) => {
     const palette = canvasTonePalette(lane.tone ?? 'muted', { panel, text, border, note }, 'node')
     const x = lane.axis === 'vertical' ? lane.start : 0
-    const y = lane.axis === 'horizontal' ? lane.start : 0
+    const y = lane.axis === 'horizontal' ? lane.start : architectureHeader?.height ?? 0
     const width = lane.axis === 'vertical' ? lane.size : scene.width
-    const height = lane.axis === 'horizontal' ? lane.size : scene.height
+    const height = lane.axis === 'horizontal' ? lane.size : scene.height - (architectureHeader?.height ?? 0)
     return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.42" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="4 6"/><rect x="${x}" y="${y}" width="${width}" height="34" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.86"/><text x="${x + 14}" y="${y + 22}" font-size="12" font-weight="700" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
+  const header = architectureHeader ? architectureHeaderToSvg(scene, architectureHeader, { background, text, border }) : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${header}${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
 }
 
 export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
@@ -305,6 +335,82 @@ export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
         result.push({ id: `${bundleKey}:${clusterKey}`, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, emphasis: strongestEmphasis(members), count: members.length })
       }
     }
+  }
+  return result
+}
+
+export function canvasArchitectureHeader(scene: CanvasScene): CanvasArchitectureHeader | undefined {
+  if (!scene.architecture?.presentation) return undefined
+  const nodes = scene.elements.filter((item) => item.type !== 'arrow').length
+  const arrows = scene.elements.filter((item) => item.type === 'arrow')
+  return {
+    height: 88,
+    eyebrow: 'SYSTEM ARCHITECTURE',
+    title: scene.title || 'Architecture',
+    subtitle: `${nodes} 个节点 · ${arrows.length} 条关系`,
+    legend: [
+      { kind: 'primary', label: '主链路' },
+      { kind: 'secondary', label: '关联' },
+      ...(arrows.some((item) => item.lineStyle === 'dashed') ? [{ kind: 'async' as const, label: '异步' }] : []),
+    ],
+  }
+}
+
+export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasArrowLabelLayout> {
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const occupiedBoxes = [...boxes.values()].map((item) => ({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }))
+  const occupiedLabels: Array<{ x: number; y: number; width: number; height: number }> = []
+  const arrows = scene.elements
+    .filter((item): item is CanvasArrow => item.type === 'arrow' && Boolean(item.label))
+    .slice()
+    .sort((left, right) => emphasisRank(left.emphasis) - emphasisRank(right.emphasis) || left.id.localeCompare(right.id))
+  const result = new Map<string, CanvasArrowLabelLayout>()
+
+  for (const arrow of arrows) {
+    const from = boxes.get(arrow.from)
+    const to = boxes.get(arrow.to)
+    if (!from || !to || !arrow.label) continue
+    const fromCenter = centerOfCanvasBox(from)
+    const toCenter = centerOfCanvasBox(to)
+    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const route = canvasArrowRoutePoints(start, end, arrow)
+    const segments = route.slice(0, -1).map((point, index) => {
+      const next = route[index + 1]
+      const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
+      const length = Math.abs(next.x - point.x) + Math.abs(next.y - point.y)
+      const bundledEndpoint = (arrow.bundleKey?.startsWith('from:') && index === 0)
+        || (arrow.bundleKey?.startsWith('to:') && index === route.length - 2)
+      return { point, next, horizontal, length, bundledEndpoint }
+    }).filter((segment) => segment.length >= 28)
+      .sort((left, right) => Number(left.bundledEndpoint) - Number(right.bundledEndpoint) || Number(right.horizontal) - Number(left.horizontal) || right.length - left.length)
+    if (!segments.length) continue
+
+    const width = Math.min(220, Math.max(48, 18 + Array.from(arrow.label).length * 7))
+    const height = 24
+    let placed: CanvasArrowLabelLayout | undefined
+    for (const segment of segments) {
+      const mid = { x: (segment.point.x + segment.next.x) / 2, y: (segment.point.y + segment.next.y) / 2 }
+      for (const offset of [0, -26, 26, -52, 52]) {
+        const x = mid.x + (segment.horizontal ? 0 : 14 + offset)
+        const y = mid.y + (segment.horizontal ? -14 + offset : 0)
+        const rect = { x: x - width / 2, y: y - height / 2, width, height }
+        if (occupiedBoxes.some((box) => rectanglesOverlap(rect, box)) || occupiedLabels.some((label) => rectanglesOverlap(rect, label))) continue
+        placed = { id: arrow.id, x, y, width, height }
+        occupiedLabels.push(rect)
+        break
+      }
+      if (placed) break
+    }
+    if (!placed) {
+      const segment = segments[0]
+      const x = (segment.point.x + segment.next.x) / 2 + (segment.horizontal ? 0 : 14)
+      const y = (segment.point.y + segment.next.y) / 2 + (segment.horizontal ? -14 : 0)
+      const rect = { x: x - width / 2, y: y - height / 2, width, height }
+      placed = { id: arrow.id, x, y, width, height }
+      occupiedLabels.push(rect)
+    }
+    result.set(arrow.id, placed)
   }
   return result
 }
@@ -452,20 +558,21 @@ export function anchorPoint(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height
 }
 
 export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor'>): string {
-  const points = arrow.points?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
-  if (points.length > 0) return [`M ${start.x} ${start.y}`, ...points.map((point) => `L ${point.x} ${point.y}`), `L ${end.x} ${end.y}`].join(' ')
-  return arrow.routing === 'orthogonal'
-    ? orthogonalSvgPath(start.x, start.y, end.x, end.y, preferredOrthogonalAxis(arrow.fromAnchor, arrow.toAnchor, start, end))
-    : `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+  const route = canvasArrowRoutePoints(start, end, arrow)
+  return [`M ${route[0].x} ${route[0].y}`, ...route.slice(1).map((point) => `L ${point.x} ${point.y}`)].join(' ')
 }
 
-function orthogonalSvgPath(x1: number, y1: number, x2: number, y2: number, axis: 'x' | 'y'): string {
+export function canvasArrowRoutePoints(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor'>): CanvasPoint[] {
+  const points = arrow.points?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
+  if (points.length > 0) return [start, ...points, end]
+  if (arrow.routing !== 'orthogonal') return [start, end]
+  const axis = preferredOrthogonalAxis(arrow.fromAnchor, arrow.toAnchor, start, end)
   if (axis === 'y') {
-    const midY = (y1 + y2) / 2
-    return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`
+    const midY = (start.y + end.y) / 2
+    return dedupeRoutePoints([start, { x: start.x, y: midY }, { x: end.x, y: midY }, end])
   }
-  const midX = (x1 + x2) / 2
-  return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`
+  const midX = (start.x + end.x) / 2
+  return dedupeRoutePoints([start, { x: midX, y: start.y }, { x: midX, y: end.y }, end])
 }
 
 function preferredOrthogonalAxis(from: CanvasAnchor | undefined, to: CanvasAnchor | undefined, start: CanvasPoint, end: CanvasPoint): 'x' | 'y' {
@@ -500,6 +607,17 @@ function canvasTonePalette(
 
 function positive(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+function normalizeArchitectureAppearance(value: unknown): CanvasScene['architecture'] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const item = value as Record<string, unknown>
+  const themes: CanvasArchitectureTheme[] = ['enterprise', 'technical', 'presentation']
+  if (typeof item.theme !== 'string' || !themes.includes(item.theme as CanvasArchitectureTheme)) return undefined
+  return {
+    theme: item.theme as CanvasArchitectureTheme,
+    ...(item.presentation === true ? { presentation: true } : {}),
+  }
 }
 
 function isCanvasElement(value: unknown): value is CanvasElement {
@@ -648,4 +766,44 @@ export function c4Label(type: CanvasC4Type | 'software-system' | 'container'): s
 
 function escapeXml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char] || char)
+}
+
+function architectureHeaderToSvg(
+  scene: CanvasScene,
+  header: CanvasArchitectureHeader,
+  colors: { background: string; text: string; border: string },
+): string {
+  const legendWidth = header.legend.length * 92
+  const legendStart = Math.max(scene.width * 0.56, scene.width - legendWidth - 34)
+  const legend = header.legend.map((item, index) => {
+    const x = legendStart + index * 92
+    const dash = item.kind === 'async' ? ' stroke-dasharray="6 4"' : ''
+    const strokeWidth = item.kind === 'primary' ? 3 : 2
+    const opacity = item.kind === 'secondary' ? '0.62' : '1'
+    const stroke = item.kind === 'primary' ? '#6366f1' : colors.border
+    return `<g opacity="${opacity}"><path d="M ${x} 50 L ${x + 26} 50" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-linecap="round"${dash}/><text x="${x + 34}" y="54" font-size="11" font-weight="600" fill="${escapeXml(colors.text)}">${escapeXml(item.label)}</text></g>`
+  }).join('')
+  return `<g><rect x="0" y="0" width="${scene.width}" height="${header.height}" fill="${escapeXml(colors.background)}"/><path d="M 28 ${header.height - 1} H ${scene.width - 28}" stroke="${escapeXml(colors.border)}" stroke-opacity="0.32"/><text x="32" y="24" font-size="10" font-weight="700" letter-spacing="1.4" fill="${escapeXml(colors.border)}">${escapeXml(header.eyebrow)}</text><text x="32" y="52" font-size="24" font-weight="720" fill="${escapeXml(colors.text)}">${escapeXml(truncateCanvasText(header.title, 42))}</text><text x="32" y="72" font-size="11" fill="${escapeXml(colors.border)}">${escapeXml(header.subtitle)}</text>${legend}</g>`
+}
+
+function truncateCanvasText(value: string, max: number): string {
+  const chars = Array.from(value)
+  return chars.length > max ? `${chars.slice(0, Math.max(1, max - 1)).join('')}…` : value
+}
+
+function emphasisRank(value: CanvasEmphasis | undefined): number {
+  if (value === 'primary') return 0
+  if (value === 'secondary' || !value) return 1
+  return 2
+}
+
+function rectanglesOverlap(left: { x: number; y: number; width: number; height: number }, right: { x: number; y: number; width: number; height: number }): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y
+}
+
+function dedupeRoutePoints(points: CanvasPoint[]): CanvasPoint[] {
+  return points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y)
 }

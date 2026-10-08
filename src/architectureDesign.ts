@@ -1,5 +1,6 @@
 import type {
   CanvasArrow,
+  CanvasArchitectureTheme,
   CanvasElement,
   CanvasEmphasis,
   CanvasIcon,
@@ -12,7 +13,7 @@ import type {
   CanvasTone,
 } from './canvas.js'
 
-export type ArchitectureTheme = 'enterprise' | 'technical' | 'presentation'
+export type ArchitectureTheme = CanvasArchitectureTheme
 
 export interface ArchitectureBeautifyOptions {
   theme?: ArchitectureTheme
@@ -103,9 +104,10 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   let width = scene.width
   let height = scene.height
   if (repartition && lanes?.length) {
-    width = Math.max(1280, Math.ceil(lanes[lanes.length - 1].start + lanes[lanes.length - 1].size + 48))
+    const presentation = theme === 'presentation'
+    width = Math.max(presentation ? 1440 : 1280, Math.ceil(lanes[lanes.length - 1].start + lanes[lanes.length - 1].size + (presentation ? 60 : 48)))
     const maxRows = Math.max(1, ...activePartitions.map((partition) => Math.ceil((semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length || 1) / partitionColumns(semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length))))
-    height = Math.max(820, 160 + maxRows * 138)
+    height = Math.max(presentation ? 900 : 820, (presentation ? 230 : 160) + maxRows * (presentation ? 154 : 138))
   }
 
   let next: CanvasScene = {
@@ -114,9 +116,13 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
     height,
     elements,
     ...(repartition ? { lanes } : {}),
+    architecture: {
+      theme,
+      ...(theme === 'presentation' ? { presentation: true } : {}),
+    },
   }
 
-  if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition)
+  if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition, theme)
   if (repartition) next = ensureArchitectureSystemBoundary(next, partitionById)
   next = applyArchitectureTheme(next, theme, partitionById)
   next = applyArchitectureEmphasis(next, partitionById)
@@ -536,11 +542,12 @@ function buildArchitectureLanes(
   active: ArchitecturePartition[],
   theme: ArchitectureTheme,
 ): CanvasLane[] {
-  let start = 36
+  const presentation = theme === 'presentation'
+  let start = presentation ? 44 : 36
   return active.map((partition) => {
     const count = boxes.filter((item) => partitions.get(item.id) === partition).length
     const columns = partitionColumns(count)
-    const size = 72 + columns * 252
+    const size = (presentation ? 88 : 72) + columns * (presentation ? 276 : 252)
     const lane: CanvasLane = {
       id: `arch-${partition}`,
       label: partitionMeta[partition].label,
@@ -549,7 +556,7 @@ function buildArchitectureLanes(
       size,
       tone: themeTones[theme][partition],
     }
-    start += size + 24
+    start += size + (presentation ? 30 : 24)
     return lane
   })
 }
@@ -558,7 +565,9 @@ function layoutArchitecturePartitions(
   scene: CanvasScene,
   partitions: Map<string, ArchitecturePartition>,
   laneByPartition: Map<ArchitecturePartition, CanvasLane>,
+  theme: ArchitectureTheme,
 ): CanvasScene {
+  const presentation = theme === 'presentation'
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const positionById = new Map<string, { x: number; y: number }>()
   for (const partition of partitionOrder) {
@@ -573,8 +582,8 @@ function layoutArchitecturePartitions(
         const col = Math.floor(index / rows)
         const row = index % rows
         positionById.set(item.id, {
-          x: lane.start + 34 + col * 252,
-          y: 92 + row * 132,
+          x: lane.start + (presentation ? 42 : 34) + col * (presentation ? 276 : 252),
+          y: (presentation ? 132 : 92) + row * (presentation ? 150 : 132),
         })
       })
   }
@@ -584,7 +593,13 @@ function layoutArchitecturePartitions(
       if (item.type === 'arrow' || item.locked) return item
       const position = positionById.get(item.id)
       if (!position) return item
-      return { ...item, x: position.x, y: position.y, width: Math.max(190, Math.min(232, item.width)), height: Math.max(86, Math.min(104, item.height)) }
+      return {
+        ...item,
+        x: position.x,
+        y: position.y,
+        width: Math.max(presentation ? 204 : 190, Math.min(presentation ? 236 : 232, item.width)),
+        height: Math.max(presentation ? 94 : 86, Math.min(presentation ? 108 : 104, item.height)),
+      }
     }),
   }
 }

@@ -197,6 +197,24 @@ test('recognizes architecture-specific roles beyond generic service and database
   assert.equal(nodes.get('auth')?.icon, 'auth')
 })
 
+test('persists presentation architecture appearance and reserves header space', () => {
+  const result = beautifyArchitectureScene(sampleScene(), { theme: 'presentation' }).scene
+  const nodes = result.elements.filter((item) => item.type !== 'arrow')
+
+  assert.deepEqual(result.architecture, { theme: 'presentation', presentation: true })
+  assert.ok(result.width >= 1440)
+  assert.ok(result.height >= 900)
+  assert.ok(nodes.every((item) => item.locked || item.y >= 132))
+})
+
+test('switching away from presentation removes presentation chrome without changing canvas version', () => {
+  const presentation = beautifyArchitectureScene(sampleScene(), { theme: 'presentation' }).scene
+  const technical = beautifyArchitectureScene(presentation, { theme: 'technical', relayout: false }).scene
+
+  assert.equal(technical.version, 1)
+  assert.deepEqual(technical.architecture, { theme: 'technical' })
+})
+
 function segmentCutsBox(a: { x: number; y: number }, b: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }): boolean {
   const left = box.x - 1
   const right = box.x + box.width + 1

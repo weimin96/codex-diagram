@@ -16,7 +16,9 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '主阅读方向优先左→右；同一区域内垂直对齐，避免节点重叠并保留足够留白。',
     '依赖关系优先正交路由；并行关系错开 routing channel，异步消息链使用 dashed；减少穿过节点和多条线完全重叠。',
     '同一节点扇出到多个同层目标时允许共享一段关系 trunk 再分叉，形成 bundle/汇聚，而不是每条线从节点边缘独立炸开。',
+    '关系标签只写协议、动作或关键语义，保持短且避免重复节点名称；插件会把标签优先放到较长的空闲线段，并自动避开节点与已有标签。',
     '图上文字保持短：节点标题表达职责，subtitle 表达技术/协议；长解释放 description，不把段落塞进节点。',
+    '需要用于评审、方案汇报或截图交付时使用 presentation 主题；该模式会保留标题带、图例、更宽松的列距与卡片信息层级。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
     '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',
   ]

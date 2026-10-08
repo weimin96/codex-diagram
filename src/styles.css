@@ -410,6 +410,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-zoom-controls > span { width: 1px; height: 16px; margin: 0 2px; background: var(--border); }
 .freeform-background { fill: var(--surface-panel); }
 .freeform-grid-line { stroke: color-mix(in srgb, var(--text-tertiary) 16%, transparent); stroke-width: 1; }
+.freeform-architecture-header > rect { fill: var(--surface-panel); }
+.freeform-architecture-header-rule { fill: none; stroke: color-mix(in srgb, var(--border-strong) 38%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.freeform-architecture-eyebrow { fill: var(--text-tertiary); font: 700 10px var(--font-sans); letter-spacing: .14em; }
+.freeform-architecture-title { fill: var(--text-primary); font: 720 24px var(--font-sans); letter-spacing: -.025em; }
+.freeform-architecture-subtitle { fill: var(--text-tertiary); font: 500 11px var(--font-sans); }
+.freeform-architecture-legend path { fill: none; stroke: var(--border-strong); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.freeform-architecture-legend text { fill: var(--text-secondary); font: 600 11px var(--font-sans); }
+.freeform-architecture-legend.kind-primary path { stroke: var(--accent); stroke-width: 3; }
+.freeform-architecture-legend.kind-secondary { opacity: .68; }
+.freeform-architecture-legend.kind-async path { stroke-dasharray: 6 4; }
 .freeform-arrow path { fill: none; stroke: var(--border-strong); stroke-width: 2.2; cursor: pointer; }
 .freeform-arrow.emphasis-primary path { stroke-width: 3.2; stroke: color-mix(in srgb, var(--accent) 64%, var(--border-strong)); }
 .freeform-arrow.emphasis-secondary { opacity: .82; }
@@ -426,6 +436,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-arrow.is-collapsed-summary path { stroke-width: 2.6; opacity: .88; }
 .freeform-arrow.is-collapsed-summary text { font-weight: 650; }
 .freeform-arrow text { fill: var(--text-secondary); font-size: 13px; font-family: var(--font-sans); paint-order: stroke; stroke: var(--surface-panel); stroke-width: 5px; stroke-linejoin: round; }
+.freeform-arrow-label rect { fill: color-mix(in srgb, var(--surface-panel) 94%, transparent); stroke: color-mix(in srgb, var(--border-strong) 34%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.freeform-arrow .freeform-arrow-label text { fill: var(--text-secondary); font-size: 12px; font-weight: 600; paint-order: normal; stroke: none; }
 .freeform-arrow-head { fill: var(--border-strong); }
 .freeform-arrow-point { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
 .freeform-lane .freeform-lane-body { fill: color-mix(in srgb, var(--text-tertiary) 4%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 26%, transparent); stroke-width: 1; stroke-dasharray: 5 7; vector-effect: non-scaling-stroke; }
@@ -473,6 +485,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.tone-muted .freeform-card-accent,
 .freeform-box.tone-default .freeform-card-accent { fill: var(--text-secondary); }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
+.freeform-box.is-architecture-card .freeform-node-title { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-node-role-symbol { fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
@@ -485,6 +498,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box .freeform-source-badge { fill: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .freeform-box .freeform-c4-badge { fill: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .03em; }
 .freeform-box .freeform-node-subtitle { fill: var(--text-tertiary); font-size: 10px; font-weight: 500; }
+.freeform-box.is-architecture-card .freeform-node-subtitle { font-size: 10.5px; }
 .freeform-note rect { fill: color-mix(in srgb, #f7c948 26%, var(--surface-panel)); }
 .freeform-box.tone-accent rect { fill: color-mix(in srgb, #818cf8 15%, var(--surface-panel)); stroke: #818cf8; }
 .freeform-box.tone-success rect { fill: color-mix(in srgb, #34d399 15%, var(--surface-panel)); stroke: #34d399; }
