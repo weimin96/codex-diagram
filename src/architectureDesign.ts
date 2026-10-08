@@ -1,6 +1,7 @@
 import type {
   CanvasArrow,
   CanvasElement,
+  CanvasEmphasis,
   CanvasIcon,
   CanvasLane,
   CanvasNode,
@@ -27,6 +28,8 @@ export interface ArchitectureBeautifyResult {
     partitions: number
     enrichedNodes: number
     routedEdges: number
+    primaryNodes: number
+    bundledEdges: number
   }
 }
 
@@ -114,7 +117,9 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   }
 
   if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition)
+  if (repartition) next = ensureArchitectureSystemBoundary(next, partitionById)
   next = applyArchitectureTheme(next, theme, partitionById)
+  next = applyArchitectureEmphasis(next, partitionById)
   if (reroute) next = routeArchitectureEdges(next)
 
   // Keep locked boxes exactly where the author placed them, even when the rest
@@ -137,7 +142,51 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
       partitions: activePartitions.length,
       enrichedNodes,
       routedEdges: reroute ? next.elements.filter((item) => item.type === 'arrow').length : 0,
+      primaryNodes: next.elements.filter((item) => item.type !== 'arrow' && item.emphasis === 'primary').length,
+      bundledEdges: next.elements.filter((item) => item.type === 'arrow' && Boolean(item.bundleKey)).length,
     },
+  }
+}
+
+function ensureArchitectureSystemBoundary(scene: CanvasScene, partitions: Map<string, ArchitecturePartition>): CanvasScene {
+  const groups = scene.groups ?? []
+  if (groups.some((group) => group.c4Type === 'software-system')) return scene
+  const internalNodes = scene.elements.filter((item): item is CanvasNode | CanvasNote => (
+    item.type !== 'arrow' && partitions.get(item.id) !== 'external'
+  ))
+  if (internalNodes.length < 3) return scene
+  const usedIds = new Set(groups.map((group) => group.id))
+  let systemId = 'arch-system'
+  for (let index = 2; usedIds.has(systemId); index += 1) systemId = `arch-system-${index}`
+  const directlyGrouped = new Map<string, Array<CanvasNode | CanvasNote>>()
+  internalNodes.forEach((item) => {
+    if (!item.groupId) return
+    directlyGrouped.set(item.groupId, [...(directlyGrouped.get(item.groupId) ?? []), item])
+  })
+  const nextGroups = groups.map((group) => {
+    if (group.parentId || group.c4Type === 'software-system') return group
+    const members = directlyGrouped.get(group.id) ?? []
+    if (!members.length || members.some((item) => partitions.get(item.id) === 'external')) return group
+    return { ...group, parentId: systemId }
+  })
+  nextGroups.push({
+    id: systemId,
+    label: scene.title || 'Software System',
+    kind: 'boundary',
+    c4Type: 'software-system',
+    tone: 'accent',
+    description: 'Architecture system boundary',
+  })
+  const childGroups = new Set(nextGroups.filter((group) => group.parentId === systemId).map((group) => group.id))
+  return {
+    ...scene,
+    groups: nextGroups,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || partitions.get(item.id) === 'external') return item
+      if (!item.groupId) return { ...item, groupId: systemId }
+      if (childGroups.has(item.groupId)) return item
+      return item
+    }),
   }
 }
 
@@ -170,11 +219,91 @@ export function applyArchitectureTheme(
   }
 }
 
+export function applyArchitectureEmphasis(
+  scene: CanvasScene,
+  knownPartitions?: Map<string, ArchitecturePartition>,
+): CanvasScene {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  if (!boxes.length) return scene
+  const partitions = knownPartitions ?? new Map(boxes.map((item) => [item.id, classifyArchitectureBox(item)]))
+  const boxById = new Map(boxes.map((item) => [item.id, item]))
+  const outgoing = new Map<string, CanvasArrow[]>()
+  const incoming = new Map<string, CanvasArrow[]>()
+  arrows.forEach((arrow) => {
+    outgoing.set(arrow.from, [...(outgoing.get(arrow.from) ?? []), arrow])
+    incoming.set(arrow.to, [...(incoming.get(arrow.to) ?? []), arrow])
+  })
+  const weight = (item: CanvasNode | CanvasNote) => architectureNodeWeight(item)
+    + (outgoing.get(item.id)?.length ?? 0) * 3
+    + (incoming.get(item.id)?.length ?? 0) * 2
+
+  const roots = boxes
+    .filter((item) => isArchitectureEntry(item) || (incoming.get(item.id)?.length ?? 0) === 0)
+    .sort((a, b) => weight(b) - weight(a))
+    .slice(0, 7)
+  const sinks = boxes
+    .filter((item) => partitions.get(item.id) === 'data' || (outgoing.get(item.id)?.length ?? 0) === 0)
+    .sort((a, b) => weight(b) - weight(a))
+    .slice(0, 9)
+
+  let bestPath: { nodeIds: string[]; arrowIds: string[]; score: number } | undefined
+  for (const root of roots) {
+    for (const sink of sinks) {
+      if (root.id === sink.id) continue
+      const path = directedArchitecturePath(root.id, sink.id, outgoing)
+      if (!path) continue
+      const score = path.nodeIds.reduce((sum, id) => sum + weight(boxById.get(id) ?? root), 0)
+        + new Set(path.nodeIds.map((id) => partitions.get(id))).size * 10
+        + (partitions.get(sink.id) === 'data' ? 14 : 0)
+        - Math.max(0, path.nodeIds.length - 6) * 5
+      if (!bestPath || score > bestPath.score) bestPath = { ...path, score }
+    }
+  }
+
+  const primaryNodes = new Set(bestPath?.nodeIds ?? [])
+  const primaryArrows = new Set(bestPath?.arrowIds ?? [])
+  if (primaryNodes.size < Math.min(3, boxes.length)) {
+    boxes
+      .slice()
+      .sort((a, b) => weight(b) - weight(a))
+      .slice(0, Math.max(2, Math.ceil(boxes.length * 0.22)))
+      .forEach((item) => primaryNodes.add(item.id))
+  }
+  const adjacentToPrimary = new Set<string>()
+  arrows.forEach((arrow) => {
+    if (primaryNodes.has(arrow.from)) adjacentToPrimary.add(arrow.to)
+    if (primaryNodes.has(arrow.to)) adjacentToPrimary.add(arrow.from)
+  })
+
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow') {
+        const emphasis: CanvasEmphasis = primaryArrows.has(item.id)
+          ? 'primary'
+          : primaryNodes.has(item.from) || primaryNodes.has(item.to)
+            ? 'secondary'
+            : 'muted'
+        return { ...item, emphasis }
+      }
+      const emphasis: CanvasEmphasis = primaryNodes.has(item.id)
+        ? 'primary'
+        : adjacentToPrimary.has(item.id) || weight(item) >= 11
+          ? 'secondary'
+          : 'muted'
+      return { ...item, emphasis }
+    }),
+  }
+}
+
 export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const routed = new Map<string, CanvasArrow>()
   const occupied: RouteSegment[] = []
+  const fanout = countArrowEndpoints(arrows, 'from')
+  const fanin = countArrowEndpoints(arrows, 'to')
 
   for (const arrow of arrows) {
     const from = boxes.get(arrow.from)
@@ -190,19 +319,31 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
     const obstacles = [...boxes.values()]
       .filter((item) => item.id !== from.id && item.id !== to.id)
       .map((item) => expandRect(item, 18))
+    const bundleKey = (fanout.get(arrow.from) ?? 0) >= 2
+      ? `from:${arrow.from}`
+      : (fanin.get(arrow.to) ?? 0) >= 2
+        ? `to:${arrow.to}`
+        : undefined
     const pairs = preferredAnchorPairs(dx, dy)
     let best: { score: number; fromAnchor: 'top' | 'right' | 'bottom' | 'left'; toAnchor: 'top' | 'right' | 'bottom' | 'left'; route: CanvasPoint[] } | undefined
     for (const [fromAnchor, toAnchor] of pairs) {
       const start = fixedAnchorPoint(from, fromAnchor)
       const end = fixedAnchorPoint(to, toAnchor)
-      const route = findOrthogonalRoute(start, end, obstacles, occupied)
-      const score = scoreRoute(route, obstacles, occupied)
+      const route = findOrthogonalRoute(start, end, obstacles, occupied, bundleKey)
+      const score = scoreRoute(route, obstacles, occupied, bundleKey)
         + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
       if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
+      if (bundleKey) {
+        const side = bundleKey.startsWith('from:') ? 'from' : 'to'
+        const bundled = buildBundleRoute(start, end, fromAnchor, toAnchor, side)
+        const bundleScore = scoreRoute(bundled, obstacles, occupied, bundleKey) - 72
+          + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
+        if (!best || bundleScore < best.score) best = { score: bundleScore, fromAnchor, toAnchor, route: bundled }
+      }
     }
     if (!best) continue
     const simplified = simplifyRoute(best.route)
-    addOccupiedSegments(simplified, occupied)
+    addOccupiedSegments(simplified, occupied, bundleKey)
     routed.set(arrow.id, {
       ...arrow,
       routing: 'orthogonal',
@@ -210,6 +351,7 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
       toAnchor: best.toAnchor,
       lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
       points: simplified.length > 2 ? simplified.slice(1, -1) : undefined,
+      bundleKey,
     })
   }
 
@@ -220,7 +362,37 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
 }
 
 type RouteRect = { x: number; y: number; width: number; height: number }
-type RouteSegment = { a: CanvasPoint; b: CanvasPoint }
+type RouteSegment = { a: CanvasPoint; b: CanvasPoint; bundleKey?: string }
+
+function countArrowEndpoints(arrows: CanvasArrow[], side: 'from' | 'to'): Map<string, number> {
+  const counts = new Map<string, number>()
+  arrows.forEach((arrow) => counts.set(arrow[side], (counts.get(arrow[side]) ?? 0) + 1))
+  return counts
+}
+
+function buildBundleRoute(
+  start: CanvasPoint,
+  end: CanvasPoint,
+  fromAnchor: 'top' | 'right' | 'bottom' | 'left',
+  toAnchor: 'top' | 'right' | 'bottom' | 'left',
+  side: 'from' | 'to',
+): CanvasPoint[] {
+  if (side === 'from') {
+    const trunk = offsetAnchor(start, fromAnchor, 64)
+    if (fromAnchor === 'left' || fromAnchor === 'right') return simplifyRoute([start, trunk, { x: trunk.x, y: end.y }, end])
+    return simplifyRoute([start, trunk, { x: end.x, y: trunk.y }, end])
+  }
+  const trunk = offsetAnchor(end, toAnchor, 64)
+  if (toAnchor === 'left' || toAnchor === 'right') return simplifyRoute([start, { x: trunk.x, y: start.y }, trunk, end])
+  return simplifyRoute([start, { x: start.x, y: trunk.y }, trunk, end])
+}
+
+function offsetAnchor(point: CanvasPoint, anchor: 'top' | 'right' | 'bottom' | 'left', distance: number): CanvasPoint {
+  if (anchor === 'left') return { x: point.x - distance, y: point.y }
+  if (anchor === 'right') return { x: point.x + distance, y: point.y }
+  if (anchor === 'top') return { x: point.x, y: point.y - distance }
+  return { x: point.x, y: point.y + distance }
+}
 
 function preferredAnchorPairs(dx: number, dy: number): Array<['top' | 'right' | 'bottom' | 'left', 'top' | 'right' | 'bottom' | 'left']> {
   const horizontal: ['right' | 'left', 'left' | 'right'] = dx >= 0 ? ['right', 'left'] : ['left', 'right']
@@ -243,7 +415,7 @@ function expandRect(box: RouteRect, margin: number): RouteRect {
   return { x: box.x - margin, y: box.y - margin, width: box.width + margin * 2, height: box.height + margin * 2 }
 }
 
-function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: RouteRect[], occupied: RouteSegment[]): CanvasPoint[] {
+function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: RouteRect[], occupied: RouteSegment[], bundleKey?: string): CanvasPoint[] {
   const margin = 24
   const xCandidates = uniqueNumbers([
     (start.x + end.x) / 2,
@@ -268,7 +440,7 @@ function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: Ro
   let bestScore = Number.POSITIVE_INFINITY
   for (const candidate of candidates) {
     const simplified = simplifyRoute(candidate)
-    const score = scoreRoute(simplified, obstacles, occupied)
+    const score = scoreRoute(simplified, obstacles, occupied, bundleKey)
     if (score < bestScore) {
       best = simplified
       bestScore = score
@@ -277,7 +449,7 @@ function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: Ro
   return best
 }
 
-function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: RouteSegment[]): number {
+function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: RouteSegment[], bundleKey?: string): number {
   let length = 0
   let collisions = 0
   let overlapPenalty = 0
@@ -287,8 +459,9 @@ function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: Rout
     length += Math.abs(segment.b.x - segment.a.x) + Math.abs(segment.b.y - segment.a.y)
     collisions += obstacles.filter((rect) => segmentIntersectsRect(segment, rect)).length
     for (const used of occupied) {
-      overlapPenalty += segmentOverlap(segment, used) * 4
-      if (segmentsCross(segment, used)) crossingPenalty += 110
+      const overlap = segmentOverlap(segment, used)
+      overlapPenalty += overlap * (bundleKey && used.bundleKey === bundleKey ? 0.08 : 4)
+      if (segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey)) crossingPenalty += 110
     }
   }
   return length + Math.max(0, route.length - 2) * 22 + collisions * 100_000 + overlapPenalty + crossingPenalty
@@ -349,8 +522,8 @@ function simplifyRoute(points: CanvasPoint[]): CanvasPoint[] {
   })
 }
 
-function addOccupiedSegments(route: CanvasPoint[], occupied: RouteSegment[]) {
-  for (let index = 0; index < route.length - 1; index += 1) occupied.push({ a: route[index], b: route[index + 1] })
+function addOccupiedSegments(route: CanvasPoint[], occupied: RouteSegment[], bundleKey?: string) {
+  for (let index = 0; index < route.length - 1; index += 1) occupied.push({ a: route[index], b: route[index + 1], bundleKey })
 }
 
 function uniqueNumbers(values: number[]): number[] {
@@ -427,7 +600,9 @@ function enrichArchitectureBox<T extends CanvasNode | CanvasNote>(item: T): T {
 }
 
 function classifyArchitectureBox(item: CanvasNode | CanvasNote): ArchitecturePartition {
+  const semanticText = `${item.text} ${item.subtitle ?? ''}`.toLowerCase()
   if (item.icon === 'user' || item.icon === 'external') return 'external'
+  if ((item.icon === 'auth' || item.icon === 'ai' || item.icon === 'mcp') && /\b(provider|third[- ]party|external|vendor)\b|第三方|外部供应商|外部服务/.test(semanticText)) return 'external'
   if (item.icon === 'web') return 'experience'
   if (item.icon === 'queue' || item.icon === 'worker' || item.icon === 'scheduler') return 'processing'
   if (item.icon === 'database' || item.icon === 'cache' || item.icon === 'file' || item.icon === 'search' || item.icon === 'vector') return 'data'
@@ -485,6 +660,74 @@ function inferIcon(text: string, subtitle?: string): CanvasIcon | undefined {
   if (/\b(auth|identity|oidc|oauth|sso)\b|认证|身份/.test(value)) return 'auth'
   if (/\b(provider|external|third[- ]party)\b|外部|第三方/.test(value)) return 'external'
   return undefined
+}
+
+function architectureNodeWeight(item: CanvasNode | CanvasNote): number {
+  const iconWeight: Partial<Record<CanvasIcon, number>> = {
+    gateway: 15,
+    api: 14,
+    service: 13,
+    worker: 12,
+    ai: 12,
+    mcp: 11,
+    auth: 10,
+    web: 9,
+    queue: 9,
+    search: 9,
+    vector: 9,
+    database: 8,
+    cache: 7,
+    file: 6,
+    user: 5,
+    external: 4,
+    scheduler: 6,
+    cloud: 6,
+  }
+  const c4Weight = item.c4Type === 'software-system' ? 5 : item.c4Type === 'container' ? 4 : item.c4Type === 'component' ? 2 : 0
+  return (item.icon ? iconWeight[item.icon] ?? 5 : 5) + c4Weight
+}
+
+function isArchitectureEntry(item: CanvasNode | CanvasNote): boolean {
+  return item.icon === 'user'
+    || item.icon === 'web'
+    || item.icon === 'gateway'
+    || item.icon === 'api'
+    || item.icon === 'external'
+    || item.icon === 'auth'
+}
+
+function directedArchitecturePath(
+  startId: string,
+  targetId: string,
+  outgoing: Map<string, CanvasArrow[]>,
+): { nodeIds: string[]; arrowIds: string[] } | undefined {
+  const queue = [startId]
+  const seen = new Set([startId])
+  const previous = new Map<string, { nodeId: string; arrowId: string }>()
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index]
+    if (current === targetId) break
+    for (const arrow of outgoing.get(current) ?? []) {
+      if (seen.has(arrow.to)) continue
+      seen.add(arrow.to)
+      previous.set(arrow.to, { nodeId: current, arrowId: arrow.id })
+      queue.push(arrow.to)
+    }
+  }
+  if (!seen.has(targetId)) return undefined
+  const nodeIds = [targetId]
+  const arrowIds: string[] = []
+  let current = targetId
+  while (current !== startId) {
+    const step = previous.get(current)
+    if (!step) return undefined
+    arrowIds.push(step.arrowId)
+    current = step.nodeId
+    nodeIds.push(current)
+  }
+  nodeIds.reverse()
+  arrowIds.reverse()
+  return { nodeIds, arrowIds }
 }
 
 function iconForStencil(stencil?: CanvasStencil): CanvasIcon | undefined {

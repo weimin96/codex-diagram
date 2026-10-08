@@ -2,6 +2,7 @@ export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
 export type CanvasShape = 'rounded' | 'square' | 'pill'
 export type CanvasLineStyle = 'solid' | 'dashed'
+export type CanvasEmphasis = 'primary' | 'secondary' | 'muted'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
 export type CanvasIcon = 'user' | 'web' | 'api' | 'gateway' | 'service' | 'worker' | 'database' | 'cache' | 'queue' | 'search' | 'vector' | 'cloud' | 'file' | 'auth' | 'ai' | 'mcp' | 'scheduler' | 'external'
@@ -62,6 +63,7 @@ export interface CanvasNode {
   tags?: string[]
   laneId?: string
   c4Type?: CanvasC4Type
+  emphasis?: CanvasEmphasis
 }
 
 export interface CanvasNote {
@@ -84,6 +86,7 @@ export interface CanvasNote {
   tags?: string[]
   laneId?: string
   c4Type?: CanvasC4Type
+  emphasis?: CanvasEmphasis
 }
 
 export interface CanvasArrow {
@@ -97,6 +100,8 @@ export interface CanvasArrow {
   fromAnchor?: CanvasAnchor
   toAnchor?: CanvasAnchor
   points?: CanvasPoint[]
+  emphasis?: CanvasEmphasis
+  bundleKey?: string
 }
 
 export interface CanvasGroupFrame extends CanvasGroup {
@@ -119,6 +124,13 @@ export interface CanvasCollapsedConnection {
   routing?: CanvasRouting
   fromAnchor?: CanvasAnchor
   toAnchor?: CanvasAnchor
+}
+
+export interface CanvasBundleTrunk {
+  id: string
+  path: string
+  emphasis?: CanvasEmphasis
+  count: number
 }
 
 export function createCanvasSource(title: string): string {
@@ -174,6 +186,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const groupFrames = canvasGroupFrames(scene)
   const collapsedOwners = canvasCollapsedOwners(scene)
   const nodes = new Map([...allNodes.values()].filter((item) => !collapsedOwners.has(item.id)).map((item) => [item.id, item]))
+  const bundleTrunks = canvasBundleTrunks(scene).map((bundle) => {
+    const opacity = bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
+    const width = bundle.emphasis === 'primary' ? 7 : 5.5
+    return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
+  }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
     const from = nodes.get(arrow.from)
     const to = nodes.get(arrow.to)
@@ -188,7 +205,9 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const y2 = end.y
     const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
-    return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
+    const strokeWidth = arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
+    const opacity = arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
+    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
   }).join('')
   const collapsedConnections = canvasCollapsedConnections(scene, groupFrames).map((connection) => {
     const fromCenter = centerOfCanvasBox(connection.fromBox)
@@ -210,14 +229,25 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const stencil = item.stencil ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasStencilLabel(item.stencil))}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${stencil}${c4}${texts}${subtitle}</g>`
+    const strokeWidth = item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5
+    const opacity = item.emphasis === 'muted' ? '0.72' : '1'
+    const accent = item.emphasis === 'primary' ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
+    return `<g opacity="${opacity}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"/>${accent}${icon}${stencil}${c4}${texts}${subtitle}</g>`
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
-    const dash = group.kind === 'boundary' ? '12 6' : '8 6'
+    const softwareSystem = group.c4Type === 'software-system'
+    const container = group.c4Type === 'container'
+    const dash = softwareSystem ? '' : container ? '10 6' : group.kind === 'boundary' ? '12 6' : '8 6'
+    const strokeWidth = softwareSystem ? 2.4 : container ? 1.7 : 1.4
+    const fillOpacity = group.collapsed ? '0.5' : softwareSystem ? '0.10' : container ? '0.05' : '0'
     const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
     const collapsed = group.collapsed ? ' · collapsed' : ''
-    return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="18" fill="${group.collapsed ? escapeXml(palette.fill) : 'none'}" fill-opacity="${group.collapsed ? '0.5' : '1'}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="${dash}"/>${group.label ? `<text x="${group.x + 14}" y="${group.y + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(`${group.label}${c4}${collapsed}`)}</text>` : ''}</g>`
+    const fill = group.collapsed || softwareSystem || container ? escapeXml(palette.fill) : 'none'
+    const header = group.label && softwareSystem
+      ? `<rect x="${group.x}" y="${group.y}" width="${group.width}" height="34" rx="18" fill="${escapeXml(palette.fill)}" fill-opacity="0.62"/>`
+      : ''
+    return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="18" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${header}${group.label ? `<text x="${group.x + 14}" y="${group.y + 22}" font-size="${softwareSystem ? 13 : 12}" font-weight="${softwareSystem ? 760 : 650}" fill="${escapeXml(palette.text)}">${escapeXml(`${group.label}${c4}${collapsed}`)}</text>` : ''}</g>`
   }).join('')
   const lanes = (scene.lanes ?? []).map((lane) => {
     const palette = canvasTonePalette(lane.tone ?? 'muted', { panel, text, border, note }, 'node')
@@ -227,7 +257,63 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const height = lane.axis === 'horizontal' ? lane.size : scene.height
     return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.42" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="4 6"/><rect x="${x}" y="${y}" width="${width}" height="34" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.86"/><text x="${x + 14}" y="${y + 22}" font-size="12" font-weight="700" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${arrows}${collapsedConnections}${shapes}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
+}
+
+export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const groups = new Map<string, CanvasArrow[]>()
+  scene.elements.forEach((item) => {
+    if (item.type !== 'arrow' || !item.bundleKey) return
+    groups.set(item.bundleKey, [...(groups.get(item.bundleKey) ?? []), item])
+  })
+  const result: CanvasBundleTrunk[] = []
+  for (const [bundleKey, arrows] of groups) {
+    if (arrows.length < 2) continue
+    if (bundleKey.startsWith('from:')) {
+      const clusters = new Map<string, CanvasArrow[]>()
+      arrows.forEach((arrow) => {
+        const point = arrow.points?.[0]
+        if (!point) return
+        const key = `${arrow.fromAnchor ?? 'auto'}:${Math.round(point.x)}:${Math.round(point.y)}`
+        clusters.set(key, [...(clusters.get(key) ?? []), arrow])
+      })
+      for (const [clusterKey, members] of clusters) {
+        if (members.length < 2) continue
+        const first = members[0]
+        const box = boxes.get(first.from)
+        const end = first.points?.[0]
+        if (!box || !end) continue
+        const start = anchorPoint(box, first.fromAnchor, end)
+        result.push({ id: `${bundleKey}:${clusterKey}`, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, emphasis: strongestEmphasis(members), count: members.length })
+      }
+    } else if (bundleKey.startsWith('to:')) {
+      const clusters = new Map<string, CanvasArrow[]>()
+      arrows.forEach((arrow) => {
+        const point = arrow.points?.at(-1)
+        if (!point) return
+        const key = `${arrow.toAnchor ?? 'auto'}:${Math.round(point.x)}:${Math.round(point.y)}`
+        clusters.set(key, [...(clusters.get(key) ?? []), arrow])
+      })
+      for (const [clusterKey, members] of clusters) {
+        if (members.length < 2) continue
+        const first = members[0]
+        const box = boxes.get(first.to)
+        const start = first.points?.at(-1)
+        if (!box || !start) continue
+        const end = anchorPoint(box, first.toAnchor, start)
+        result.push({ id: `${bundleKey}:${clusterKey}`, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, emphasis: strongestEmphasis(members), count: members.length })
+      }
+    }
+  }
+  return result
+}
+
+function strongestEmphasis(arrows: CanvasArrow[]): CanvasEmphasis | undefined {
+  if (arrows.some((arrow) => arrow.emphasis === 'primary')) return 'primary'
+  if (arrows.some((arrow) => arrow.emphasis === 'secondary')) return 'secondary'
+  if (arrows.some((arrow) => arrow.emphasis === 'muted')) return 'muted'
+  return undefined
 }
 
 export function canvasGroupFrames(scene: CanvasScene): CanvasGroupFrame[] {
@@ -428,6 +514,7 @@ function isCanvasElement(value: unknown): value is CanvasElement {
 
 function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   if (item.type === 'arrow') {
+    const emphases: CanvasEmphasis[] = ['primary', 'secondary', 'muted']
     return {
       id: item.id,
       type: 'arrow',
@@ -439,9 +526,12 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.fromAnchor ?? '') ? { fromAnchor: item.fromAnchor } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.toAnchor ?? '') ? { toAnchor: item.toAnchor } : {}),
       ...(Array.isArray(item.points) ? { points: item.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({ x: point.x, y: point.y })) } : {}),
+      ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
+      ...(typeof item.bundleKey === 'string' && item.bundleKey.trim() ? { bundleKey: item.bundleKey.trim().slice(0, 120) } : {}),
     }
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
+  const emphases: CanvasEmphasis[] = ['primary', 'secondary', 'muted']
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
   const icons: CanvasIcon[] = ['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']
   const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']
@@ -466,6 +556,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(Array.isArray(item.tags) ? { tags: item.tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()).slice(0, 12) } : {}),
     ...(typeof item.laneId === 'string' && item.laneId.trim() ? { laneId: item.laneId.trim() } : {}),
     ...(item.c4Type && c4Types.includes(item.c4Type) ? { c4Type: item.c4Type } : {}),
+    ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
   }
 }
 

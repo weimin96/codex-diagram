@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { beautifyArchitectureScene } from '../src/architectureDesign.js'
-import { anchorPoint, type CanvasScene } from '../src/canvas.js'
+import { anchorPoint, canvasBundleTrunks, type CanvasScene } from '../src/canvas.js'
 
 function sampleScene(): CanvasScene {
   return {
@@ -66,6 +66,82 @@ test('keeps locked architecture nodes at their authored coordinates', () => {
   assert.ok(after && after.type !== 'arrow')
   assert.equal(after.x, 77)
   assert.equal(after.y, 233)
+})
+
+test('marks a connected entry-to-data backbone as the primary architecture path', () => {
+  const scene = beautifyArchitectureScene(sampleScene()).scene
+  const elements = new Map(scene.elements.map((item) => [item.id, item]))
+
+  for (const id of ['client', 'web', 'service', 'db']) {
+    const item = elements.get(id)
+    assert.ok(item && item.type !== 'arrow')
+    assert.equal(item.emphasis, 'primary')
+  }
+  for (const id of ['a1', 'a2', 'a4']) {
+    const item = elements.get(id)
+    assert.ok(item && item.type === 'arrow')
+    assert.equal(item.emphasis, 'primary')
+  }
+  const asyncBranch = elements.get('a3')
+  assert.ok(asyncBranch && asyncBranch.type === 'arrow')
+  assert.equal(asyncBranch.emphasis, 'secondary')
+})
+
+test('bundles fan-out relationships through a shared source trunk when the corridor is clear', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Bundle',
+    width: 1400,
+    height: 800,
+    elements: [
+      { id: 'service', type: 'node', x: 160, y: 320, width: 200, height: 90, text: 'Application Service', icon: 'service' },
+      { id: 'db', type: 'node', x: 900, y: 160, width: 200, height: 90, text: 'PostgreSQL', icon: 'database' },
+      { id: 'cache', type: 'node', x: 900, y: 320, width: 200, height: 90, text: 'Redis', icon: 'cache' },
+      { id: 'search', type: 'node', x: 900, y: 480, width: 200, height: 90, text: 'OpenSearch', icon: 'search' },
+      { id: 'a-db', type: 'arrow', from: 'service', to: 'db' },
+      { id: 'a-cache', type: 'arrow', from: 'service', to: 'cache' },
+      { id: 'a-search', type: 'arrow', from: 'service', to: 'search' },
+    ],
+  }
+
+  const result = beautifyArchitectureScene(scene, { repartition: false, relayout: false }).scene
+  const arrows = result.elements.filter((item) => item.type === 'arrow')
+  assert.equal(arrows.length, 3)
+  assert.ok(arrows.every((item) => item.bundleKey === 'from:service'))
+  const firstPoints = arrows.map((item) => item.points?.[0]).filter(Boolean)
+  assert.ok(firstPoints.length >= 2)
+  assert.ok(firstPoints.every((point) => point?.x === firstPoints[0]?.x))
+  assert.ok(canvasBundleTrunks(result).some((trunk) => trunk.count >= 2))
+})
+
+test('adds a software-system boundary while keeping external providers outside it', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Knowledge Platform',
+    width: 1200,
+    height: 800,
+    elements: [
+      { id: 'oidc', type: 'node', x: 60, y: 120, width: 200, height: 90, text: 'Enterprise OIDC Provider' },
+      { id: 'web', type: 'node', x: 340, y: 120, width: 200, height: 90, text: 'React Web App' },
+      { id: 'api', type: 'node', x: 620, y: 120, width: 200, height: 90, text: 'REST API Gateway' },
+      { id: 'db', type: 'node', x: 900, y: 120, width: 200, height: 90, text: 'PostgreSQL' },
+      { id: 'auth', type: 'arrow', from: 'web', to: 'oidc' },
+      { id: 'call', type: 'arrow', from: 'web', to: 'api' },
+      { id: 'persist', type: 'arrow', from: 'api', to: 'db' },
+    ],
+  }
+
+  const result = beautifyArchitectureScene(scene).scene
+  const system = result.groups?.find((group) => group.c4Type === 'software-system')
+  assert.ok(system)
+  const nodes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
+  assert.equal(nodes.get('oidc')?.icon, 'auth')
+  assert.notEqual(nodes.get('oidc')?.groupId, system.id)
+  assert.equal(nodes.get('web')?.groupId, system.id)
+  assert.equal(nodes.get('api')?.groupId, system.id)
+  assert.equal(nodes.get('db')?.groupId, system.id)
 })
 
 test('routes architecture relationships around blocking nodes', () => {

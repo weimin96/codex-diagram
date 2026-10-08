@@ -411,6 +411,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-background { fill: var(--surface-panel); }
 .freeform-grid-line { stroke: color-mix(in srgb, var(--text-tertiary) 16%, transparent); stroke-width: 1; }
 .freeform-arrow path { fill: none; stroke: var(--border-strong); stroke-width: 2.2; cursor: pointer; }
+.freeform-arrow.emphasis-primary path { stroke-width: 3.2; stroke: color-mix(in srgb, var(--accent) 64%, var(--border-strong)); }
+.freeform-arrow.emphasis-secondary { opacity: .82; }
+.freeform-arrow.emphasis-muted { opacity: .42; }
+.freeform-arrow.emphasis-muted path { stroke-width: 1.45; }
+.freeform-arrow.is-bundled:not(.emphasis-muted) path { filter: drop-shadow(0 1px 0 color-mix(in srgb, var(--surface-panel) 70%, transparent)); }
+.freeform-bundle-trunk { fill: none; stroke: var(--border-strong); stroke-width: 5.5; stroke-linecap: round; opacity: .14; vector-effect: non-scaling-stroke; }
+.freeform-bundle-trunk.emphasis-primary { stroke: color-mix(in srgb, var(--accent) 58%, var(--border-strong)); stroke-width: 7; opacity: .22; }
+.freeform-bundle-trunk.emphasis-muted { stroke-width: 4.5; opacity: .08; }
 .freeform-arrow.is-selected path { stroke: var(--accent); stroke-width: 3; }
 .freeform-arrow.is-traced path { stroke: var(--accent); stroke-width: 3; }
 .freeform-arrow.is-trace-dimmed { opacity: .16; }
@@ -442,11 +450,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-group-frame.is-traced rect { stroke: color-mix(in srgb, var(--accent) 70%, var(--border-strong)); stroke-width: 2.2; }
 .freeform-group-frame.is-trace-dimmed { opacity: .2; }
 .freeform-group-frame.kind-boundary rect { stroke-dasharray: 14 7; stroke-width: 1.8; }
+.freeform-group-frame.c4-software-system rect { stroke-width: 2.4; stroke-dasharray: none; fill-opacity: .72; }
+.freeform-group-frame.c4-software-system .freeform-group-header { stroke: none; fill: color-mix(in srgb, var(--accent) 10%, var(--surface-raised)); fill-opacity: .88; }
+.freeform-group-frame.c4-software-system text { font-size: 13px; font-weight: 760; fill: var(--text-secondary); }
+.freeform-group-frame.c4-container rect { stroke-width: 1.7; stroke-dasharray: 10 6; }
+.freeform-group-frame.c4-container.has-parent rect { fill-opacity: .46; }
+.freeform-group-frame.c4-container.has-parent text { font-size: 11px; font-weight: 700; }
 .freeform-group-frame.is-collapsed { cursor: pointer; }
 .freeform-group-frame.is-collapsed rect { fill: color-mix(in srgb, var(--surface-raised) 88%, transparent); }
 .freeform-box { cursor: grab; }
 .freeform-box:active { cursor: grabbing; }
 .freeform-box rect { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.6; }
+.freeform-box.emphasis-primary rect:first-of-type { stroke-width: 2.35; filter: drop-shadow(0 7px 14px rgba(0,0,0,.08)); }
+.freeform-box.emphasis-secondary { opacity: .94; }
+.freeform-box.emphasis-muted { opacity: .66; }
+.freeform-box.emphasis-muted rect:first-of-type { stroke-width: 1.15; }
+.freeform-card-accent { pointer-events: none; stroke: none !important; filter: none !important; }
+.freeform-box.tone-accent .freeform-card-accent { fill: #6366f1; }
+.freeform-box.tone-success .freeform-card-accent { fill: #10b981; }
+.freeform-box.tone-warning .freeform-card-accent { fill: #f59e0b; }
+.freeform-box.tone-danger .freeform-card-accent { fill: #ef4444; }
+.freeform-box.tone-muted .freeform-card-accent,
+.freeform-box.tone-default .freeform-card-accent { fill: var(--text-secondary); }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }

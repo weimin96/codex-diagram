@@ -721,7 +721,7 @@ server.registerTool('diagram.beautifyArchitecture', {
   return {
     content: [{
       type: 'text',
-      text: `Beautified ${diagram.path}: ${result.summary.partitions} architecture partition(s), ${result.summary.enrichedNodes} enriched node(s), ${result.summary.routedEdges} routed relation(s), theme=${theme}.`,
+      text: `Beautified ${diagram.path}: ${result.summary.partitions} architecture partition(s), ${result.summary.enrichedNodes} enriched node(s), ${result.summary.primaryNodes} primary node(s), ${result.summary.bundledEdges} bundled relation(s), ${result.summary.routedEdges} routed relation(s), theme=${theme}.`,
     }],
     structuredContent: {
       kind: 'diagram',

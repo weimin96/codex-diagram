@@ -26,6 +26,8 @@ for (const marker of [
   'diagram.beautifyArchitecture',
   'diagram.routeArchitectureEdges',
   'deterministically adds architecture partitions',
+  'primary node(s)',
+  'bundled relation(s)',
 ]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)
 }
@@ -33,5 +35,9 @@ for (const marker of [
 const appBundle = await readFile(path.join(packageRoot, 'dist/app.js'), 'utf8')
 for (const marker of ['thread-follow-toggle', 'thread-companion', 'diagram.threadState']) {
   if (!appBundle.includes(marker)) throw new Error(`Missing conversation companion app marker: ${marker}`)
+}
+const appCss = await readFile(path.join(packageRoot, 'dist/app.css'), 'utf8')
+for (const marker of ['freeform-bundle-trunk', 'emphasis-primary', 'c4-software-system']) {
+  if (!appCss.includes(marker)) throw new Error(`Missing architecture design style marker: ${marker}`)
 }
 console.log('Codex Diagram package smoke check passed.')
