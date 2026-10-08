@@ -105,6 +105,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [sourceLinkLoading, setSourceLinkLoading] = useState(false)
   const [layersOpen, setLayersOpen] = useState(false)
   const [layerQuery, setLayerQuery] = useState('')
+  const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'analysis' | null>(null)
+  const [inspectorMenuOpen, setInspectorMenuOpen] = useState(false)
   const [selectedGroupTarget, setSelectedGroupTarget] = useState<string | null>(null)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [playback, setPlayback] = useState<PlaybackState | null>(null)
@@ -205,6 +207,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         return
       }
       if (event.key === 'Escape') {
+        if (toolbarMenu || inspectorMenuOpen) {
+          setToolbarMenu(null)
+          setInspectorMenuOpen(false)
+          return
+        }
         if (architectureScope) {
           setArchitectureScope(null)
           setViewport({ x: 0, y: 0, zoom: 1 })
@@ -247,6 +254,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   useEffect(() => {
     setSourceLinkQuery('')
     setSourceLinkOptions([])
+    setInspectorMenuOpen(false)
   }, [selectedBoxForLinks?.id])
 
   useEffect(() => {
@@ -1043,6 +1051,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     commit(routeArchitectureEdges(currentScene()))
   }
 
+  function applyArchitectureTheme(theme: ArchitectureTheme) {
+    const result = beautifyArchitectureScene(currentScene(), {
+      theme,
+      view: architectureView,
+      density: architectureDensity,
+    })
+    setArchitectureTheme(theme)
+    commit(result.scene)
+    setSelectedIds([])
+    setSelectedGroupTarget(null)
+    setViewport({ x: 0, y: 0, zoom: 1 })
+  }
+
   function updateArchitectureAppearance(patch: { view?: CanvasArchitectureView; density?: CanvasArchitectureDensity }) {
     const current = currentScene()
     commit({
@@ -1329,6 +1350,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     event.preventDefault()
     event.stopPropagation()
     editorRef.current?.focus({ preventScroll: true })
+    setToolbarMenu(null)
+    setInspectorMenuOpen(false)
     setSelectedGroupTarget(null)
     if (!selectedIds.includes(id)) setSelectedIds([id])
     const surface = editorRef.current?.getBoundingClientRect()
@@ -1336,6 +1359,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function handleBoxClick(id: string, event: React.MouseEvent<SVGGElement>) {
+    setToolbarMenu(null)
+    setInspectorMenuOpen(false)
     setSelectedGroupTarget(null)
     if (tool === 'connect') {
       if (!connectFrom) {
@@ -1467,6 +1492,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function beginBackgroundPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (event.target !== event.currentTarget) return
     setContextMenu(null)
+    setToolbarMenu(null)
+    setInspectorMenuOpen(false)
     editorRef.current?.focus({ preventScroll: true })
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, event.currentTarget, live, viewport)
@@ -1626,103 +1653,96 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
-          <ToolButton active={tool === 'hand'} title="平移 (H / Space)" onClick={() => { setTool('hand'); setConnectFrom(null) }}>抓手</ToolButton>
-          <span className="freeform-toolbar-separator" />
           <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="节点 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}>节点</ToolButton>
           <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (T)" onClick={() => { setTool('note'); setConnectFrom(null) }}>备注</ToolButton>
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
           <span className="freeform-toolbar-separator" />
-          <select
-            className="freeform-layout-select"
-            aria-label="自动布局"
-            defaultValue=""
-            onChange={(event) => {
-              const mode = event.target.value as CanvasLayoutMode | ''
-              if (mode) applyLayout(mode)
-              event.currentTarget.value = ''
-            }}
-          >
-            <option value="">自动布局</option>
-            <option value="horizontal">从左到右</option>
-            <option value="vertical">从上到下</option>
-            <option value="grid">网格布局</option>
-          </select>
-          <select
-            className="freeform-layout-select"
-            aria-label="泳道"
-            defaultValue=""
-            onChange={(event) => {
-              const value = event.target.value
-              if (value === 'horizontal') applyLanePreset('horizontal')
-              if (value === 'vertical') applyLanePreset('vertical')
-              if (value === 'clear') removeLanes()
-              event.currentTarget.value = ''
-            }}
-          >
-            <option value="">泳道</option>
-            <option value="horizontal">水平泳道</option>
-            <option value="vertical">垂直泳道</option>
-            {scene.lanes?.length ? <option value="clear">移除泳道</option> : null}
-          </select>
-          <select
-            className="freeform-layout-select"
-            aria-label="架构模板"
-            defaultValue=""
-            onChange={(event) => {
-              const value = event.target.value as CanvasArchitectureTemplate | ''
-              if (value) insertArchitectureTemplate(value)
-              event.currentTarget.value = ''
-            }}
-          >
-            <option value="">模板</option>
-            <option value="web-service">Web / API / Service</option>
-            <option value="event-driven">事件驱动</option>
-            <option value="cache-aside">Cache Aside</option>
-          </select>
-          <select
-            className="freeform-layout-select"
-            aria-label="架构主题"
-            value={architectureTheme}
-            onChange={(event) => setArchitectureTheme(event.target.value as ArchitectureTheme)}
-          >
-            <option value="enterprise">企业架构</option>
-            <option value="technical">技术文档</option>
-            <option value="presentation">汇报展示</option>
-          </select>
-          <select
-            className="freeform-layout-select"
-            aria-label="架构视图"
-            value={architectureView}
-            onChange={(event) => {
-              const value = event.target.value as CanvasArchitectureView
-              setArchitectureView(value)
-              updateArchitectureAppearance({ view: value })
-              setSelectedIds([])
-              setSelectedGroupTarget(null)
-            }}
-          >
-            <option value="detail">详情视图</option>
-            <option value="overview">总览视图</option>
-          </select>
-          <select
-            className="freeform-layout-select"
-            aria-label="架构密度"
-            value={architectureDensity}
-            onChange={(event) => {
-              const value = event.target.value as CanvasArchitectureDensity
-              applyArchitectureDensity(value)
-            }}
-          >
-            <option value="auto">密度 · 自动</option>
-            <option value="comfortable">密度 · 舒适</option>
-            <option value="compact">密度 · 紧凑</option>
-            <option value="dense">密度 · 高密</option>
-          </select>
-          <button type="button" title="自动分区、配色、补图标并整理连线" onClick={beautifyArchitecture}>美化</button>
-          <button type="button" title="保留节点位置，仅重新计算锚点、避障路径和线路通道" onClick={tidyArchitectureRoutes}>理线</button>
-          {architectureScope ? <button type="button" className="is-active" title="返回完整架构视图" onClick={leaveArchitectureScope}>退出聚焦</button> : null}
-          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
-          {onAnalyzeGitImpact ? <button type="button" title="将当前 Git 改动映射到架构节点" onClick={() => void onAnalyzeGitImpact()}>改动影响</button> : null}
+          <div className="freeform-toolbar-menu-wrap">
+            <button type="button" className={toolbarMenu === 'architecture' ? 'is-active' : ''} aria-expanded={toolbarMenu === 'architecture'} onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'architecture' ? null : 'architecture') }}>架构⌄</button>
+            {toolbarMenu === 'architecture' ? (
+              <div className="freeform-toolbar-menu is-architecture" role="menu" aria-label="架构设置">
+                <section>
+                  <span>视图</span>
+                  <div className="freeform-menu-grid two">
+                    <button type="button" className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
+                    <button type="button" className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
+                  </div>
+                </section>
+                <section>
+                  <span>主题</span>
+                  <div className="freeform-menu-grid three">
+                    <button type="button" className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
+                    <button type="button" className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
+                    <button type="button" className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
+                  </div>
+                </section>
+                <section>
+                  <span>密度</span>
+                  <div className="freeform-menu-grid four">
+                    {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
+                      <button key={value} type="button" className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
+                    ))}
+                  </div>
+                </section>
+                <section>
+                  <span>整理</span>
+                  <div className="freeform-menu-grid two">
+                    <button type="button" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>自动整理架构</button>
+                    <button type="button" onClick={() => { tidyArchitectureRoutes(); setToolbarMenu(null) }}>仅整理连线</button>
+                  </div>
+                </section>
+                <section>
+                  <span>布局</span>
+                  <div className="freeform-menu-grid three">
+                    <button type="button" onClick={() => { applyLayout('horizontal'); setToolbarMenu(null) }}>左 → 右</button>
+                    <button type="button" onClick={() => { applyLayout('vertical'); setToolbarMenu(null) }}>上 → 下</button>
+                    <button type="button" onClick={() => { applyLayout('grid'); setToolbarMenu(null) }}>网格</button>
+                  </div>
+                </section>
+                <section>
+                  <span>泳道</span>
+                  <div className="freeform-menu-grid three">
+                    <button type="button" onClick={() => { applyLanePreset('horizontal'); setToolbarMenu(null) }}>水平</button>
+                    <button type="button" onClick={() => { applyLanePreset('vertical'); setToolbarMenu(null) }}>垂直</button>
+                    <button type="button" disabled={!scene.lanes?.length} onClick={() => { removeLanes(); setToolbarMenu(null) }}>移除</button>
+                  </div>
+                </section>
+                <section>
+                  <span>插入模板</span>
+                  <div className="freeform-menu-stack">
+                    <button type="button" onClick={() => { insertArchitectureTemplate('web-service'); setToolbarMenu(null) }}>Web / API / Service</button>
+                    <button type="button" onClick={() => { insertArchitectureTemplate('event-driven'); setToolbarMenu(null) }}>事件驱动</button>
+                    <button type="button" onClick={() => { insertArchitectureTemplate('cache-aside'); setToolbarMenu(null) }}>Cache Aside</button>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+          </div>
+          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setLayersOpen((value) => !value) }}>层级</button>
+          <div className="freeform-toolbar-menu-wrap">
+            <button type="button" className={toolbarMenu === 'analysis' ? 'is-active' : ''} aria-expanded={toolbarMenu === 'analysis'} onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'analysis' ? null : 'analysis') }}>分析⌄</button>
+            {toolbarMenu === 'analysis' ? (
+              <div className="freeform-toolbar-menu is-analysis" role="menu" aria-label="架构分析">
+                {selectedBoxes.length ? (
+                  <section>
+                    <span>依赖追踪</span>
+                    <div className="freeform-menu-grid three">
+                      <button type="button" className={traceDirection === 'upstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('upstream'); setToolbarMenu(null) }}>上游</button>
+                      <button type="button" className={traceDirection === 'both' ? 'is-selected' : ''} onClick={() => { setTraceDirection('both'); setToolbarMenu(null) }}>上下游</button>
+                      <button type="button" className={traceDirection === 'downstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('downstream'); setToolbarMenu(null) }}>下游</button>
+                    </div>
+                    <label className="freeform-menu-depth"><span>深度</span><select value={traceDepth} onChange={(event) => setTraceDepth(Number(event.target.value))}><option value={1}>1 跳</option><option value={2}>2 跳</option><option value={3}>3 跳</option></select></label>
+                  </section>
+                ) : <p>选择节点后可追踪上下游依赖。</p>}
+                {onAnalyzeGitImpact ? (
+                  <section>
+                    <span>代码分析</span>
+                    <div className="freeform-menu-stack"><button type="button" onClick={() => { setToolbarMenu(null); void onAnalyzeGitImpact() }}>Git 改动影响</button></div>
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
@@ -1813,28 +1833,27 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
               <strong>{selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
-              <div>
+              <div className="freeform-inspector-actions">
                 {scene.architecture && selectedBox ? <button type="button" title="只查看当前节点及邻域" onClick={() => enterArchitectureScope({ kind: 'node', id: selectedBox.id, depth: 1 })}>聚焦</button> : null}
                 {scene.architecture && selectedGroupId ? <button type="button" title="进入当前边界查看内部结构" onClick={() => enterArchitectureScope({ kind: 'group', id: selectedGroupId })}>下钻</button> : null}
                 {selectedBox || selectedGroup ? <button type="button" aria-pressed={detailsExpanded} onClick={() => setDetailsExpanded((value) => !value)}>{detailsExpanded ? '收起' : '详情'}</button> : null}
-                <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
+                <div className="freeform-inspector-more">
+                  <button type="button" title="更多操作" aria-label="更多操作" aria-expanded={inspectorMenuOpen} onClick={() => setInspectorMenuOpen((value) => !value)}>⋯</button>
+                  {inspectorMenuOpen ? (
+                    <div className="freeform-inspector-more-menu" role="menu">
+                      {selectedIds.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setInspectorMenuOpen(false) }}>复制一份</button> : null}
+                      {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { toggleSelectionLock(); setInspectorMenuOpen(false) }}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
+                      {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { reorderSelection('front'); setInspectorMenuOpen(false) }}>移到最前</button> : null}
+                      {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { reorderSelection('back'); setInspectorMenuOpen(false) }}>移到最后</button> : null}
+                      {selectedGroupIds.length ? <button type="button" role="menuitem" onClick={() => { ungroupSelection(); setInspectorMenuOpen(false) }}>取消组合</button> : null}
+                      <span />
+                      <button type="button" role="menuitem" className="is-danger" disabled={selectedBoxes.length > 0 && selectedLocked.length === selectedBoxes.length} onClick={() => { deleteSelected(); setInspectorMenuOpen(false) }}>删除选中</button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
-            {selectedBoxes.length ? (
-              <div className="freeform-trace-tools" aria-label="关系追踪">
-                <div>
-                  <button type="button" className={traceDirection === 'upstream' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'upstream' ? null : 'upstream')}>上游</button>
-                  <button type="button" className={traceDirection === 'both' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'both' ? null : 'both')}>邻域</button>
-                  <button type="button" className={traceDirection === 'downstream' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'downstream' ? null : 'downstream')}>下游</button>
-                  <select aria-label="关系追踪深度" value={traceDepth} onChange={(event) => setTraceDepth(Number(event.target.value))}>
-                    <option value={1}>1 跳</option>
-                    <option value={2}>2 跳</option>
-                    <option value={3}>3 跳</option>
-                  </select>
-                </div>
-                {traceResult ? <span>{traceResult.nodeIds.length} 节点 · {traceResult.arrowIds.length} 关系</span> : null}
-              </div>
-            ) : null}
+            {traceResult ? <div className="freeform-inspector-trace-status">依赖追踪 · {traceResult.nodeIds.length} 节点 · {traceResult.arrowIds.length} 关系 <button type="button" onClick={() => setTraceDirection(null)}>清除</button></div> : null}
             {selectedSingle?.type === 'arrow' ? (
               <>
                 <label>
@@ -1857,6 +1876,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             ) : null}
             {selectedBox ? (
               <>
+                <div className="freeform-section-caption">基本</div>
                 <label>
                   <span>文字</span>
                   <input
@@ -1867,80 +1887,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, text: event.target.value })}
                   />
                 </label>
-                <div className="freeform-size-row">
-                  <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
-                  <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
-                </div>
-                <div className="freeform-property-row">
-                  <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
-                  <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
-                </div>
-                <label>
-                  <span>C4 语义</span>
-                  <select aria-label="C4 语义" disabled={selectedBox.locked} value={selectedBox.c4Type ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, c4Type: (event.target.value || undefined) as CanvasC4Type | undefined }))}>
-                    <option value="">未指定</option>
-                    <option value="person">Person</option>
-                    <option value="software-system">Software System</option>
-                    <option value="container">Container</option>
-                    <option value="component">Component</option>
-                  </select>
-                </label>
-                <label>
-                  <span>节点角色</span>
-                  <select aria-label="节点角色图标" disabled={selectedBox.locked} value={selectedBox.icon ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, icon: (event.target.value || undefined) as CanvasIcon | undefined }))}>
-                    <option value="">无</option>
-                    <option value="user">用户</option>
-                    <option value="web">Web / 前端</option>
-                    <option value="api">API / 网关</option>
-                    <option value="gateway">网关 / Proxy</option>
-                    <option value="service">服务</option>
-                    <option value="worker">Worker / Processor</option>
-                    <option value="database">数据库</option>
-                    <option value="cache">缓存</option>
-                    <option value="queue">消息队列</option>
-                    <option value="search">搜索 / 索引</option>
-                    <option value="vector">向量检索</option>
-                    <option value="cloud">云 / 平台</option>
-                    <option value="file">文件 / 对象</option>
-                    <option value="auth">认证 / 身份</option>
-                    <option value="ai">AI / 模型</option>
-                    <option value="mcp">MCP</option>
-                    <option value="scheduler">调度 / 定时</option>
-                    <option value="external">外部系统</option>
-                  </select>
-                </label>
-                <label>
-                  <span>技术栈</span>
-                  <select aria-label="节点技术栈" disabled={selectedBox.locked} value={selectedBox.stencil ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, stencil: (event.target.value || undefined) as CanvasStencil | undefined }))}>
-                    <option value="">无</option>
-                    <option value="spring">Spring</option>
-                    <option value="react">React</option>
-                    <option value="vue">Vue</option>
-                    <option value="postgres">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                    <option value="redis">Redis</option>
-                    <option value="kafka">Kafka</option>
-                    <option value="rabbitmq">RabbitMQ</option>
-                    <option value="docker">Docker</option>
-                    <option value="kubernetes">Kubernetes</option>
-                    <option value="qdrant">Qdrant</option>
-                    <option value="opensearch">OpenSearch</option>
-                    <option value="elasticsearch">Elasticsearch</option>
-                    <option value="mongodb">MongoDB</option>
-                    <option value="minio">MinIO / S3</option>
-                    <option value="nginx">Nginx</option>
-                    <option value="grpc">gRPC</option>
-                    <option value="oidc">OIDC</option>
-                    <option value="openai">LLM / OpenAI-compatible</option>
-                    <option value="mcp">MCP</option>
-                  </select>
-                </label>
+                {scene.architecture ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
+                {(scene.architecture || detailsExpanded) ? <>
+                  <div className="freeform-section-caption">架构</div>
+                  <label>
+                    <span>C4 语义</span>
+                    <select aria-label="C4 语义" disabled={selectedBox.locked} value={selectedBox.c4Type ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, c4Type: (event.target.value || undefined) as CanvasC4Type | undefined }))}>
+                      <option value="">未指定</option><option value="person">Person</option><option value="software-system">Software System</option><option value="container">Container</option><option value="component">Component</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>节点角色</span>
+                    <select aria-label="节点角色图标" disabled={selectedBox.locked} value={selectedBox.icon ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, icon: (event.target.value || undefined) as CanvasIcon | undefined }))}>
+                      <option value="">无</option><option value="user">用户</option><option value="web">Web / 前端</option><option value="api">API / 网关</option><option value="gateway">网关 / Proxy</option><option value="service">服务</option><option value="worker">Worker / Processor</option><option value="database">数据库</option><option value="cache">缓存</option><option value="queue">消息队列</option><option value="search">搜索 / 索引</option><option value="vector">向量检索</option><option value="cloud">云 / 平台</option><option value="file">文件 / 对象</option><option value="auth">认证 / 身份</option><option value="ai">AI / 模型</option><option value="mcp">MCP</option><option value="scheduler">调度 / 定时</option><option value="external">外部系统</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>技术栈</span>
+                    <select aria-label="节点技术栈" disabled={selectedBox.locked} value={selectedBox.stencil ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, stencil: (event.target.value || undefined) as CanvasStencil | undefined }))}>
+                      <option value="">无</option><option value="spring">Spring</option><option value="react">React</option><option value="vue">Vue</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="kafka">Kafka</option><option value="rabbitmq">RabbitMQ</option><option value="docker">Docker</option><option value="kubernetes">Kubernetes</option><option value="qdrant">Qdrant</option><option value="opensearch">OpenSearch</option><option value="elasticsearch">Elasticsearch</option><option value="mongodb">MongoDB</option><option value="minio">MinIO / S3</option><option value="nginx">Nginx</option><option value="grpc">gRPC</option><option value="oidc">OIDC</option><option value="openai">LLM / OpenAI-compatible</option><option value="mcp">MCP</option>
+                    </select>
+                  </label>
+                </> : null}
+                {!scene.architecture ? <>
+                  <div className="freeform-size-row">
+                    <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
+                    <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
+                  </div>
+                  <div className="freeform-property-row">
+                    <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
+                    <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
+                  </div>
+                </> : null}
                 {detailsExpanded ? (
                   <>
-                    <label>
-                      <span>副标题</span>
-                      <input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} />
-                    </label>
+                    {!scene.architecture ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
                     <label>
                       <span>说明</span>
                       <textarea aria-label="节点说明" disabled={selectedBox.locked} value={selectedBox.description ?? ''} placeholder="职责、边界、风险或实现备注" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, description: event.target.value || undefined })} />
@@ -2004,44 +1985,42 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                         ))}
                       </div>
                     ) : null}
+                    {scene.architecture ? <>
+                      <div className="freeform-section-caption">外观</div>
+                      <div className="freeform-size-row">
+                        <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
+                        <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
+                      </div>
+                      <div className="freeform-property-row">
+                        <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
+                        <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
+                      </div>
+                    </> : null}
                   </>
                 ) : null}
-                <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedBox.locked ? '解锁元素' : '锁定元素'}</button>
               </>
             ) : null}
             {selectedGroup ? (
               <div className="freeform-group-inspector">
-                <div className="freeform-section-caption">容器</div>
+                <div className="freeform-section-caption">边界</div>
                 <label>
                   <span>名称</span>
                   <input aria-label="组合名称" value={selectedGroup.label ?? ''} placeholder="例如：订单域" onChange={(event) => updateSelectedGroup({ label: event.target.value || undefined })} />
                 </label>
-                <label>
-                  <span>色调</span>
-                  <select aria-label="组合色调" value={selectedGroup.tone ?? 'muted'} onChange={(event) => updateSelectedGroup({ tone: event.target.value as CanvasTone })}>
-                    <option value="default">默认</option>
-                    <option value="accent">强调</option>
-                    <option value="success">成功</option>
-                    <option value="warning">警告</option>
-                    <option value="danger">危险</option>
-                    <option value="muted">弱化</option>
-                  </select>
-                </label>
-                <label>
-                  <span>边界类型</span>
-                  <select aria-label="组合边界类型" value={selectedGroup.kind ?? 'group'} onChange={(event) => updateSelectedGroup({ kind: event.target.value as 'group' | 'boundary' })}>
-                    <option value="group">普通容器</option>
-                    <option value="boundary">系统边界</option>
-                  </select>
-                </label>
-                <label>
-                  <span>C4 层级</span>
-                  <select aria-label="容器 C4 层级" value={selectedGroup.c4Type ?? ''} onChange={(event) => updateSelectedGroup({ c4Type: (event.target.value || undefined) as 'software-system' | 'container' | undefined })}>
-                    <option value="">未指定</option>
-                    <option value="software-system">Software System</option>
-                    <option value="container">Container</option>
-                  </select>
-                </label>
+                <div className="freeform-property-row">
+                  <label>
+                    <span>类型</span>
+                    <select aria-label="组合边界类型" value={selectedGroup.kind ?? 'group'} onChange={(event) => updateSelectedGroup({ kind: event.target.value as 'group' | 'boundary' })}>
+                      <option value="group">普通容器</option><option value="boundary">系统边界</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>C4 层级</span>
+                    <select aria-label="容器 C4 层级" value={selectedGroup.c4Type ?? ''} onChange={(event) => updateSelectedGroup({ c4Type: (event.target.value || undefined) as 'software-system' | 'container' | undefined })}>
+                      <option value="">未指定</option><option value="software-system">Software System</option><option value="container">Container</option>
+                    </select>
+                  </label>
+                </div>
                 <label>
                   <span>父边界</span>
                   <select aria-label="父边界" value={selectedGroup.parentId ?? ''} onChange={(event) => {
@@ -2053,37 +2032,45 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </select>
                 </label>
                 {detailsExpanded ? (
-                  <label>
-                    <span>边界说明</span>
-                    <textarea aria-label="边界说明" value={selectedGroup.description ?? ''} placeholder="系统职责、边界约束或部署范围" onChange={(event) => updateSelectedGroup({ description: event.target.value || undefined })} />
-                  </label>
+                  <>
+                    <label>
+                      <span>边界说明</span>
+                      <textarea aria-label="边界说明" value={selectedGroup.description ?? ''} placeholder="系统职责、边界约束或部署范围" onChange={(event) => updateSelectedGroup({ description: event.target.value || undefined })} />
+                    </label>
+                    <div className="freeform-section-caption">外观</div>
+                    <label>
+                      <span>色调</span>
+                      <select aria-label="组合色调" value={selectedGroup.tone ?? 'muted'} onChange={(event) => updateSelectedGroup({ tone: event.target.value as CanvasTone })}>
+                        <option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option>
+                      </select>
+                    </label>
+                  </>
                 ) : null}
-                <div className="freeform-align-row">
-                  <button type="button" onClick={() => applyLocalLayout('horizontal')}>局部横向</button>
-                  <button type="button" onClick={() => applyLocalLayout('vertical')}>局部纵向</button>
+                <div className="freeform-property-row">
+                  <select aria-label="容器局部布局" defaultValue="" onChange={(event) => { const value = event.target.value as CanvasLayoutMode | ''; if (value === 'horizontal' || value === 'vertical') applyLocalLayout(value); event.currentTarget.value = '' }}>
+                    <option value="">局部布局…</option><option value="horizontal">横向</option><option value="vertical">纵向</option>
+                  </select>
+                  <button type="button" onClick={toggleSelectedGroupCollapsed}>{selectedGroup.collapsed ? '展开容器' : '折叠容器'}</button>
                 </div>
-                <button type="button" className="freeform-lock-button" onClick={toggleSelectedGroupCollapsed}>{selectedGroup.collapsed ? '展开容器' : '折叠容器'}</button>
               </div>
             ) : null}
             {selected.length > 1 ? (
               <>
-                <div className="freeform-align-row">
-                  <button type="button" aria-label="垂直对齐选中元素" onClick={() => alignSelection('x')}>垂直对齐</button>
-                  <button type="button" aria-label="水平对齐选中元素" onClick={() => alignSelection('y')}>水平对齐</button>
-                </div>
-                <div className="freeform-align-row">
-                  <button type="button" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>水平分布</button>
-                  <button type="button" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>垂直分布</button>
+                <div className="freeform-multi-actions">
+                  <select aria-label="对齐选中元素" defaultValue="" onChange={(event) => { const value = event.target.value; if (value === 'x') alignSelection('x'); if (value === 'y') alignSelection('y'); event.currentTarget.value = '' }}>
+                    <option value="">对齐…</option><option value="x">垂直对齐</option><option value="y">水平对齐</option>
+                  </select>
+                  <select aria-label="分布选中元素" defaultValue="" onChange={(event) => { const value = event.target.value; if (value === 'x') distributeSelection('x'); if (value === 'y') distributeSelection('y'); event.currentTarget.value = '' }}>
+                    <option value="">分布…</option><option value="x">水平分布</option><option value="y">垂直分布</option>
+                  </select>
+                  <select aria-label="局部布局" defaultValue="" onChange={(event) => { const value = event.target.value as CanvasLayoutMode | ''; if (value === 'horizontal' || value === 'vertical') applyLocalLayout(value); event.currentTarget.value = '' }}>
+                    <option value="">布局…</option><option value="horizontal">局部横向</option><option value="vertical">局部纵向</option>
+                  </select>
                 </div>
                 <div className="freeform-align-row">
                   <button type="button" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
                   <button type="button" disabled={selectedGroupIds.length === 0} onClick={ungroupSelection}>取消组合</button>
                 </div>
-                <div className="freeform-align-row">
-                  <button type="button" onClick={() => applyLocalLayout('horizontal')}>局部横向</button>
-                  <button type="button" onClick={() => applyLocalLayout('vertical')}>局部纵向</button>
-                </div>
-                <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length && selectedBoxes.length > 0 ? '解锁选中' : '锁定选中'}</button>
               </>
             ) : null}
           </div>
