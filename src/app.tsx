@@ -10,7 +10,7 @@ import {
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
-import { CanvasEditor } from './CanvasEditor.js'
+import { CanvasEditor, type CanvasSelection } from './CanvasEditor.js'
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
@@ -206,6 +206,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [followConversation, setFollowConversation] = useState(true)
+  const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
+  const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
+  const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
   const [discardTarget, setDiscardTarget] = useState<{ kind: 'diagram'; path: string } | { kind: 'workspace' } | null>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
@@ -237,6 +240,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   useEffect(() => {
     setSelected(null)
+    setCanvasSelection(null)
+    setChangeReview(null)
+    setChangeReviewOpen(false)
     setSource('')
     setExternalChange(false)
     setDocumentMenuOpen(false)
@@ -251,6 +257,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
+
+  useEffect(() => {
+    if (!selected || selected.type !== 'canvas') {
+      if (canvasSelection) setCanvasSelection(null)
+      return
+    }
+    updateModelContext(workspacePath, selected, canvasSelection ?? undefined)
+  }, [canvasSelection, selected?.path, selected?.modifiedAt, workspacePath])
 
   useEffect(() => {
     if (!isThread) return
@@ -370,6 +384,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           }
           const latest = await callTool<DiagramResult>('diagram.get', { workspacePath, path: selected.path })
           if (disposed || dirty) return
+          if (latest.diagram.source !== selected.source) {
+            setChangeReview({ before: selected, after: latest.diagram })
+          }
           setSelected(latest.diagram)
           setSource(latest.diagram.source)
           setExternalChange(false)
@@ -453,6 +470,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setDocumentMenuOpen(false)
     setRenaming(false)
     setDeleteConfirmOpen(false)
+    if (changeReview?.after.path !== diagramPath) {
+      setChangeReview(null)
+      setChangeReviewOpen(false)
+    }
     setLoadingPath(diagramPath)
     setError(null)
     try {
@@ -505,6 +526,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
+      setChangeReview(null)
+      setChangeReviewOpen(false)
       onSnapshot({
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
@@ -533,6 +556,36 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setNotice('已重新载入磁盘版本')
     } catch (cause) {
       setError(errorMessage(cause))
+    }
+  }
+
+  async function restorePreviousChange() {
+    const review = changeReview
+    if (!review || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await callTool<DiagramResult>('diagram.update', {
+        workspacePath,
+        path: review.after.path,
+        source: review.before.source,
+        expectedModifiedAt: review.after.modifiedAt,
+      })
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      setChangeReview(null)
+      setChangeReviewOpen(false)
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      updateModelContext(workspacePath, result.diagram)
+      setNotice('已恢复到本次外部修改前的版本')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -681,6 +734,19 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     } finally {
       setAiSending(false)
     }
+  }
+
+  async function updateSelectedCanvasFromConversation() {
+    if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
+    const compact = canvasSelection.elements.map((element) => {
+      if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height }
+    })
+    await sendModification([
+      '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
+      '不要重排未选中的无关区域。',
+      `当前选区：${JSON.stringify(compact)}`,
+    ].join('\n'))
   }
 
   async function exportSvg() {
@@ -897,6 +963,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             {selected ? (
               <div className="thread-chat-actions" aria-label="对话联动操作">
                 <button type="button" disabled={aiSending || dirty} onClick={updateFromConversation}>按对话更新</button>
+                {selected.type === 'canvas' && canvasSelection?.elements.length ? (
+                  <button type="button" disabled={aiSending || dirty} onClick={() => void updateSelectedCanvasFromConversation()}>调整选中</button>
+                ) : null}
                 <button type="button" disabled={aiSending || dirty} onClick={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>补异常</button>
                 <button type="button" disabled={aiSending} onClick={() => void explainInConversation()}>解释</button>
               </div>
@@ -909,7 +978,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <span>不会影响当前图查看与编辑</span>
           </div>
         ) : null}
-        {notice ? <div className="notice-banner">{notice}</div> : null}
+        {notice ? <div className="notice-banner"><span>{notice}</span>{changeReview ? <button type="button" onClick={() => setChangeReviewOpen(true)}>查看变更</button> : null}</div> : null}
         {externalChange ? (
           <div className="conflict-banner">
             <span>文件已在外部修改</span>
@@ -919,11 +988,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
         {selected ? (
           <>
-            <header className="editor-toolbar">
-              <div className="document-identity">
+            <header className={`editor-toolbar${isThread ? ' thread-editor-toolbar' : ''}`}>
+              {!isThread ? <div className="document-identity">
                 <strong>{selected.name}</strong>
                 <span>{selected.path}</span>
-              </div>
+              </div> : null}
               <div className="toolbar-actions">
                 {!isThread ? <button type="button" onClick={() => setAiOpen(true)}>Codex</button> : null}
                 {!isThread ? (
@@ -937,6 +1006,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
                   {!isThread ? <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton> : null}
                 </div>
+                {changeReview ? (
+                  <button className="change-review-trigger" type="button" onClick={() => setChangeReviewOpen(true)}>变更</button>
+                ) : null}
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
                 {!isThread ? <div className="document-actions">
@@ -1040,9 +1112,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               ) : null}
               {(mode === 'preview' || mode === 'split') ? (
                 <section className="preview-pane">
-                  <div className="pane-head"><span>{selected.type === 'canvas' ? '画布' : '预览'}</span><span>{selected.type === 'canvas' ? '可视化编辑' : '实时渲染'}</span></div>
+                  {!isThread || selected.type !== 'canvas' ? <div className="pane-head"><span>{selected.type === 'canvas' ? '画布' : '预览'}</span><span>{selected.type === 'canvas' ? '可视化编辑' : '实时渲染'}</span></div> : null}
                   {selected.type === 'canvas'
-                    ? <CanvasEditor source={source} onChange={setSource} />
+                    ? <CanvasEditor source={source} onChange={setSource} onSelectionChange={setCanvasSelection} />
                     : <MermaidPreview source={source} />}
                 </section>
               ) : null}
@@ -1068,6 +1140,15 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onClose={() => setAiOpen(false)}
             onGenerate={sendGeneration}
             onModify={sendModification}
+          />
+        ) : null}
+        {changeReview && changeReviewOpen ? (
+          <ChangeReviewPanel
+            before={changeReview.before}
+            after={changeReview.after}
+            restoring={saving}
+            onClose={() => setChangeReviewOpen(false)}
+            onRestore={() => void restorePreviousChange()}
           />
         ) : null}
         {selected && deleteConfirmOpen ? (
@@ -1097,6 +1178,112 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       </section>
     </main>
   )
+}
+
+function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
+  before: DiagramDocument
+  after: DiagramDocument
+  restoring: boolean
+  onClose: () => void
+  onRestore: () => void
+}) {
+  const diff = useMemo(() => buildLineDiff(before.source, after.source), [after.source, before.source])
+  const added = diff.filter((line) => line.kind === 'add').length
+  const removed = diff.filter((line) => line.kind === 'remove').length
+  return (
+    <aside className="change-review-panel" aria-label="图表变更对比">
+      <div className="change-review-head">
+        <div>
+          <div className="eyebrow">CHANGE REVIEW</div>
+          <strong>外部修改</strong>
+          <span>+{added} / −{removed}</span>
+        </div>
+        <button type="button" onClick={onClose}>关闭</button>
+      </div>
+      <div className="change-review-path">{after.path}</div>
+      <div className="change-review-diff" role="log" aria-label="源码差异">
+        {diff.map((line, index) => (
+          <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
+            <span>{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
+            <code>{line.text || ' '}</code>
+          </div>
+        ))}
+      </div>
+      <div className="change-review-actions">
+        <button type="button" disabled={restoring} onClick={onRestore}>{restoring ? '恢复中…' : '恢复旧版'}</button>
+        <button className="primary-button" type="button" onClick={onClose}>保留新版</button>
+      </div>
+    </aside>
+  )
+}
+
+type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string }
+
+function buildLineDiff(before: string, after: string): DiffLine[] {
+  const left = before.replace(/\r\n/g, '\n').split('\n')
+  const right = after.replace(/\r\n/g, '\n').split('\n')
+  if (left.length > 350 || right.length > 350) return buildCompactDiff(left, right)
+  const rows = left.length + 1
+  const cols = right.length + 1
+  const lcs = new Uint16Array(rows * cols)
+  for (let i = left.length - 1; i >= 0; i -= 1) {
+    for (let j = right.length - 1; j >= 0; j -= 1) {
+      lcs[i * cols + j] = left[i] === right[j]
+        ? 1 + lcs[(i + 1) * cols + j + 1]
+        : Math.max(lcs[(i + 1) * cols + j], lcs[i * cols + j + 1])
+    }
+  }
+  const result: DiffLine[] = []
+  let i = 0
+  let j = 0
+  while (i < left.length && j < right.length) {
+    if (left[i] === right[j]) {
+      result.push({ kind: 'context', text: left[i] })
+      i += 1
+      j += 1
+    } else if (lcs[(i + 1) * cols + j] >= lcs[i * cols + j + 1]) {
+      result.push({ kind: 'remove', text: left[i++] })
+    } else {
+      result.push({ kind: 'add', text: right[j++] })
+    }
+  }
+  while (i < left.length) result.push({ kind: 'remove', text: left[i++] })
+  while (j < right.length) result.push({ kind: 'add', text: right[j++] })
+  return collapseDiffContext(result)
+}
+
+function buildCompactDiff(left: string[], right: string[]): DiffLine[] {
+  let prefix = 0
+  while (prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) prefix += 1
+  let suffix = 0
+  while (suffix < left.length - prefix && suffix < right.length - prefix && left[left.length - 1 - suffix] === right[right.length - 1 - suffix]) suffix += 1
+  const result: DiffLine[] = []
+  left.slice(Math.max(0, prefix - 3), prefix).forEach((text) => result.push({ kind: 'context', text }))
+  left.slice(prefix, Math.min(left.length - suffix, prefix + 120)).forEach((text) => result.push({ kind: 'remove', text }))
+  right.slice(prefix, Math.min(right.length - suffix, prefix + 120)).forEach((text) => result.push({ kind: 'add', text }))
+  if (suffix > 0) right.slice(right.length - Math.min(3, suffix)).forEach((text) => result.push({ kind: 'context', text }))
+  return result
+}
+
+function collapseDiffContext(lines: DiffLine[]): DiffLine[] {
+  const changed = lines.map((line, index) => line.kind === 'context' ? -1 : index).filter((index) => index >= 0)
+  if (changed.length === 0) return lines.slice(0, 8)
+  const keep = new Set<number>()
+  changed.forEach((index) => {
+    for (let cursor = Math.max(0, index - 3); cursor <= Math.min(lines.length - 1, index + 3); cursor += 1) keep.add(cursor)
+  })
+  const result: DiffLine[] = []
+  let omitted = false
+  lines.forEach((line, index) => {
+    if (keep.has(index)) {
+      omitted = false
+      result.push(line)
+    } else if (!omitted) {
+      omitted = true
+      result.push({ kind: 'context', text: '⋯' })
+    }
+  })
+  return result
 }
 
 function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (type: DiagramType, title: string) => Promise<void> }) {
@@ -1415,12 +1602,22 @@ async function sendCodexMessage(text: string): Promise<void> {
   })
 }
 
-function updateModelContext(workspacePath: string, diagram: DiagramDocument) {
+function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
+  const selectedCanvasElements = canvasSelection?.elements.map((element) => {
+    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label }
+    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height }
+  })
   void openai.modelContext?.update({
-    content: [{ type: 'text', text: `Selected diagram ${diagram.path} (${diagram.type}).` }],
+    content: [{
+      type: 'text',
+      text: selectedCanvasElements?.length
+        ? `Selected diagram ${diagram.path} (${diagram.type}); selected canvas elements: ${selectedCanvasElements.map((item) => item.id).join(', ')}.`
+        : `Selected diagram ${diagram.path} (${diagram.type}).`,
+    }],
     structuredContent: {
       workspacePath,
       selectedDiagram: { path: diagram.path, type: diagram.type, source: diagram.source.slice(0, 24_000) },
+      selectedCanvasElements: selectedCanvasElements ?? null,
     },
   })
 }

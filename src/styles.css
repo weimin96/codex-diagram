@@ -162,6 +162,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-companion .pane-head-actions > span { display: none; }
 .thread-companion .pane-head-actions button { height: 22px; padding-inline: 6px; font-size: 10px; }
 .editor-toolbar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
+.editor-toolbar.thread-editor-toolbar { min-height: 36px; justify-content: flex-end; padding: 4px 8px; gap: 6px; }
 .document-identity { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .document-identity strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-identity span { font-size: 12px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -199,17 +200,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .mode-switch button.is-active { background: var(--surface-panel); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
 .save-state { color: var(--text-tertiary); font-size: 12px; text-align: right; white-space: nowrap; }
 .save-state.is-dirty { color: var(--text-primary); }
+.change-review-trigger { height: 27px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; }
+.change-review-trigger:hover { background: color-mix(in srgb, var(--accent) 11%, var(--surface-panel)); color: var(--text-primary); }
 
 .notice-banner {
   min-height: 34px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel));
   color: var(--text-secondary);
   font-size: 12px;
 }
+.notice-banner button { height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
+.notice-banner button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .conflict-banner { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 10px 5px 14px; border-bottom: 1px solid color-mix(in srgb, #b7791f 28%, transparent); background: color-mix(in srgb, #b7791f 9%, var(--surface-panel)); color: var(--text-primary); font-size: 12px; }
 .conflict-banner button { height: 26px; padding: 0 8px; border: 1px solid color-mix(in srgb, #b7791f 34%, var(--border)); border-radius: 6px; background: var(--surface-panel); color: var(--text-primary); font-size: 12px; }
 
@@ -241,22 +248,104 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .syntax-error { position: absolute; z-index: 5; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface-panel)); color: var(--danger); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.05); }
 .syntax-error strong { flex-shrink: 0; }
 .syntax-error span { color: var(--text-secondary); }
-.freeform-editor { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; background: var(--app-bg); }
-.freeform-toolbar { min-height: 38px; display: flex; align-items: center; gap: 5px; padding: 5px 7px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
-.freeform-toolbar button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; }
-.freeform-toolbar button:hover:not(:disabled), .freeform-toolbar button.is-active { background: var(--surface-hover); color: var(--text-primary); }
-.freeform-toolbar button.is-active { border-color: var(--border-strong); }
-.freeform-toolbar-separator { width: 1px; height: 20px; margin: 0 2px; background: var(--border); }
-.freeform-text-input { min-width: 120px; flex: 1; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font-size: 11px; }
-.freeform-hint { min-width: 0; flex: 1; overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.freeform-delete { margin-left: auto; }
-.freeform-surface { min-height: 0; flex: 1; overflow: hidden; padding: 18px; background: var(--app-bg); }
-.freeform-svg { width: 100%; height: 100%; display: block; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.05); touch-action: none; }
+.freeform-editor { min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--app-bg); outline: none; }
+.freeform-surface { min-height: 0; flex: 1; position: relative; overflow: hidden; background: var(--app-bg); }
+.freeform-svg { width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.freeform-svg.tool-select { cursor: default; }
+.freeform-svg.tool-hand { cursor: grab; }
 .freeform-svg.tool-node, .freeform-svg.tool-note, .freeform-svg.tool-connect { cursor: crosshair; }
+.freeform-floating-toolbar {
+  position: absolute;
+  z-index: 7;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-panel) 95%, transparent);
+  box-shadow: 0 8px 26px rgba(0,0,0,.08);
+  backdrop-filter: blur(12px);
+}
+.freeform-floating-toolbar button {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.freeform-floating-toolbar button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-floating-toolbar button.is-active { background: var(--text-primary); color: var(--surface-panel); }
+.freeform-floating-toolbar button:disabled { opacity: .35; }
+.freeform-toolbar-separator { width: 1px; height: 18px; margin: 0 3px; background: var(--border); }
+.freeform-inspector {
+  position: absolute;
+  z-index: 7;
+  top: 12px;
+  right: 12px;
+  width: min(220px, calc(100% - 24px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-panel) 96%, transparent);
+  box-shadow: 0 10px 30px rgba(0,0,0,.08);
+  backdrop-filter: blur(12px);
+}
+.freeform-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.freeform-inspector-head strong { font-size: 12px; font-weight: 600; }
+.freeform-inspector button { height: 26px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 10px; }
+.freeform-inspector button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-inspector label { display: grid; gap: 4px; color: var(--text-tertiary); font-size: 10px; }
+.freeform-inspector input { width: 100%; height: 28px; min-width: 0; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font-size: 11px; }
+.freeform-size-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.freeform-size-row label { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 4px; }
+.freeform-align-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.freeform-status {
+  position: absolute;
+  z-index: 6;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-panel) 90%, transparent);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  backdrop-filter: blur(10px);
+}
+.freeform-zoom-controls {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-panel) 94%, transparent);
+  box-shadow: 0 6px 20px rgba(0,0,0,.06);
+  backdrop-filter: blur(10px);
+}
+.freeform-zoom-controls button { height: 27px; min-width: 27px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; }
+.freeform-zoom-controls button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-zoom-controls .zoom-value { min-width: 48px; font-variant-numeric: tabular-nums; }
+.freeform-zoom-controls > span { width: 1px; height: 16px; margin: 0 2px; background: var(--border); }
 .freeform-background { fill: var(--surface-panel); }
 .freeform-grid-line { stroke: color-mix(in srgb, var(--text-tertiary) 16%, transparent); stroke-width: 1; }
 .freeform-arrow line { stroke: var(--border-strong); stroke-width: 2.2; cursor: pointer; }
 .freeform-arrow.is-selected line { stroke: var(--accent); stroke-width: 3; }
+.freeform-arrow text { fill: var(--text-secondary); font-size: 13px; font-family: var(--font-sans); paint-order: stroke; stroke: var(--surface-panel); stroke-width: 5px; stroke-linejoin: round; }
 .freeform-arrow-head { fill: var(--border-strong); }
 .freeform-box { cursor: grab; }
 .freeform-box:active { cursor: grabbing; }
@@ -265,6 +354,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-note rect { fill: color-mix(in srgb, #f7c948 26%, var(--surface-panel)); }
 .freeform-box.is-selected rect { stroke: var(--accent); stroke-width: 3; }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
+.freeform-box .freeform-resize-handle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: nwse-resize; }
+.freeform-marquee { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 7 5; pointer-events: none; }
 .canvas-invalid { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 24px; color: var(--text-secondary); text-align: center; }
 .canvas-invalid strong { color: var(--danger); font-size: 13px; }
 .canvas-invalid span, .canvas-invalid p { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.6; }
@@ -297,6 +388,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--surface-panel);
   box-shadow: -18px 0 48px rgba(0, 0, 0, 0.08);
 }
+.change-review-panel {
+  position: absolute;
+  z-index: 9;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(470px, 100%);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface-panel);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.09);
+}
+.change-review-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.change-review-head > div { min-width: 0; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 2px 9px; }
+.change-review-head .eyebrow { grid-column: 1 / -1; }
+.change-review-head strong { font-size: 14px; }
+.change-review-head span { color: var(--text-tertiary); font: 11px var(--font-mono); }
+.change-review-head button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; }
+.change-review-path { overflow: hidden; padding: 8px 14px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); font: 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.change-review-diff { min-height: 0; overflow: auto; padding: 8px 0; background: var(--app-bg); }
+.diff-line { min-height: 20px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; padding: 1px 10px 1px 6px; font: 11px/1.55 var(--font-mono); }
+.diff-line > span { color: var(--text-tertiary); text-align: center; user-select: none; }
+.diff-line code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.diff-line.is-add { background: color-mix(in srgb, #1f9d55 10%, transparent); }
+.diff-line.is-add > span { color: #1f9d55; }
+.diff-line.is-remove { background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.diff-line.is-remove > span { color: var(--danger); }
+.diff-line.is-context { color: var(--text-secondary); }
+.change-review-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-panel); }
+.change-review-actions button { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12px; }
+.change-review-actions button.primary-button { border-color: var(--accent); background: var(--accent); color: white; }
 .ai-panel-head {
   position: sticky;
   z-index: 2;

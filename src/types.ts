@@ -1,4 +1,4 @@
-export type MermaidDiagramType = 'flowchart' | 'sequence' | 'class' | 'er' | 'state' | 'mindmap'
+export type MermaidDiagramType = 'flowchart' | 'sequence' | 'class' | 'er' | 'state' | 'mindmap' | 'gantt' | 'timeline' | 'gitgraph' | 'journey' | 'quadrant'
 export type DiagramType = MermaidDiagramType | 'canvas'
 export type DiagramSurface = 'workspace' | 'thread'
 
@@ -34,6 +34,11 @@ export const mermaidDiagramTypes: Array<{ type: MermaidDiagramType; label: strin
   { type: 'class', label: '类图' },
   { type: 'er', label: 'ER 图' },
   { type: 'state', label: '状态图' },
+  { type: 'gantt', label: '甘特图' },
+  { type: 'timeline', label: '时间线' },
+  { type: 'gitgraph', label: 'Git 分支图' },
+  { type: 'journey', label: '用户旅程' },
+  { type: 'quadrant', label: '四象限图' },
 ]
 
 export const diagramTypes: Array<{ type: DiagramType; label: string }> = [

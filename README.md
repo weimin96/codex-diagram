@@ -1,6 +1,6 @@
 # Codex Diagram
 
-Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。
+Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐与选区 Codex 上下文。
 
 当前支持：
 
@@ -22,6 +22,11 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 类图 Class Diagram
 - ER 图
 - 状态图 State Diagram
+- 甘特图 Gantt
+- 时间线 Timeline
+- Git 分支图 Git Graph
+- 用户旅程 User Journey
+- 四象限图 Quadrant
 - 工作空间自动识别与 Mermaid 文件扫描
 - CodeMirror 源码编辑器：行号、语法高亮、搜索、撤销/重做与编辑快捷键
 - 实时预览、源码编辑、分屏模式
@@ -37,7 +42,9 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 分屏模式支持拖动调整 Mermaid 源码与预览宽度
 - 保存时使用文件 revision 防止覆盖 Codex / IDE 的并发修改
 - 图表支持重命名、复制与删除；重命名和删除同样带 revision 并发保护
-- 自由画布支持节点、备注、连接、拖拽、文字编辑和删除，并与 Mermaid 共用保存、并发保护和导出链路
+- 自由画布支持节点、备注、连接、拖拽、文字编辑、缩放/平移、多选/框选、复制粘贴、撤销重做、节点 resize、对齐和删除，并与 Mermaid 共用保存、并发保护和导出链路
+- Canvas 选中元素会同步到当前聊天 Model Context；右侧可直接“调整选中”，让 Codex 只修改当前选区
+- Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
 - Canvas 文档默认保存为 `docs/diagrams/*.diagram.json`，可以直接进入 Git diff，也不会被源码选择器误当成业务 JSON
 - Codex 生成面板可以直接选择“自由画布”或“架构画布”预设，生成时使用独立 Canvas JSON 协议，不会混入 Mermaid 语法
 - 从代码生成内置架构依赖、调用链、数据模型、状态流转四种快捷预设
