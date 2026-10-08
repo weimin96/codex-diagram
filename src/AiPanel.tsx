@@ -19,7 +19,7 @@ const quickModifications = [
 ]
 
 const generationTemplates: Array<{ label: string; type: DiagramType; title: string; instructions: string }> = [
-  { label: '架构依赖', type: 'flowchart', title: '项目架构', instructions: '识别模块边界、核心依赖与外部系统，只展示主要方向和关键接口。' },
+  { label: '系统架构', type: 'canvas', title: '系统架构', instructions: '按软件架构图表达，不要退化成流程图。识别系统边界、Web/客户端、API/网关、核心服务、Worker、数据库、缓存、消息/检索/文件存储和外部系统；优先使用 C4 Container 语义、命名 boundary、技术 stencil 与正交依赖连线。' },
   { label: '调用链', type: 'sequence', title: '核心调用链', instructions: '沿真实调用顺序展示入口、服务、存储和外部依赖，并保留关键失败分支。' },
   { label: '数据模型', type: 'er', title: '数据模型', instructions: '从实体、表结构或模型定义提取核心实体、主外键和主要关系，不展开无关字段。' },
   { label: '状态流转', type: 'state', title: '状态流转', instructions: '从枚举、状态字段和业务分支还原合法状态、触发条件以及失败或终止状态。' },
@@ -32,7 +32,7 @@ const generationTemplates: Array<{ label: string; type: DiagramType; title: stri
 ]
 
 export function AiPanel({ selected, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
-  const [type, setType] = useState<DiagramType>('flowchart')
+  const [type, setType] = useState<DiagramType>('canvas')
   const [title, setTitle] = useState('')
   const [scope, setScope] = useState('')
   const [generationInstructions, setGenerationInstructions] = useState('')

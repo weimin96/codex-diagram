@@ -46,14 +46,16 @@ const server = new McpServer(
   {
     instructions: [
       'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
-      'When the user asks to draw, create, inspect or modify a diagram and wants to see it beside the conversation, call diagram.thread first. It is the single tool responsible for opening the persistent right-side Diagram panel.',
-      'After diagram.thread is open, use diagram.get/create/update for data only; the existing panel follows the current thread state automatically.',
+      'diagram.thread is only the UI-open action. Call it when the user explicitly asks to open/show the right-side Diagram panel, or once before the first diagram operation in a conversation when no prior diagram.thread call exists.',
+      'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
+      'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
+      'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       'For conversational edits to an existing diagram, prefer diagram.proposeUpdate so the user can review the candidate diff in the side panel before it is written. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to the currently selected Canvas nodes, prefer diagram.proposeSubgraphUpdate and declare any new element ids so changes outside the subgraph are rejected server-side.',
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
-      'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
+      'Use type=canvas for freeform drawing boards and architecture diagrams. Read an existing diagram before updating it.',
     ].join(' '),
   },
 )
@@ -117,8 +119,8 @@ server.registerTool('diagram.workspace', {
 }))
 
 server.registerTool('diagram.thread', {
-  title: 'Diagram',
-  description: 'Open the Diagram companion panel beside the current Codex conversation. Call this when the user asks to open/show a diagram, drawing board or visual canvas in the right-side conversation workspace.',
+  title: 'Open Diagram',
+  description: 'Open the Diagram companion panel beside the current Codex conversation. This is a UI-open action, not a prerequisite for every diagram tool call. If diagram.thread was already called earlier in this conversation, do not call it again; use diagram.get/create/update/proposal directly because the existing panel follows thread state automatically.',
   inputSchema: z.object({}),
   annotations: readonly,
   _meta: ui(threadUiUri, [{ type: 'thread' }], ['model', 'app']),
@@ -652,10 +654,10 @@ server.registerTool('diagram.upsertSourceNodes', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid or freeform Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat; use type=canvas for a drawing board.',
+  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat. IMPORTANT: use type=canvas for software/system/module/service architecture, service topology, dependency architecture and C4 views. Use type=flowchart only for explicit process/workflow/control-flow/decision-flow or Mermaid flowchart requests.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
-    type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
+    type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]).describe('Diagram kind. Choose canvas for architecture/system/module/service/C4/topology diagrams. Choose flowchart only for explicit workflow/process/control-flow/decision-flow diagrams.'),
     title: z.string().min(1).max(120),
     animate: z.boolean().optional(),
   }),

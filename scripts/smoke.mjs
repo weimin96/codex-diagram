@@ -20,7 +20,9 @@ for (const marker of [
   '["model", "app"]',
   'current conversation workspace',
   'preferredDisplayMode: "fullscreen"',
-  'single tool responsible for opening the persistent right-side Diagram panel',
+  'diagram.thread is only the UI-open action',
+  'A software/system/module/service architecture request is NOT a flowchart request',
+  'use type=canvas for software/system/module/service architecture',
 ]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)
 }
