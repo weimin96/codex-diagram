@@ -6,6 +6,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
+import { beautifyArchitectureScene } from './architectureDesign.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
@@ -54,6 +55,7 @@ const server = new McpServer(
       'For edits constrained to the currently selected Canvas nodes, prefer diagram.proposeSubgraphUpdate and declare any new element ids so changes outside the subgraph are rejected server-side.',
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
+      'When an architecture Canvas is visually flat, crowded, weakly grouped, or has crossing/overlapping relationships, use diagram.beautifyArchitecture. It deterministically adds architecture partitions, semantic tones, role/technology badges and orthogonal routing; do not try to solve those presentation problems only with prose prompting.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for freeform drawing boards and architecture diagrams. Read an existing diagram before updating it.',
     ].join(' '),
@@ -690,6 +692,42 @@ server.registerTool('diagram.update', {
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.beautifyArchitecture', {
+  title: 'Beautify architecture diagram',
+  description: 'Apply the built-in architecture design system to a Canvas diagram: infer roles/technology badges, create semantic architecture partitions, apply a theme, re-layout nodes and spread orthogonal relationship routes. Use this when the user asks to beautify, reorganize or make a system architecture diagram presentation-ready.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    theme: z.enum(['enterprise', 'technical', 'presentation']).default('enterprise'),
+    repartition: z.boolean().default(true),
+    relayout: z.boolean().default(true),
+    reroute: z.boolean().default(true),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, theme, repartition, relayout, reroute }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动架构图，请先指定 Canvas 图表路径。')
+  const current = await store.get(targetPath)
+  if (current.type !== 'canvas') throw new Error('架构美化仅支持 Canvas 图；Mermaid 图请先转换或新建架构 Canvas。')
+  const result = beautifyArchitectureScene(parseCanvasScene(current.source), { theme, repartition, relayout, reroute })
+  const diagram = await store.update(current.path, serializeCanvasScene(result.scene), current.modifiedAt)
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
+  return {
+    content: [{
+      type: 'text',
+      text: `Beautified ${diagram.path}: ${result.summary.partitions} architecture partition(s), ${result.summary.enrichedNodes} enriched node(s), ${result.summary.routedEdges} routed relation(s), theme=${theme}.`,
+    }],
+    structuredContent: {
+      kind: 'diagram',
+      workspacePath: store.workspacePath,
+      diagram,
+      architectureDesign: result.summary,
+    },
   }
 })
 

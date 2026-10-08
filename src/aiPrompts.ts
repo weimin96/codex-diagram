@@ -1,4 +1,5 @@
 import type { DiagramDocument, DiagramType } from './types.js'
+import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
 
 export interface DiagramGenerationRequest {
   type: DiagramType
@@ -11,6 +12,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
   const scope = request.scope.trim()
   const instructions = request.instructions.trim()
   if (request.type === 'canvas') {
+    const architecture = isArchitectureIntent(`${request.title} ${instructions}`)
     return [
       '基于当前 Codex 工作空间生成一张 Diagram 自由画布，并写回 Diagram 插件。',
       `工作空间：${workspacePath}`,
@@ -28,6 +30,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
       '5. 只在视觉语义明确时使用 tone：主路径可 accent，成功/完成可 success，风险可 warning/danger，次要信息可 muted；不要把每个节点都染色。架构/流程图优先用 orthogonal 路由，简单关系可以 straight。',
       '6. 画布默认 1600x1000。按从左到右或从上到下的主要阅读方向布置，节点不要明显重叠。C4/系统架构优先用 kind=boundary 的命名容器；跨角色流程适合 lanes；技术组件只在事实明确时填写 stencil 和真实 sourcePaths。',
       '7. 初次新建图使用 diagram.update 写回完整 JSON；不要写 Mermaid 语法。完成后简要说明分析范围和图表路径。',
+      ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise')] : []),
     ].filter(Boolean).join('\n')
   }
   return [

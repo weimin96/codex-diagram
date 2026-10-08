@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { beautifyArchitectureScene, type ArchitectureTheme } from './architectureDesign.js'
+import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconGlyph, canvasIconLabel, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -84,6 +85,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
   }, [source])
   const [tool, setTool] = useState<CanvasTool>('select')
+  const [architectureTheme, setArchitectureTheme] = useState<ArchitectureTheme>('enterprise')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [connectFromAnchor, setConnectFromAnchor] = useState<CanvasAnchor>('auto')
@@ -862,6 +864,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     emitSource(serializeCanvasScene(next), record)
   }
 
+  function beautifyArchitecture() {
+    const current = currentScene()
+    const result = beautifyArchitectureScene(current, { theme: architectureTheme })
+    commit(result.scene)
+    setSelectedIds([])
+    setSelectedGroupTarget(null)
+    setViewport({ x: 0, y: 0, zoom: 1 })
+  }
+
   function recordGesture(before: string) {
     if (before === sourceRef.current) return
     undoStack.current.push(before)
@@ -1426,6 +1437,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <option value="event-driven">事件驱动</option>
             <option value="cache-aside">Cache Aside</option>
           </select>
+          <select
+            className="freeform-layout-select"
+            aria-label="架构主题"
+            value={architectureTheme}
+            onChange={(event) => setArchitectureTheme(event.target.value as ArchitectureTheme)}
+          >
+            <option value="enterprise">企业架构</option>
+            <option value="technical">技术文档</option>
+            <option value="presentation">汇报展示</option>
+          </select>
+          <button type="button" title="自动分区、配色、补图标并整理连线" onClick={beautifyArchitecture}>美化</button>
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
           {onAnalyzeGitImpact ? <button type="button" title="将当前 Git 改动映射到架构节点" onClick={() => void onAnalyzeGitImpact()}>改动影响</button> : null}
           <span className="freeform-toolbar-separator" />
@@ -1780,8 +1802,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const height = lane.axis === 'horizontal' ? lane.size : scene.height
             return (
               <g key={lane.id} className={`freeform-lane tone-${lane.tone ?? 'muted'}`} pointerEvents="none">
-                <rect x={x} y={y} width={width} height={height} />
-                <text x={x + 12} y={y + 20}>{truncate(lane.label, 32)}</text>
+                <rect className="freeform-lane-body" x={x} y={y} width={width} height={height} rx="14" />
+                <rect className="freeform-lane-head" x={x} y={y} width={width} height={34} rx="14" />
+                <text x={x + 14} y={y + 22}>{truncate(lane.label, 32)}</text>
               </g>
             )
           })}
@@ -1901,7 +1924,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             >
               {item.description ? <title>{item.description}</title> : null}
               <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
-              {item.stencil || item.icon ? <text className="freeform-node-icon" x="13" y="19">{item.stencil ? canvasStencilLabel(item.stencil) : canvasIconLabel(item.icon!)}</text> : null}
+              {item.icon ? (
+                <g className="freeform-node-role" transform="translate(18 18)">
+                  <circle r="10" />
+                  <text textAnchor="middle" dominantBaseline="middle">{canvasIconGlyph(item.icon)}</text>
+                </g>
+              ) : null}
+              {item.stencil ? <text className="freeform-node-icon" x={item.icon ? 34 : 13} y="19">{canvasStencilLabel(item.stencil)}</text> : null}
               {item.c4Type ? <text className="freeform-c4-badge" x={item.width - 10} y={19} textAnchor="end">{c4Label(item.c4Type)}</text> : null}
               <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">
                 {truncate(displayText, 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}

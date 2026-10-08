@@ -23,6 +23,8 @@ for (const marker of [
   'diagram.thread is only the UI-open action',
   'A software/system/module/service architecture request is NOT a flowchart request',
   'use type=canvas for software/system/module/service architecture',
+  'diagram.beautifyArchitecture',
+  'deterministically adds architecture partitions',
 ]) {
   if (!serverBundle.includes(marker)) throw new Error(`Missing conversation companion server marker: ${marker}`)
 }

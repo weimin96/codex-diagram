@@ -420,12 +420,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-arrow text { fill: var(--text-secondary); font-size: 13px; font-family: var(--font-sans); paint-order: stroke; stroke: var(--surface-panel); stroke-width: 5px; stroke-linejoin: round; }
 .freeform-arrow-head { fill: var(--border-strong); }
 .freeform-arrow-point { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
-.freeform-lane rect { fill: color-mix(in srgb, var(--text-tertiary) 3%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 25%, transparent); stroke-width: 1; stroke-dasharray: 5 7; vector-effect: non-scaling-stroke; }
-.freeform-lane text { fill: var(--text-tertiary); font: 600 12px var(--font-sans); }
-.freeform-lane.tone-accent rect { fill: color-mix(in srgb, #818cf8 5%, transparent); stroke: color-mix(in srgb, #818cf8 45%, transparent); }
-.freeform-lane.tone-success rect { fill: color-mix(in srgb, #34d399 5%, transparent); stroke: color-mix(in srgb, #34d399 45%, transparent); }
-.freeform-lane.tone-warning rect { fill: color-mix(in srgb, #fbbf24 5%, transparent); stroke: color-mix(in srgb, #fbbf24 45%, transparent); }
-.freeform-lane.tone-danger rect { fill: color-mix(in srgb, #f87171 5%, transparent); stroke: color-mix(in srgb, #f87171 45%, transparent); }
+.freeform-lane .freeform-lane-body { fill: color-mix(in srgb, var(--text-tertiary) 4%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 26%, transparent); stroke-width: 1; stroke-dasharray: 5 7; vector-effect: non-scaling-stroke; }
+.freeform-lane .freeform-lane-head { fill: color-mix(in srgb, var(--text-tertiary) 9%, transparent); stroke: none; }
+.freeform-lane text { fill: var(--text-secondary); font: 700 12px var(--font-sans); letter-spacing: .015em; }
+.freeform-lane.tone-accent .freeform-lane-body { fill: color-mix(in srgb, #818cf8 8%, transparent); stroke: color-mix(in srgb, #818cf8 42%, transparent); }
+.freeform-lane.tone-accent .freeform-lane-head { fill: color-mix(in srgb, #818cf8 15%, transparent); }
+.freeform-lane.tone-success .freeform-lane-body { fill: color-mix(in srgb, #34d399 8%, transparent); stroke: color-mix(in srgb, #34d399 42%, transparent); }
+.freeform-lane.tone-success .freeform-lane-head { fill: color-mix(in srgb, #34d399 15%, transparent); }
+.freeform-lane.tone-warning .freeform-lane-body { fill: color-mix(in srgb, #fbbf24 8%, transparent); stroke: color-mix(in srgb, #fbbf24 42%, transparent); }
+.freeform-lane.tone-warning .freeform-lane-head { fill: color-mix(in srgb, #fbbf24 16%, transparent); }
+.freeform-lane.tone-danger .freeform-lane-body { fill: color-mix(in srgb, #f87171 8%, transparent); stroke: color-mix(in srgb, #f87171 42%, transparent); }
+.freeform-lane.tone-danger .freeform-lane-head { fill: color-mix(in srgb, #f87171 15%, transparent); }
 .freeform-group-outline { fill: color-mix(in srgb, var(--accent) 4%, transparent); stroke: color-mix(in srgb, var(--accent) 65%, transparent); stroke-width: 1.5; stroke-dasharray: 10 7; pointer-events: none; vector-effect: non-scaling-stroke; }
 .freeform-group-frame rect { fill: color-mix(in srgb, var(--surface-muted) 30%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 42%, transparent); stroke-width: 1.3; stroke-dasharray: 9 6; vector-effect: non-scaling-stroke; }
 .freeform-group-frame text { fill: var(--text-tertiary); font-size: 12px; font-weight: 650; font-family: var(--font-sans); }
@@ -444,6 +449,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box rect { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.6; }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
+.freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.freeform-node-role text { fill: var(--text-secondary); font-size: 10px !important; font-weight: 800; }
+.freeform-box.tone-accent .freeform-node-role circle { fill: color-mix(in srgb, #818cf8 16%, transparent); stroke: #818cf8; }
+.freeform-box.tone-accent .freeform-node-role text { fill: #6366f1; }
+.freeform-box.tone-success .freeform-node-role circle { fill: color-mix(in srgb, #34d399 16%, transparent); stroke: #34d399; }
+.freeform-box.tone-success .freeform-node-role text { fill: #059669; }
+.freeform-box.tone-warning .freeform-node-role circle { fill: color-mix(in srgb, #fbbf24 17%, transparent); stroke: #f59e0b; }
+.freeform-box.tone-warning .freeform-node-role text { fill: #b45309; }
 .freeform-box .freeform-source-badge { fill: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .freeform-box .freeform-c4-badge { fill: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .03em; }
 .freeform-box .freeform-node-subtitle { fill: var(--text-tertiary); font-size: 10px; font-weight: 500; }

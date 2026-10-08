@@ -205,11 +205,12 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
     const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
-    const iconLabel = item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : ''
-    const icon = iconLabel ? `<text x="${item.x + 14}" y="${item.y + 20}" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(iconLabel)}</text>` : ''
+    const roleGlyph = item.icon ? canvasIconGlyph(item.icon) : ''
+    const icon = roleGlyph ? `<g><circle cx="${item.x + 18}" cy="${item.y + 18}" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.12" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.45"/><text x="${item.x + 18}" y="${item.y + 18}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="700" fill="${escapeXml(palette.stroke)}">${escapeXml(roleGlyph)}</text></g>` : ''
+    const stencil = item.stencil ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(canvasStencilLabel(item.stencil))}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${c4}${texts}${subtitle}</g>`
+    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${stencil}${c4}${texts}${subtitle}</g>`
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
@@ -224,7 +225,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const y = lane.axis === 'horizontal' ? lane.start : 0
     const width = lane.axis === 'vertical' ? lane.size : scene.width
     const height = lane.axis === 'horizontal' ? lane.size : scene.height
-    return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.fill)}" fill-opacity="0.2" stroke="${escapeXml(palette.stroke)}" stroke-width="1" stroke-dasharray="4 6"/><text x="${x + 12}" y="${y + 20}" font-size="12" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
+    return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.42" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="4 6"/><rect x="${x}" y="${y}" width="${width}" height="34" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.86"/><text x="${x + 14}" y="${y + 22}" font-size="12" font-weight="700" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${arrows}${collapsedConnections}${shapes}</svg>`
 }
@@ -521,6 +522,10 @@ export function canvasStencilLabel(stencil: CanvasStencil): string {
 
 export function canvasIconLabel(icon: CanvasIcon): string {
   return ({ user: 'USR', web: 'WEB', api: 'API', service: 'SVC', database: 'DB', cache: 'CACHE', queue: 'MQ', cloud: 'CLOUD', file: 'FILE', external: 'EXT' })[icon]
+}
+
+export function canvasIconGlyph(icon: CanvasIcon): string {
+  return ({ user: '◎', web: '▣', api: '↔', service: '◆', database: '▤', cache: '⚡', queue: '≋', cloud: '☁', file: '▥', external: '↗' })[icon]
 }
 
 export function c4Label(type: CanvasC4Type | 'software-system' | 'container'): string {
