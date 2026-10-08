@@ -7,7 +7,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene, serializeCanvasScene, type CanvasElement, type CanvasScene } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
+import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
 import { DiagramStore } from './store.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
@@ -47,6 +48,8 @@ const server = new McpServer(
       'When the user asks to draw, create, inspect or modify a diagram and wants to see it beside the conversation, call diagram.thread first. It is the single tool responsible for opening the persistent right-side Diagram panel.',
       'After diagram.thread is open, use diagram.get/create/update for data only; the existing panel follows the current thread state automatically.',
       'For conversational edits to an existing diagram, prefer diagram.proposeUpdate so the user can review the candidate diff in the side panel before it is written. Use diagram.update directly only when the user explicitly asks to apply immediately.',
+      'For edits constrained to the currently selected Canvas nodes, prefer diagram.proposeSubgraphUpdate and declare any new element ids so changes outside the subgraph are rejected server-side.',
+      'Use diagram.trace for upstream/downstream/impact exploration and diagram.upsertSourceNode after reading a real source file when only one architecture node needs to be created or refreshed.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for a freeform drawing board. Read an existing diagram before updating it.',
     ].join(' '),
@@ -58,8 +61,20 @@ const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: fa
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
-const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; updatedAt: string }>()
-const threadProposals = new Map<string, { workspacePath: string; path: string; source: string; baseSource: string; reason?: string; baseModifiedAt: string; updatedAt: string }>()
+type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
+const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; updatedAt: string }>()
+interface ThreadDiagramProposal {
+  workspacePath: string
+  path: string
+  source: string
+  baseSource: string
+  reason?: string
+  baseModifiedAt: string
+  updatedAt: string
+  scopeElementIds?: string[]
+  newElementIds?: string[]
+}
+const threadProposals = new Map<string, ThreadDiagramProposal>()
 const ui = (
   resourceUri: string,
   entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
@@ -139,6 +154,7 @@ server.registerTool('diagram.threadState', {
     kind: 'diagram-thread-state',
     activeDiagramPath: state?.path,
     focusElementIds: state?.focusElementIds,
+    trace: state?.trace,
     proposal: threadId ? proposalSummary(threadProposals.get(threadId)) : undefined,
     updatedAt: state?.updatedAt,
   }
@@ -262,6 +278,152 @@ server.registerTool('diagram.findBySource', {
   }
 })
 
+server.registerTool('diagram.trace', {
+  title: 'Trace diagram relationships',
+  description: 'Trace upstream, downstream or bidirectional Canvas relationships from one or more node ids. The matching nodes are focused in the current Diagram panel.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    elementIds: z.array(z.string().min(1)).min(1).max(40),
+    direction: z.enum(['upstream', 'downstream', 'both']).default('both'),
+    depth: z.number().int().min(1).max(8).default(2),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, path: diagramPath, elementIds, direction, depth }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动图表，请先指定 Canvas 图表路径。')
+  const diagram = await store.get(targetPath)
+  if (diagram.type !== 'canvas') throw new Error('关系追踪仅支持自由 Canvas 图。')
+  const scene = parseCanvasScene(diagram.source)
+  const trace = traceCanvasGraph(scene, elementIds, direction, depth)
+  const nodeMap = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const arrows = scene.elements.filter((item) => item.type === 'arrow' && trace.arrowIds.includes(item.id))
+  markThreadDiagram(extra._meta, diagram.path, trace.nodeIds, { seedElementIds: elementIds, direction, depth })
+  return {
+    content: [{
+      type: 'text',
+      text: trace.nodeIds.length
+        ? trace.nodeIds.map((id) => `${id}: ${nodeMap.get(id)?.text ?? id} (distance ${trace.distanceById[id] ?? 0})`).join('\n')
+        : 'No related Canvas nodes found.',
+    }],
+    structuredContent: {
+      kind: 'diagram-trace',
+      workspacePath: store.workspacePath,
+      path: diagram.path,
+      direction,
+      depth,
+      nodes: trace.nodeIds.map((id) => ({ id, text: nodeMap.get(id)?.text ?? id, distance: trace.distanceById[id] ?? 0 })),
+      arrows: arrows.map((arrow) => ({ id: arrow.id, from: arrow.from, to: arrow.to, label: arrow.label })),
+    },
+  }
+})
+
+server.registerTool('diagram.upsertSourceNode', {
+  title: 'Sync source file to diagram node',
+  description: 'Create or update one Canvas node linked to a real source file in the current workspace. Use after reading code when the user wants the architecture diagram to reflect that file without rewriting the whole Canvas.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    sourcePath: z.string().min(1).max(600),
+    elementId: z.string().min(1).optional(),
+    text: z.string().min(1).max(160).optional(),
+    subtitle: z.string().max(160).optional(),
+    description: z.string().max(2_000).optional(),
+    tags: z.array(z.string().min(1).max(80)).max(12).optional(),
+    icon: z.enum(['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']).optional(),
+    stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']).optional(),
+    c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
+    groupId: z.string().min(1).optional(),
+    laneId: z.string().min(1).optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, sourcePath, elementId, text, subtitle, description, tags, icon, stencil, c4Type, groupId, laneId }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动 Canvas，请先打开或指定目标画板。')
+  const diagram = await store.get(targetPath)
+  if (diagram.type !== 'canvas') throw new Error('源码节点同步仅支持自由 Canvas 图。')
+
+  const now = Date.now()
+  let cached = sourceIndexCache.get(store.workspacePath)
+  if (!cached || cached.expiresAt <= now) {
+    cached = { files: await store.listSourceFiles(), expiresAt: now + 15_000 }
+    sourceIndexCache.set(store.workspacePath, cached)
+  }
+  const normalized = normalizeSourcePath(sourcePath)
+  const realSourcePath = cached.files.find((file) => sourcePathMatches(normalizeSourcePath(file), normalized))
+  if (!realSourcePath) throw new Error(`工作区中不存在源码文件：${sourcePath}`)
+
+  const scene = parseCanvasScene(diagram.source)
+  if (groupId && !scene.groups?.some((group) => group.id === groupId)) throw new Error(`Canvas 中不存在容器：${groupId}`)
+  if (laneId && !scene.lanes?.some((lane) => lane.id === laneId)) throw new Error(`Canvas 中不存在泳道：${laneId}`)
+  const boxes = scene.elements.filter((item): item is CanvasNode => item.type === 'node')
+  const linked = boxes.filter((item) => item.sourcePaths?.some((candidate) => sourcePathMatches(normalizeSourcePath(candidate), normalizeSourcePath(realSourcePath))))
+  let target = elementId ? boxes.find((item) => item.id === elementId) : undefined
+  if (elementId && !target) throw new Error(`Canvas 中不存在节点：${elementId}`)
+  if (!target && linked.length > 1) throw new Error(`该源码已关联多个 Canvas 节点，请传 elementId：${linked.map((item) => item.id).join(', ')}`)
+  if (!target) target = linked[0]
+
+  const cleanTags = tags?.map((tag) => tag.trim()).filter(Boolean).slice(0, 12)
+  let nodeId: string
+  let created = false
+  if (target) {
+    nodeId = target.id
+    scene.elements = scene.elements.map((item) => {
+      if (item.id !== target!.id || item.type === 'arrow') return item
+      return {
+        ...item,
+        ...(text ? { text } : {}),
+        ...(subtitle !== undefined ? { subtitle: subtitle || undefined } : {}),
+        ...(description !== undefined ? { description: description || undefined } : {}),
+        ...(cleanTags ? { tags: cleanTags.length ? cleanTags : undefined } : {}),
+        ...(icon ? { icon: icon as CanvasIcon } : {}),
+        ...(stencil ? { stencil: stencil as CanvasStencil } : {}),
+        ...(c4Type ? { c4Type: c4Type as CanvasC4Type } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(laneId ? { laneId } : {}),
+        sourcePaths: [...new Set([...(item.sourcePaths ?? []), realSourcePath])],
+      }
+    })
+  } else {
+    created = true
+    nodeId = nextCanvasElementId('node', scene.elements)
+    const index = boxes.length
+    const columns = 4
+    const fileName = path.basename(realSourcePath).replace(/\.[^.]+$/, '')
+    const x = 120 + (index % columns) * 280
+    const y = 120 + Math.floor(index / columns) * 160
+    scene.height = Math.max(scene.height, y + 180)
+    scene.elements.push({
+      id: nodeId,
+      type: 'node',
+      x,
+      y,
+      width: 220,
+      height: 96,
+      text: text ?? fileName,
+      ...(subtitle ? { subtitle } : {}),
+      ...(description ? { description } : {}),
+      ...(cleanTags?.length ? { tags: cleanTags } : {}),
+      ...(icon ? { icon: icon as CanvasIcon } : {}),
+      ...(stencil ? { stencil: stencil as CanvasStencil } : {}),
+      ...(c4Type ? { c4Type: c4Type as CanvasC4Type } : {}),
+      ...(groupId ? { groupId } : {}),
+      ...(laneId ? { laneId } : {}),
+      sourcePaths: [realSourcePath],
+    })
+  }
+  const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
+  markThreadDiagram(extra._meta, updated.path, [nodeId])
+  return {
+    content: [{ type: 'text', text: `${created ? 'Created' : 'Updated'} Canvas node ${nodeId} for ${realSourcePath} in ${updated.path}` }],
+    structuredContent: { kind: 'diagram-source-node', workspacePath: store.workspacePath, diagram: updated, nodeId, sourcePath: realSourcePath, created },
+  }
+})
+
 server.registerTool('diagram.create', {
   title: 'Create diagram',
   description: 'Create a Mermaid or freeform Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat; use type=canvas for a drawing board.',
@@ -321,6 +483,47 @@ server.registerTool('diagram.proposeUpdate', {
   markThreadDiagram(extra._meta, current.path)
   return {
     content: [{ type: 'text', text: `Prepared a Diagram proposal for ${current.path}. The file was not modified; wait for the user to accept or reject it in the Diagram panel.` }],
+    structuredContent: { kind: 'diagram-proposal', workspacePath: store.workspacePath, proposal: proposalSummary(proposal) },
+  }
+})
+
+server.registerTool('diagram.proposeSubgraphUpdate', {
+  title: 'Propose Canvas subgraph update',
+  description: 'Prepare a reviewable Canvas proposal constrained to specific existing element ids plus explicitly declared new element ids. Existing elements outside the subgraph must remain unchanged.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    source: z.string().min(1),
+    elementIds: z.array(z.string().min(1)).min(1).max(120),
+    newElementIds: z.array(z.string().min(1)).max(120).optional(),
+    reason: z.string().max(2_000).optional(),
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, source, elementIds, newElementIds = [], reason }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (!threadId) throw new Error('当前调用没有聊天上下文，无法创建 Subgraph Proposal。')
+  const store = await resolveStore(workspacePath, threadId)
+  const current = await store.get(diagramPath)
+  if (current.type !== 'canvas') throw new Error('Subgraph Proposal 仅支持自由 Canvas 图。')
+  validateCanvasSubgraphProposal(current.source, source, elementIds, newElementIds)
+  const proposal: ThreadDiagramProposal = {
+    workspacePath: store.workspacePath,
+    path: current.path,
+    source,
+    baseSource: current.source,
+    reason,
+    baseModifiedAt: current.modifiedAt,
+    updatedAt: new Date().toISOString(),
+    scopeElementIds: [...new Set(elementIds)],
+    newElementIds: [...new Set(newElementIds)],
+  }
+  threadProposals.set(threadId, proposal)
+  markThreadDiagram(extra._meta, current.path, proposal.scopeElementIds)
+  return {
+    content: [{
+      type: 'text',
+      text: `Prepared a scoped Diagram proposal for ${current.path}. ${proposal.scopeElementIds.length} existing element(s) are in scope${proposal.newElementIds.length ? ` with ${proposal.newElementIds.length} declared new element(s)` : ''}; elements outside that subgraph were verified unchanged.`,
+    }],
     structuredContent: { kind: 'diagram-proposal', workspacePath: store.workspacePath, proposal: proposalSummary(proposal) },
   }
 })
@@ -638,10 +841,10 @@ function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface,
   }
 }
 
-function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[]): void {
+function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[], trace?: ThreadTraceState): void {
   const threadId = toolThreadId(meta)
   if (!threadId) return
-  threadSelection.set(threadId, { path: diagramPath, focusElementIds, updatedAt: new Date().toISOString() })
+  threadSelection.set(threadId, { path: diagramPath, focusElementIds, trace, updatedAt: new Date().toISOString() })
 }
 
 function clearThreadDiagram(meta: unknown, deletedPath: string): void {
@@ -652,13 +855,73 @@ function clearThreadDiagram(meta: unknown, deletedPath: string): void {
   threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
 }
 
-function proposalSummary(proposal: { path: string; reason?: string; baseModifiedAt: string; updatedAt: string } | undefined) {
+function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
   if (!proposal) return undefined
   return {
     path: proposal.path,
     reason: proposal.reason,
     baseModifiedAt: proposal.baseModifiedAt,
     updatedAt: proposal.updatedAt,
+    scopeElementIds: proposal.scopeElementIds,
+    newElementIds: proposal.newElementIds,
+  }
+}
+
+function validateCanvasSubgraphProposal(baseSource: string, candidateSource: string, elementIds: string[], newElementIds: string[]): void {
+  let base: CanvasScene
+  let candidate: CanvasScene
+  try {
+    base = parseCanvasScene(baseSource)
+    candidate = parseCanvasScene(candidateSource)
+  } catch {
+    throw new Error('Subgraph Proposal 必须提供结构有效的 Canvas JSON。')
+  }
+  const scope = new Set(elementIds)
+  const declaredNew = new Set(newElementIds)
+  const baseById = new Map(base.elements.map((item) => [item.id, item]))
+  const candidateById = new Map(candidate.elements.map((item) => [item.id, item]))
+  const missingScope = [...scope].filter((id) => !baseById.has(id))
+  if (missingScope.length) throw new Error(`Subgraph Proposal 包含不存在的基线元素：${missingScope.join(', ')}`)
+  const invalidDeclaredNew = [...declaredNew].filter((id) => baseById.has(id))
+  if (invalidDeclaredNew.length) throw new Error(`newElementIds 只能声明新增元素：${invalidDeclaredNew.join(', ')}`)
+  if (base.title !== candidate.title || base.width !== candidate.width || base.height !== candidate.height) {
+    throw new Error('Subgraph Proposal 当前不允许修改画布标题或尺寸；请改用整图 Proposal。')
+  }
+
+  const scopedNodes = new Set([...scope].filter((id) => baseById.get(id)?.type !== 'arrow'))
+  const allowedExisting = new Set(scope)
+  for (const item of base.elements) {
+    if (item.type === 'arrow' && (scopedNodes.has(item.from) || scopedNodes.has(item.to))) allowedExisting.add(item.id)
+  }
+  const changedOutsideScope: string[] = []
+  for (const item of base.elements) {
+    if (allowedExisting.has(item.id)) continue
+    const next = candidateById.get(item.id)
+    if (!next || JSON.stringify(item) !== JSON.stringify(next)) changedOutsideScope.push(item.id)
+  }
+  if (changedOutsideScope.length) {
+    throw new Error(`Subgraph Proposal 越界修改了范围外元素：${changedOutsideScope.slice(0, 12).join(', ')}${changedOutsideScope.length > 12 ? '…' : ''}`)
+  }
+
+  const additions = candidate.elements.filter((item) => !baseById.has(item.id)).map((item) => item.id)
+  const undeclared = additions.filter((id) => !declaredNew.has(id))
+  if (undeclared.length) throw new Error(`Subgraph Proposal 含未声明的新元素：${undeclared.join(', ')}`)
+  const absentDeclared = [...declaredNew].filter((id) => !candidateById.has(id))
+  if (absentDeclared.length) throw new Error(`newElementIds 中的元素没有出现在候选图：${absentDeclared.join(', ')}`)
+  const newArrowsOutsideScope = candidate.elements.flatMap((item) => {
+    if (item.type !== 'arrow' || !declaredNew.has(item.id)) return []
+    const touchesScope = scopedNodes.has(item.from) || scopedNodes.has(item.to) || declaredNew.has(item.from) || declaredNew.has(item.to)
+    return touchesScope ? [] : [item.id]
+  })
+  if (newArrowsOutsideScope.length) {
+    throw new Error(`Subgraph Proposal 的新增连线没有连接到当前子图：${newArrowsOutsideScope.join(', ')}`)
+  }
+
+  if (JSON.stringify(base.groups ?? []) !== JSON.stringify(candidate.groups ?? [])) {
+    throw new Error('Subgraph Proposal 当前不允许修改容器元数据；请改用整图 Proposal。')
+  }
+  if (JSON.stringify(base.lanes ?? []) !== JSON.stringify(candidate.lanes ?? [])) {
+    throw new Error('Subgraph Proposal 当前不允许修改泳道元数据；请改用整图 Proposal。')
   }
 }
 

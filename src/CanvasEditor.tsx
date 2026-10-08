@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode } from './canvasOperations.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
 export interface CanvasSelection {
   ids: string[]
   elements: CanvasElement[]
+  trace?: { direction: CanvasTraceDirection; depth: number; nodeIds: string[]; arrowIds: string[] }
 }
 
 interface CanvasEditorProps {
@@ -17,6 +18,7 @@ interface CanvasEditorProps {
   onSearchSources?: (query: string) => Promise<string[]>
   focusElementIds?: string[]
   focusKey?: string
+  traceRequest?: { seedElementIds: string[]; direction: CanvasTraceDirection; depth: number; key: string }
 }
 
 type Viewport = { x: number; y: number; zoom: number }
@@ -33,7 +35,7 @@ const GRID = 16
 const MIN_ZOOM = 0.45
 const MAX_ZOOM = 4
 
-export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, focusElementIds, focusKey }: CanvasEditorProps) {
+export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, focusElementIds, focusKey, traceRequest }: CanvasEditorProps) {
   const parsed = useMemo(() => {
     try {
       return { scene: parseCanvasScene(source), error: null as string | null }
@@ -56,6 +58,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [layerQuery, setLayerQuery] = useState('')
   const [selectedGroupTarget, setSelectedGroupTarget] = useState<string | null>(null)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
+  const [traceDirection, setTraceDirection] = useState<CanvasTraceDirection | null>(null)
+  const [traceDepth, setTraceDepth] = useState(2)
   const editorRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
@@ -76,17 +80,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const valid = selectedIds.filter((id) => parsed.scene!.elements.some((item) => item.id === id))
     if (valid.length !== selectedIds.length) setSelectedIds(valid)
   }, [parsed.scene, selectedIds])
-
-  useEffect(() => {
-    if (!parsed.scene || selectedIds.length === 0) {
-      onSelectionChange?.(null)
-      return
-    }
-    onSelectionChange?.({
-      ids: selectedIds,
-      elements: parsed.scene.elements.filter((item) => selectedIds.includes(item.id)),
-    })
-  }, [onSelectionChange, parsed.scene, selectedIds])
 
   useEffect(() => {
     const element = editorRef.current
@@ -141,6 +134,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         setContextMenu(null)
         setSelectedIds([])
         setSelectedGroupTarget(null)
+        setTraceDirection(null)
         setConnectFrom(null)
         setConnectFromAnchor('auto')
         setTool('select')
@@ -222,6 +216,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     })
   }, [focusElementIds, focusKey, parsed.scene])
 
+  useEffect(() => {
+    if (!focusKey) return
+    if (!traceRequest || traceRequest.key !== focusKey) {
+      setTraceDirection(null)
+      return
+    }
+    const seeds = traceRequest.seedElementIds.filter((id) => parsed.scene?.elements.some((item) => item.type !== 'arrow' && item.id === id))
+    if (!seeds.length) return
+    setSelectedIds(seeds)
+    setSelectedGroupTarget(null)
+    setTraceDirection(traceRequest.direction)
+    setTraceDepth(traceRequest.depth)
+    // traceRequest is an event keyed by the thread state's updatedAt. The parent
+    // may recreate the object while rendering; only react to a new event key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, parsed.scene, traceRequest?.key])
+
+  const traceResult = useMemo(() => {
+    if (!parsed.scene || !traceDirection) return null
+    const seeds = selectedIds.filter((id) => parsed.scene!.elements.some((item) => item.type !== 'arrow' && item.id === id))
+    return seeds.length ? traceCanvasGraph(parsed.scene, seeds, traceDirection, traceDepth) : null
+  }, [parsed.scene, selectedIds, traceDepth, traceDirection])
+
+  useEffect(() => {
+    if (!parsed.scene || selectedIds.length === 0) {
+      onSelectionChange?.(null)
+      return
+    }
+    onSelectionChange?.({
+      ids: selectedIds,
+      elements: parsed.scene.elements.filter((item) => selectedIds.includes(item.id)),
+      ...(traceResult && traceDirection ? { trace: { direction: traceDirection, depth: traceDepth, nodeIds: traceResult.nodeIds, arrowIds: traceResult.arrowIds } } : {}),
+    })
+  }, [onSelectionChange, parsed.scene, selectedIds, traceDepth, traceDirection, traceResult])
+
   if (!parsed.scene) {
     return <div className="canvas-invalid"><strong>自由画布无法渲染</strong><span>{parsed.error}</span><p>可以切到“源码”修复 JSON。</p></div>
   }
@@ -250,6 +279,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const layerBoxes = layerNeedle
     ? boxes.filter((item) => [item.text, item.subtitle, item.description, ...(item.tags ?? []), ...(item.sourcePaths ?? [])].some((value) => value?.toLocaleLowerCase().includes(layerNeedle)))
     : boxes
+  const tracedNodeIds = new Set(traceResult?.nodeIds ?? [])
+  const tracedArrowIds = new Set(traceResult?.arrowIds ?? [])
 
   function currentScene(): CanvasScene {
     if (!sceneRef.current) throw new Error('Canvas scene unavailable')
@@ -892,6 +923,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
               </div>
             </div>
+            {selectedBoxes.length ? (
+              <div className="freeform-trace-tools" aria-label="关系追踪">
+                <div>
+                  <button type="button" className={traceDirection === 'upstream' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'upstream' ? null : 'upstream')}>上游</button>
+                  <button type="button" className={traceDirection === 'both' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'both' ? null : 'both')}>邻域</button>
+                  <button type="button" className={traceDirection === 'downstream' ? 'is-active' : ''} onClick={() => setTraceDirection((value) => value === 'downstream' ? null : 'downstream')}>下游</button>
+                  <select aria-label="关系追踪深度" value={traceDepth} onChange={(event) => setTraceDepth(Number(event.target.value))}>
+                    <option value={1}>1 跳</option>
+                    <option value={2}>2 跳</option>
+                    <option value={3}>3 跳</option>
+                  </select>
+                </div>
+                {traceResult ? <span>{traceResult.nodeIds.length} 节点 · {traceResult.arrowIds.length} 关系</span> : null}
+              </div>
+            ) : null}
             {selectedSingle?.type === 'arrow' ? (
               <>
                 <label>
@@ -1173,7 +1219,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {groupBounds.filter((group) => !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => (
             <g
               key={group.id}
-              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}`}
+              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}`}
               pointerEvents={group.collapsed ? 'all' : 'none'}
               onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
               onDoubleClick={group.collapsed ? (event) => { event.stopPropagation(); commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false })); setSelectedGroupTarget(group.id) } : undefined}
@@ -1194,7 +1240,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const path = canvasArrowPath(start, end, arrow)
             const labelPoint = pathLabelPoint(start, end, arrow.points)
             return (
-              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path d={path} markerEnd="url(#canvas-arrow)" />
                 {arrow.label ? <text x={labelPoint.x} y={labelPoint.y - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
                 {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
@@ -1234,7 +1280,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {renderBoxes.map((item) => (
             <g
               key={item.id}
-              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}`}
+              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}`}
               transform={`translate(${item.x} ${item.y})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}

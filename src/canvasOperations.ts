@@ -201,6 +201,64 @@ export function setCanvasGroupParent(scene: CanvasScene, groupId: string, parent
 
 export type CanvasLayoutMode = 'horizontal' | 'vertical' | 'grid'
 export type CanvasArchitectureTemplate = 'web-service' | 'event-driven' | 'cache-aside'
+export type CanvasTraceDirection = 'upstream' | 'downstream' | 'both'
+
+export interface CanvasTraceResult {
+  nodeIds: string[]
+  arrowIds: string[]
+  distanceById: Record<string, number>
+}
+
+export function traceCanvasGraph(scene: CanvasScene, seedIds: string[], direction: CanvasTraceDirection, depth = 1): CanvasTraceResult {
+  const nodes = new Set(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => item.id))
+  const seeds = [...new Set(seedIds.filter((id) => nodes.has(id)))]
+  const maxDepth = Math.max(1, Math.min(8, Math.floor(depth)))
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const outgoing = new Map<string, Array<{ nodeId: string; arrowId: string }>>()
+  const incoming = new Map<string, Array<{ nodeId: string; arrowId: string }>>()
+  arrows.forEach((arrow) => {
+    const out = outgoing.get(arrow.from) ?? []
+    out.push({ nodeId: arrow.to, arrowId: arrow.id })
+    outgoing.set(arrow.from, out)
+    const inc = incoming.get(arrow.to) ?? []
+    inc.push({ nodeId: arrow.from, arrowId: arrow.id })
+    incoming.set(arrow.to, inc)
+  })
+  const distance = new Map<string, number>(seeds.map((id) => [id, 0]))
+  const queue = [...seeds]
+  const arrowIds = new Set<string>()
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index]
+    const currentDepth = distance.get(current) ?? 0
+    if (currentDepth >= maxDepth) continue
+    const candidates = [
+      ...(direction === 'downstream' || direction === 'both' ? outgoing.get(current) ?? [] : []),
+      ...(direction === 'upstream' || direction === 'both' ? incoming.get(current) ?? [] : []),
+    ]
+    for (const candidate of candidates) {
+      if (!nodes.has(candidate.nodeId)) continue
+      arrowIds.add(candidate.arrowId)
+      const nextDepth = currentDepth + 1
+      if ((distance.get(candidate.nodeId) ?? Number.POSITIVE_INFINITY) <= nextDepth) continue
+      distance.set(candidate.nodeId, nextDepth)
+      queue.push(candidate.nodeId)
+    }
+  }
+
+  const nodeIds = [...distance.keys()]
+  // Include internal relationships between visible traced nodes, even when a shorter
+  // traversal path reached those nodes through another edge.
+  const tracedNodes = new Set(nodeIds)
+  arrows.forEach((arrow) => {
+    if (tracedNodes.has(arrow.from) && tracedNodes.has(arrow.to)) arrowIds.add(arrow.id)
+  })
+  return {
+    nodeIds,
+    arrowIds: [...arrowIds],
+    distanceById: Object.fromEntries(distance),
+  }
+}
 
 export function insertCanvasArchitectureTemplate(scene: CanvasScene, template: CanvasArchitectureTemplate): { scene: CanvasScene; selectedIds: string[] } {
   const used: CanvasElement[] = [...scene.elements]

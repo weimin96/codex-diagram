@@ -79,3 +79,20 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
     '4. 不要为了显得完整增加与当前问题无关的节点或说明。diagram.proposeUpdate 不会写盘，等待用户在 Diagram 面板接受或拒绝。',
   ].join('\n')
 }
+
+export function buildSubgraphModificationPrompt(workspacePath: string, diagram: DiagramDocument, elementIds: string[], instruction: string): string {
+  return [
+    '只修改 Diagram 当前 Canvas 的指定子图，并提交可审查的 Subgraph Proposal。',
+    `工作空间：${workspacePath}`,
+    `图表路径：${diagram.path}`,
+    `允许修改的现有元素：${JSON.stringify([...new Set(elementIds)])}`,
+    `修改要求：${instruction.trim()}`,
+    '',
+    '执行要求：',
+    '1. 先调用 diagram.get 读取最新完整 Canvas JSON；需要代码事实时再读取相关源码。',
+    '2. 只修改上面列出的现有 element ids，以及为了保持这些元素关系正确而必须修改的直接连接；不要重排或改写范围外节点。',
+    '3. 如果需要新增节点/备注/连线，使用新的稳定 id，并把所有新增 id 明确放进 diagram.proposeSubgraphUpdate 的 newElementIds。',
+    '4. 生成完整候选 Canvas JSON，然后调用 diagram.proposeSubgraphUpdate，elementIds 使用上面的稳定 id。服务端会拒绝任何越界修改。',
+    '5. 不要直接调用 diagram.update。等待用户在右侧 Diagram 审查并接受/拒绝。',
+  ].join('\n')
+}

@@ -56,7 +56,10 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - Canvas 连线支持四向锚点和手工折点：选中节点会显示边缘连接点，选中连线可以添加/拖动/双击删除折点；SVG/PNG 导出使用同一套路径数据
 - Canvas 节点可绑定一个或多个真实工作区源码文件；Inspector 支持真实源码搜索、绑定、移除和原生打开，绑定信息会同步给 Codex Model Context
 - MCP `diagram.findBySource` 可按源码文件反查关联的 Canvas 节点；唯一命中时会同步当前聊天 active diagram + element ids，右侧会自动切图、选中节点并聚焦视口
+- Canvas 节点可直接追踪上游 / 下游 / 双向邻域，支持 1～3 跳影响范围高亮；非相关区域自动降噪，距离层级逐级弱化。手工追踪状态会同步到当前聊天 Model Context，Codex 也可调用 `diagram.trace` 直接触发同样的右侧影响视图
+- MCP `diagram.upsertSourceNode` 可在 Codex 阅读真实源码后，只创建/刷新对应架构节点并绑定 sourcePath；不需要为了同步一个类或模块重写整张 Canvas，完成后右侧会自动定位该节点
 - 对已有图的对话修改默认走 `diagram.proposeUpdate`：候选源码先进入右侧 Proposal Diff，不写盘；Canvas Proposal 可按稳定 element id 勾选部分节点/连线后只应用选中修改，也可全部接受或拒绝；写入仍使用原 revision 防止覆盖并发修改
+- “调整选中”现在走 `diagram.proposeSubgraphUpdate`：模型必须声明允许修改的现有 element ids 和新增 element ids，服务端会拒绝任何范围外已有元素、画布尺寸、容器或泳道元数据的越界修改，再进入右侧 Subgraph Proposal 审查
 - Canvas 选中元素会同步到当前聊天 Model Context；右侧可直接“调整选中”，让 Codex 只修改当前选区
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
 - Canvas 文档默认保存为 `docs/diagrams/*.diagram.json`，可以直接进入 Git diff，也不会被源码选择器误当成业务 JSON
@@ -111,9 +114,12 @@ pnpm plugin:install:desktop
 | `diagram.revision` | UI 内部检查当前图是否发生磁盘变更 |
 | `diagram.sources` | UI 内部搜索当前工作空间真实源码路径 |
 | `diagram.findBySource` | 按源码文件反查绑定的 Canvas 节点 |
+| `diagram.trace` | 从 Canvas 节点追踪上游 / 下游 / 双向关系，并联动右侧影响视图 |
+| `diagram.upsertSourceNode` | 将真实源码文件增量创建/同步为当前 Canvas 节点 |
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 | `diagram.proposeUpdate` | 提交不落盘的候选图表更新，供右侧 Diff 审查 |
+| `diagram.proposeSubgraphUpdate` | 提交受 element id 边界约束的 Canvas 子图候选修改 |
 | `diagram.proposal` | UI 内部读取当前聊天待审查 Proposal |
 | `diagram.applyProposal` | UI 内部接受 Proposal；Canvas 可指定 element ids 部分应用，并按原 revision 安全写入 |
 | `diagram.dismissProposal` | UI 内部拒绝 Proposal，不修改文件 |

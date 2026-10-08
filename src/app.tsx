@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/ext-apps'
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
-import { buildGenerationPrompt, buildModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
+import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
 import { CanvasEditor, type CanvasSelection } from './CanvasEditor.js'
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
@@ -61,6 +61,7 @@ interface DiagramThreadStateResult {
   kind: 'diagram-thread-state'
   activeDiagramPath?: string
   focusElementIds?: string[]
+  trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
   proposal?: DiagramProposalSummary
   updatedAt?: string
 }
@@ -70,6 +71,8 @@ interface DiagramProposalSummary {
   reason?: string
   baseModifiedAt: string
   updatedAt: string
+  scopeElementIds?: string[]
+  newElementIds?: string[]
 }
 
 interface DiagramProposalSourceResult {
@@ -225,7 +228,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [followConversation, setFollowConversation] = useState(true)
   const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
-  const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string } | null>(null)
+  const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string; trace?: DiagramThreadStateResult['trace'] } | null>(null)
   const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [proposalReviewOpen, setProposalReviewOpen] = useState(false)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
@@ -346,8 +349,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             return
           }
           if (nextPath === selected?.path) {
-            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt } : null)
-            if (state.focusElementIds?.length) setNotice(`已定位 ${state.focusElementIds.length} 个源码关联节点`)
+            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt, trace: state.trace } : null)
+            if (state.focusElementIds?.length) {
+              setNotice(state.trace
+                ? `已追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳 · ${state.focusElementIds.length} 个节点`
+                : `已定位 ${state.focusElementIds.length} 个源码关联节点`)
+            }
             return
           }
           let diagrams = snapshot.diagrams
@@ -359,8 +366,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           }
           if (diagrams.some((diagram) => diagram.path === nextPath)) {
             await selectDiagram(nextPath, true)
-            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt } : null)
-            if (!disposed) setNotice(state.focusElementIds?.length ? `已切换并定位 ${state.focusElementIds.length} 个源码关联节点` : '已跟随当前对话中的图表')
+            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt, trace: state.trace } : null)
+            if (!disposed) setNotice(state.focusElementIds?.length
+              ? state.trace
+                ? `已切换并追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳`
+                : `已切换并定位 ${state.focusElementIds.length} 个源码关联节点`
+              : '已跟随当前对话中的图表')
           }
         })
         .catch(() => {
@@ -856,11 +867,34 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
       return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, stencil: element.stencil, c4Type: element.c4Type, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
     })
-    await sendModification([
-      '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
-      '不要重排未选中的无关区域。',
-      `当前选区：${JSON.stringify(compact)}`,
-    ].join('\n'))
+    if (!openai.message) {
+      setError('当前 Codex Host 没有提供对话消息能力。')
+      return
+    }
+    if (dirty) {
+      setError('先保存当前修改，再让 Codex 继续编辑这张图。')
+      return
+    }
+    setAiSending(true)
+    setError(null)
+    try {
+      await sendCodexMessage(buildSubgraphModificationPrompt(
+        workspacePath,
+        selected,
+        canvasSelection.ids,
+        [
+          '结合当前对话中用户最新的要求调整当前选区。',
+          '当前选区结构：',
+          JSON.stringify(compact),
+        ].join('\n'),
+      ))
+      setAiOpen(false)
+      setNotice('已发送子图修改请求，候选完成后会在右侧进入 Proposal 审查')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setAiSending(false)
+    }
   }
 
   async function exportSvg() {
@@ -1125,7 +1159,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         {aiProposal ? (
           <div className="proposal-banner" role="status">
             <div>
-              <strong>Codex 候选修改</strong>
+              <strong>{aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
               <span>{aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
             </div>
             <div className="proposal-banner-actions">
@@ -1280,6 +1314,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                         onSearchSources={searchSourceFiles}
                         focusElementIds={canvasFocus?.ids}
                         focusKey={canvasFocus?.key}
+                        traceRequest={canvasFocus?.trace ? { ...canvasFocus.trace, key: canvasFocus.key } : undefined}
                       />
                     : <MermaidPreview source={source} />}
                 </section>
@@ -1322,6 +1357,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             before={aiProposal.before}
             after={aiProposal.after}
             reason={aiProposal.summary.reason}
+            scopeElementIds={aiProposal.summary.scopeElementIds}
+            newElementIds={aiProposal.summary.newElementIds}
             applying={saving}
             onClose={() => setProposalReviewOpen(false)}
             onAccept={(elementIds) => void acceptAiProposal(elementIds)}
@@ -1394,10 +1431,12 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
   )
 }
 
-function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccept, onReject }: {
+function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, applying, onClose, onAccept, onReject }: {
   before: DiagramDocument
   after: DiagramDocument
   reason?: string
+  scopeElementIds?: string[]
+  newElementIds?: string[]
   applying: boolean
   onClose: () => void
   onAccept: (elementIds?: string[]) => void
@@ -1422,6 +1461,12 @@ function ProposalReviewPanel({ before, after, reason, applying, onClose, onAccep
         <button type="button" onClick={onClose}>关闭</button>
       </div>
       <div className="change-review-path">{after.path}</div>
+      {scopeElementIds?.length ? (
+        <div className="proposal-scope-summary">
+          <strong>SUBGRAPH</strong>
+          <span>{scopeElementIds.length} 个现有元素{newElementIds?.length ? ` · ${newElementIds.length} 个新增元素` : ''}</span>
+        </div>
+      ) : null}
       {reason ? <div className="proposal-review-reason">{reason}</div> : null}
       {canvasChanges?.length ? (
         <div className="proposal-element-changes" aria-label="候选元素修改">
@@ -1881,13 +1926,14 @@ function updateModelContext(workspacePath: string, diagram: DiagramDocument, can
     content: [{
       type: 'text',
       text: selectedCanvasElements?.length
-        ? `Selected diagram ${diagram.path} (${diagram.type}); selected canvas elements: ${selectedCanvasElements.map((item) => item.id).join(', ')}.`
+        ? `Selected diagram ${diagram.path} (${diagram.type}); selected canvas elements: ${selectedCanvasElements.map((item) => item.id).join(', ')}.${canvasSelection?.trace ? ` Active trace: ${canvasSelection.trace.direction} ${canvasSelection.trace.depth} hop(s), ${canvasSelection.trace.nodeIds.length} node(s), ${canvasSelection.trace.arrowIds.length} relation(s).` : ''}`
         : `Selected diagram ${diagram.path} (${diagram.type}).`,
     }],
     structuredContent: {
       workspacePath,
       selectedDiagram: { path: diagram.path, type: diagram.type, source: diagram.source.slice(0, 24_000) },
       selectedCanvasElements: selectedCanvasElements ?? null,
+      canvasTrace: canvasSelection?.trace ?? null,
     },
   })
 }
