@@ -152,6 +152,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [viewport])
 
   useEffect(() => {
+    const closeTransientMenus = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (!target.closest('.freeform-toolbar-menu-wrap')) setToolbarMenu(null)
+      if (!target.closest('.freeform-inspector-more')) setInspectorMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', closeTransientMenus)
+    return () => window.removeEventListener('pointerdown', closeTransientMenus)
+  }, [])
+
+  useEffect(() => {
     if (!parsed.scene) return
     const valid = selectedIds.filter((id) => parsed.scene!.elements.some((item) => item.id === id))
     if (valid.length !== selectedIds.length) setSelectedIds(valid)
@@ -958,7 +969,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const groupBounds = canvasGroupFrames(scene)
   const projectedGroupBounds = canvasGroupFrames(renderScene)
   const displayGroupBounds = projectedGroupBounds.map((group) => playback?.groupFrameOverrides?.[group.id] ?? group)
-  const selectedGroupId = selectedGroupTarget ?? (selectedGroupIds.length === 1 ? selectedGroupIds[0] : undefined)
+  // Only an explicitly selected boundary owns the boundary inspector. Nodes that
+  // happen to share a group remain a node/multi-selection instead of silently
+  // switching the inspector into group-editing mode.
+  const selectedGroupId = selectedGroupTarget ?? undefined
   const selectedGroup = selectedGroupId
     ? scene.groups?.find((group) => group.id === selectedGroupId) ?? { id: selectedGroupId, label: selectedGroupId, tone: 'muted' as CanvasTone }
     : undefined
@@ -1649,7 +1663,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density}`} tabIndex={0} aria-label="自由画布编辑器">
+    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density}${architectureScope ? ' has-architecture-scope' : ''}`} tabIndex={0} aria-label="自由画布编辑器">
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
@@ -1661,60 +1675,71 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <button type="button" className={toolbarMenu === 'architecture' ? 'is-active' : ''} aria-expanded={toolbarMenu === 'architecture'} onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'architecture' ? null : 'architecture') }}>架构⌄</button>
             {toolbarMenu === 'architecture' ? (
               <div className="freeform-toolbar-menu is-architecture" role="menu" aria-label="架构设置">
-                <section>
-                  <span>视图</span>
-                  <div className="freeform-menu-grid two">
-                    <button type="button" className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
-                    <button type="button" className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
-                  </div>
-                </section>
-                <section>
-                  <span>主题</span>
-                  <div className="freeform-menu-grid three">
-                    <button type="button" className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
-                    <button type="button" className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
-                    <button type="button" className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
-                  </div>
-                </section>
-                <section>
-                  <span>密度</span>
-                  <div className="freeform-menu-grid four">
-                    {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
-                      <button key={value} type="button" className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
-                    ))}
-                  </div>
-                </section>
+                {scene.architecture ? <>
+                  <section>
+                    <span>视图</span>
+                    <div className="freeform-menu-grid two">
+                      <button type="button" className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
+                      <button type="button" className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
+                    </div>
+                  </section>
+                  <section>
+                    <span>主题</span>
+                    <div className="freeform-menu-grid three">
+                      <button type="button" className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
+                      <button type="button" className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
+                      <button type="button" className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
+                    </div>
+                  </section>
+                  <section>
+                    <span>密度</span>
+                    <div className="freeform-menu-grid four">
+                      {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
+                        <button key={value} type="button" className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
+                      ))}
+                    </div>
+                  </section>
+                </> : (
+                  <section className="freeform-architecture-entry">
+                    <span>架构模式</span>
+                    <p>识别节点角色与系统边界，并统一分区、层级、配色和连线。</p>
+                    <button type="button" className="is-primary" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>转换并自动整理</button>
+                  </section>
+                )}
                 <section>
                   <span>整理</span>
                   <div className="freeform-menu-grid two">
-                    <button type="button" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>自动整理架构</button>
+                    <button type="button" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>{scene.architecture ? '重新整理架构' : '架构化整理'}</button>
                     <button type="button" onClick={() => { tidyArchitectureRoutes(); setToolbarMenu(null) }}>仅整理连线</button>
                   </div>
                 </section>
-                <section>
-                  <span>布局</span>
-                  <div className="freeform-menu-grid three">
-                    <button type="button" onClick={() => { applyLayout('horizontal'); setToolbarMenu(null) }}>左 → 右</button>
-                    <button type="button" onClick={() => { applyLayout('vertical'); setToolbarMenu(null) }}>上 → 下</button>
-                    <button type="button" onClick={() => { applyLayout('grid'); setToolbarMenu(null) }}>网格</button>
-                  </div>
-                </section>
-                <section>
-                  <span>泳道</span>
-                  <div className="freeform-menu-grid three">
-                    <button type="button" onClick={() => { applyLanePreset('horizontal'); setToolbarMenu(null) }}>水平</button>
-                    <button type="button" onClick={() => { applyLanePreset('vertical'); setToolbarMenu(null) }}>垂直</button>
-                    <button type="button" disabled={!scene.lanes?.length} onClick={() => { removeLanes(); setToolbarMenu(null) }}>移除</button>
-                  </div>
-                </section>
-                <section>
-                  <span>插入模板</span>
-                  <div className="freeform-menu-stack">
-                    <button type="button" onClick={() => { insertArchitectureTemplate('web-service'); setToolbarMenu(null) }}>Web / API / Service</button>
-                    <button type="button" onClick={() => { insertArchitectureTemplate('event-driven'); setToolbarMenu(null) }}>事件驱动</button>
-                    <button type="button" onClick={() => { insertArchitectureTemplate('cache-aside'); setToolbarMenu(null) }}>Cache Aside</button>
-                  </div>
-                </section>
+                <details className="freeform-menu-more">
+                  <summary>更多布局与模板</summary>
+                  <section>
+                    <span>布局</span>
+                    <div className="freeform-menu-grid three">
+                      <button type="button" onClick={() => { applyLayout('horizontal'); setToolbarMenu(null) }}>左 → 右</button>
+                      <button type="button" onClick={() => { applyLayout('vertical'); setToolbarMenu(null) }}>上 → 下</button>
+                      <button type="button" onClick={() => { applyLayout('grid'); setToolbarMenu(null) }}>网格</button>
+                    </div>
+                  </section>
+                  <section>
+                    <span>泳道</span>
+                    <div className="freeform-menu-grid three">
+                      <button type="button" onClick={() => { applyLanePreset('horizontal'); setToolbarMenu(null) }}>水平</button>
+                      <button type="button" onClick={() => { applyLanePreset('vertical'); setToolbarMenu(null) }}>垂直</button>
+                      <button type="button" disabled={!scene.lanes?.length} onClick={() => { removeLanes(); setToolbarMenu(null) }}>移除</button>
+                    </div>
+                  </section>
+                  <section>
+                    <span>插入模板</span>
+                    <div className="freeform-menu-stack">
+                      <button type="button" onClick={() => { insertArchitectureTemplate('web-service'); setToolbarMenu(null) }}>Web / API / Service</button>
+                      <button type="button" onClick={() => { insertArchitectureTemplate('event-driven'); setToolbarMenu(null) }}>事件驱动</button>
+                      <button type="button" onClick={() => { insertArchitectureTemplate('cache-aside'); setToolbarMenu(null) }}>Cache Aside</button>
+                    </div>
+                  </section>
+                </details>
               </div>
             ) : null}
           </div>
@@ -1832,7 +1857,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         {selected.length > 0 ? (
           <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
-              <strong>{selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
+              <strong>{selectedGroup ? selectedGroup.label || '边界' : selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
               <div className="freeform-inspector-actions">
                 {scene.architecture && selectedBox ? <button type="button" title="只查看当前节点及邻域" onClick={() => enterArchitectureScope({ kind: 'node', id: selectedBox.id, depth: 1 })}>聚焦</button> : null}
                 {scene.architecture && selectedGroupId ? <button type="button" title="进入当前边界查看内部结构" onClick={() => enterArchitectureScope({ kind: 'group', id: selectedGroupId })}>下钻</button> : null}
@@ -2054,7 +2079,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 </div>
               </div>
             ) : null}
-            {selected.length > 1 ? (
+            {selected.length > 1 && !selectedGroup ? (
               <>
                 <div className="freeform-multi-actions">
                   <select aria-label="对齐选中元素" defaultValue="" onChange={(event) => { const value = event.target.value; if (value === 'x') alignSelection('x'); if (value === 'y') alignSelection('y'); event.currentTarget.value = '' }}>

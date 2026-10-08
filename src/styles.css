@@ -331,6 +331,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-toolbar-menu button { width: 100%; height: 28px; border: 1px solid transparent; background: transparent; text-align: left; }
 .freeform-toolbar-menu button:hover:not(:disabled) { border-color: var(--border); background: var(--surface-hover); }
 .freeform-toolbar-menu button.is-selected { border-color: color-mix(in srgb, var(--accent) 46%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel)); color: var(--text-primary); }
+.freeform-toolbar-menu button.is-primary { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface-panel)); color: var(--text-primary); font-weight: 650; text-align: center; }
+.freeform-architecture-entry p { margin: 0 0 2px; }
+.freeform-menu-more { margin: 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.freeform-menu-more > summary { min-height: 30px; display: flex; align-items: center; padding: 0 8px; color: var(--text-secondary); font-size: 10px; font-weight: 600; cursor: pointer; list-style: none; }
+.freeform-menu-more > summary::-webkit-details-marker { display: none; }
+.freeform-menu-more > summary::after { content: '›'; margin-left: auto; color: var(--text-tertiary); transform: rotate(90deg); transition: transform .15s ease; }
+.freeform-menu-more[open] > summary::after { transform: rotate(270deg); }
+.freeform-menu-more > summary:hover { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-menu-more section { margin: 0; padding-left: 7px; padding-right: 7px; }
 .freeform-menu-grid { display: grid; gap: 4px; }
 .freeform-menu-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .freeform-menu-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -355,9 +364,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-inspector {
   position: absolute;
   z-index: 7;
-  top: 12px;
+  top: 52px;
   right: 12px;
   width: min(220px, calc(100% - 24px));
+  max-height: calc(100% - 64px);
+  overflow: auto;
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -367,6 +378,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   box-shadow: 0 10px 30px rgba(0,0,0,.08);
   backdrop-filter: blur(12px);
 }
+.freeform-editor.has-architecture-scope .freeform-inspector { top: 90px; max-height: calc(100% - 102px); }
 .freeform-inspector.is-expanded { width: min(310px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; }
 .freeform-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .freeform-inspector-actions { display: flex; align-items: center; gap: 4px; }
@@ -408,6 +420,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-source-options > span { display: block; padding: 6px 8px; color: var(--text-tertiary); font-size: 10px; }
 .freeform-source-options button { width: 100%; display: block; overflow: hidden; border: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .freeform-layer-panel { position: absolute; z-index: 8; top: 52px; left: 12px; width: min(250px, calc(100% - 24px)); max-height: calc(100% - 112px); display: flex; flex-direction: column; gap: 8px; padding: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-panel) 97%, transparent); box-shadow: 0 14px 36px rgba(0,0,0,.12); backdrop-filter: blur(12px); }
+.freeform-editor.has-architecture-scope .freeform-layer-panel { top: 90px; max-height: calc(100% - 150px); }
 .freeform-layer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .freeform-layer-head strong { font-size: 12px; }
 .freeform-layer-head button { height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 10px; }
@@ -421,9 +434,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-layer-panel section > button small { color: var(--text-tertiary); font-size: 9px; white-space: nowrap; }
 .freeform-layer-panel section > em { padding: 6px; color: var(--text-tertiary); font-size: 9px; font-style: normal; }
 .freeform-group-inspector, .freeform-lane-inspector { display: grid; gap: 7px; padding-top: 7px; border-top: 1px solid var(--border); }
-.freeform-section-caption { color: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .freeform-group-inspector { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--border); }
 .freeform-section-caption { color: var(--text-tertiary); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+@media (max-width: 520px) {
+  .freeform-floating-toolbar { right: 12px; max-width: none; }
+  .freeform-toolbar-menu {
+    position: fixed;
+    top: 52px;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-height: calc(100vh - 64px);
+  }
+  .freeform-inspector { left: 12px; right: 12px; width: auto; max-height: calc(100% - 104px); overflow: auto; }
+  .freeform-editor.has-architecture-scope .freeform-inspector { max-height: calc(100% - 142px); }
+}
 .freeform-status {
   position: absolute;
   z-index: 6;
