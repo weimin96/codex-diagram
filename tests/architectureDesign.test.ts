@@ -201,7 +201,7 @@ test('persists presentation architecture appearance and reserves header space', 
   const result = beautifyArchitectureScene(sampleScene(), { theme: 'presentation' }).scene
   const nodes = result.elements.filter((item) => item.type !== 'arrow')
 
-  assert.deepEqual(result.architecture, { theme: 'presentation', presentation: true })
+  assert.deepEqual(result.architecture, { theme: 'presentation', presentation: true, view: 'detail', density: 'auto' })
   assert.ok(result.width >= 1440)
   assert.ok(result.height >= 900)
   assert.ok(nodes.every((item) => item.locked || item.y >= 132))
@@ -212,7 +212,34 @@ test('switching away from presentation removes presentation chrome without chang
   const technical = beautifyArchitectureScene(presentation, { theme: 'technical', relayout: false }).scene
 
   assert.equal(technical.version, 1)
-  assert.deepEqual(technical.architecture, { theme: 'technical' })
+  assert.deepEqual(technical.architecture, { theme: 'technical', view: 'detail', density: 'auto' })
+})
+
+test('auto density compacts large architecture layouts without changing canvas protocol', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Large architecture',
+    width: 1600,
+    height: 1000,
+    elements: Array.from({ length: 50 }, (_, index) => ({
+      id: `service-${index}`,
+      type: 'node' as const,
+      x: 40 + (index % 5) * 240,
+      y: 80 + Math.floor(index / 5) * 120,
+      width: 220,
+      height: 96,
+      text: `Service ${index}`,
+      icon: 'service' as const,
+    })),
+  }
+
+  const result = beautifyArchitectureScene(scene, { density: 'auto' })
+  const nodes = result.scene.elements.filter((item) => item.type !== 'arrow')
+  assert.equal(result.scene.version, 1)
+  assert.equal(result.scene.architecture?.density, 'auto')
+  assert.ok(nodes.every((item) => item.width <= 188))
+  assert.ok(nodes.every((item) => item.height <= 84))
 })
 
 function segmentCutsBox(a: { x: number; y: number }, b: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }): boolean {

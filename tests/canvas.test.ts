@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArrowLabelLayouts, canvasSceneToSvg, createCanvasSource, parseCanvasScene, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArrowLabelLayouts, canvasSceneToSvg, createCanvasSource, parseCanvasScene, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -29,12 +29,12 @@ test('round-trips optional architecture presentation metadata on version 1 canva
     width: 1400,
     height: 900,
     elements: [],
-    architecture: { theme: 'presentation', presentation: true },
+    architecture: { theme: 'presentation', presentation: true, view: 'overview', density: 'compact' },
   }
 
   const parsed = parseCanvasScene(serializeCanvasScene(scene))
   assert.equal(parsed.version, 1)
-  assert.deepEqual(parsed.architecture, { theme: 'presentation', presentation: true })
+  assert.deepEqual(parsed.architecture, { theme: 'presentation', presentation: true, view: 'overview', density: 'compact' })
 })
 
 test('places relationship labels on routed segments without stacking them at the same point', () => {
@@ -82,4 +82,77 @@ test('renders presentation title, legend and architecture card metadata in SVG e
   assert.match(svg, /Unified Knowledge Platform/)
   assert.match(svg, />gRPC</)
   assert.match(svg, />PG</)
+})
+
+test('overview projection keeps source data intact while reducing low-priority architecture detail', () => {
+  const nodes = Array.from({ length: 30 }, (_, index) => ({
+    id: `node-${index}`,
+    type: 'node' as const,
+    x: 80 + (index % 6) * 210,
+    y: 140 + Math.floor(index / 6) * 120,
+    width: 180,
+    height: 82,
+    text: `Service ${index}`,
+    icon: index === 0 ? 'gateway' as const : index === 29 ? 'database' as const : 'service' as const,
+    emphasis: index === 0 || index === 29 ? 'primary' as const : index < 12 ? 'secondary' as const : 'muted' as const,
+    laneId: index < 15 ? 'arch-application' : 'arch-data',
+  }))
+  const arrows = Array.from({ length: 29 }, (_, index) => ({
+    id: `edge-${index}`,
+    type: 'arrow' as const,
+    from: `node-${index}`,
+    to: `node-${index + 1}`,
+    emphasis: index === 0 || index === 28 ? 'primary' as const : index < 12 ? 'secondary' as const : 'muted' as const,
+  }))
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Large Platform',
+    width: 1600,
+    height: 1000,
+    architecture: { theme: 'technical', view: 'overview', density: 'auto' },
+    elements: [...nodes, ...arrows],
+  }
+
+  const before = serializeCanvasScene(scene)
+  const projection = canvasArchitectureProjection(scene)
+  assert.equal(serializeCanvasScene(scene), before)
+  assert.ok(projection.hiddenNodes > 0)
+  assert.ok(projection.hiddenArrows > 0)
+  assert.ok(projection.scene.elements.some((item) => item.id === 'node-0'))
+  assert.ok(projection.scene.elements.some((item) => item.id === 'node-29'))
+  assert.ok(projection.scene.elements.length < scene.elements.length)
+})
+
+test('architecture cards map roles into stable semantic templates', () => {
+  assert.equal(canvasArchitectureCardTemplate({ id: 'u', type: 'node', x: 0, y: 0, width: 100, height: 80, text: 'User', icon: 'user' }).kind, 'actor')
+  assert.equal(canvasArchitectureCardTemplate({ id: 'g', type: 'node', x: 0, y: 0, width: 100, height: 80, text: 'Gateway', icon: 'gateway' }).kind, 'entry')
+  assert.equal(canvasArchitectureCardTemplate({ id: 'q', type: 'node', x: 0, y: 0, width: 100, height: 80, text: 'Kafka', icon: 'queue' }).kind, 'messaging')
+  assert.equal(canvasArchitectureCardTemplate({ id: 'd', type: 'node', x: 0, y: 0, width: 100, height: 80, text: 'Postgres', icon: 'database' }).kind, 'data')
+})
+
+test('SVG export honors architecture overview projection', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Overview export',
+    width: 1600,
+    height: 900,
+    architecture: { theme: 'presentation', presentation: true, view: 'overview', density: 'comfortable' },
+    elements: [
+      { id: 'web', type: 'node', x: 100, y: 180, width: 200, height: 90, text: 'Web', icon: 'web', emphasis: 'primary', laneId: 'arch-experience' },
+      { id: 'api', type: 'node', x: 420, y: 180, width: 200, height: 90, text: 'API', icon: 'api', emphasis: 'primary', laneId: 'arch-application' },
+      { id: 'db', type: 'node', x: 740, y: 180, width: 200, height: 90, text: 'DB', icon: 'database', emphasis: 'primary', laneId: 'arch-data' },
+      ...Array.from({ length: 20 }, (_, index) => ({ id: `muted-${index}`, type: 'node' as const, x: 1000 + (index % 4) * 120, y: 120 + Math.floor(index / 4) * 90, width: 110, height: 70, text: `Muted ${index}`, icon: 'service' as const, emphasis: 'muted' as const, laneId: 'arch-application' })),
+      { id: 'web-api', type: 'arrow', from: 'web', to: 'api', emphasis: 'primary' },
+      { id: 'api-db', type: 'arrow', from: 'api', to: 'db', emphasis: 'primary' },
+    ],
+  }
+
+  const svg = canvasSceneToSvg(scene)
+  assert.match(svg, />Web</)
+  assert.match(svg, />API</)
+  assert.match(svg, />DB</)
+  assert.doesNotMatch(svg, />Muted 19</)
+  assert.match(svg, /总览/)
 })

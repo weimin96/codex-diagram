@@ -19,6 +19,9 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '关系标签只写协议、动作或关键语义，保持短且避免重复节点名称；插件会把标签优先放到较长的空闲线段，并自动避开节点与已有标签。',
     '图上文字保持短：节点标题表达职责，subtitle 表达技术/协议；长解释放 description，不把段落塞进节点。',
     '需要用于评审、方案汇报或截图交付时使用 presentation 主题；该模式会保留标题带、图例、更宽松的列距与卡片信息层级。',
+    '当图超过约 20 个节点时优先使用 density=auto，让插件自动从 comfortable 切到 compact/dense；不要靠缩小字体硬塞节点。',
+    '大型架构图需要先给 overview，再按需要切 detail：overview 只隐藏低优先级显示项，不删除节点数据，并保留主链路、直接依赖和每个区域的代表节点。',
+    '节点卡片按 Actor / Edge / Runtime / Async / Data / External 等语义模板呈现；真实技术仍由 stencil/subtitle 表达，不要把模板标签当成具体技术。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
     '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',
   ]

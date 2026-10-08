@@ -478,6 +478,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.emphasis-muted { opacity: .66; }
 .freeform-box.emphasis-muted rect:first-of-type { stroke-width: 1.15; }
 .freeform-card-accent { pointer-events: none; stroke: none !important; filter: none !important; }
+.freeform-card-kind-band { pointer-events: none; stroke: none !important; filter: none !important; opacity: .72; }
+.freeform-box.card-kind-entry .freeform-card-kind-band { fill: #6366f1; }
+.freeform-box.card-kind-data .freeform-card-kind-band { fill: #10b981; }
+.freeform-box.card-kind-messaging .freeform-card-kind-band { fill: #f59e0b; }
+.freeform-box.card-kind-actor .freeform-card-kind-band { fill: color-mix(in srgb, var(--text-secondary) 78%, transparent); }
+.freeform-box.card-kind-compute .freeform-card-kind-band { fill: color-mix(in srgb, var(--accent) 62%, var(--text-secondary)); }
+.freeform-box.card-kind-external .freeform-card-kind-band,
+.freeform-box.card-kind-generic .freeform-card-kind-band { fill: color-mix(in srgb, var(--text-tertiary) 72%, transparent); }
+.freeform-box.card-kind-external > rect:first-of-type,
+.freeform-box.card-kind-messaging > rect:first-of-type { stroke-dasharray: 7 5; }
 .freeform-box.tone-accent .freeform-card-accent { fill: #6366f1; }
 .freeform-box.tone-success .freeform-card-accent { fill: #10b981; }
 .freeform-box.tone-warning .freeform-card-accent { fill: #f59e0b; }
@@ -486,6 +496,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.tone-default .freeform-card-accent { fill: var(--text-secondary); }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
 .freeform-box.is-architecture-card .freeform-node-title { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.architecture-density-compact .freeform-box.is-architecture-card .freeform-node-title { font-size: 13px; }
+.architecture-density-dense .freeform-box.is-architecture-card .freeform-node-title { font-size: 12px; font-weight: 680; }
+.architecture-density-compact .freeform-node-icon,
+.architecture-density-dense .freeform-node-icon { font-size: 9px !important; }
+.architecture-density-dense .freeform-node-role { transform-box: fill-box; transform-origin: center; }
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-node-role-symbol { fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }

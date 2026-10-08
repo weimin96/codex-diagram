@@ -69,7 +69,7 @@ const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
-type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string }
+type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string; modifiedAt?: string }
 const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; activity?: ThreadDrawActivity; updatedAt: string }>()
 interface ThreadDiagramProposal {
   workspacePath: string
@@ -587,7 +587,7 @@ server.registerTool('diagram.upsertSourceNode', {
     })
   }
   const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
-  markThreadDiagram(extra._meta, updated.path, [nodeId], undefined, 'source-sync')
+  markThreadDiagram(extra._meta, updated.path, [nodeId], undefined, 'source-sync', updated.modifiedAt)
   return {
     content: [{ type: 'text', text: `${created ? 'Created' : 'Updated'} Canvas node ${nodeId} for ${realSourcePath} in ${updated.path}` }],
     structuredContent: { kind: 'diagram-source-node', workspacePath: store.workspacePath, diagram: updated, nodeId, sourcePath: realSourcePath, created },
@@ -640,7 +640,7 @@ server.registerTool('diagram.upsertSourceNodes', {
   }
   const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
   const nodeIds = [...new Set(results.map((item) => item.nodeId))]
-  markThreadDiagram(extra._meta, updated.path, nodeIds, undefined, 'source-sync')
+  markThreadDiagram(extra._meta, updated.path, nodeIds, undefined, 'source-sync', updated.modifiedAt)
   return {
     content: [{
       type: 'text',
@@ -668,7 +668,7 @@ server.registerTool('diagram.create', {
 }, async ({ workspacePath, type, title, animate }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.create(type, title)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'create')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'create', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: `Created ${diagram.path}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -689,7 +689,7 @@ server.registerTool('diagram.update', {
 }, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt, animate }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.update(diagramPath, source, expectedModifiedAt)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'update')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'update', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -703,25 +703,27 @@ server.registerTool('diagram.beautifyArchitecture', {
     workspacePath: z.string().optional(),
     path: z.string().optional(),
     theme: z.enum(['enterprise', 'technical', 'presentation']).default('enterprise'),
+    view: z.enum(['overview', 'detail']).optional(),
+    density: z.enum(['auto', 'comfortable', 'compact', 'dense']).optional(),
     repartition: z.boolean().default(true),
     relayout: z.boolean().default(true),
     reroute: z.boolean().default(true),
   }),
   annotations: write,
-}, async ({ workspacePath, path: diagramPath, theme, repartition, relayout, reroute }, extra) => {
+}, async ({ workspacePath, path: diagramPath, theme, view, density, repartition, relayout, reroute }, extra) => {
   const threadId = toolThreadId(extra._meta)
   const store = await resolveStore(workspacePath, threadId)
   const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
   if (!targetPath) throw new Error('当前聊天没有活动架构图，请先指定 Canvas 图表路径。')
   const current = await store.get(targetPath)
   if (current.type !== 'canvas') throw new Error('架构美化仅支持 Canvas 图；Mermaid 图请先转换或新建架构 Canvas。')
-  const result = beautifyArchitectureScene(parseCanvasScene(current.source), { theme, repartition, relayout, reroute })
+  const result = beautifyArchitectureScene(parseCanvasScene(current.source), { theme, view, density, repartition, relayout, reroute })
   const diagram = await store.update(current.path, serializeCanvasScene(result.scene), current.modifiedAt)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update', diagram.modifiedAt)
   return {
     content: [{
       type: 'text',
-      text: `Beautified ${diagram.path}: ${result.summary.partitions} architecture partition(s), ${result.summary.enrichedNodes} enriched node(s), ${result.summary.primaryNodes} primary node(s), ${result.summary.bundledEdges} bundled relation(s), ${result.summary.routedEdges} routed relation(s), theme=${theme}.`,
+      text: `Beautified ${diagram.path}: ${result.summary.partitions} architecture partition(s), ${result.summary.enrichedNodes} enriched node(s), ${result.summary.primaryNodes} primary node(s), ${result.summary.bundledEdges} bundled relation(s), ${result.summary.routedEdges} routed relation(s), theme=${theme}, view=${result.summary.view}, density=${result.summary.density}(${result.summary.resolvedDensity}).`,
     }],
     structuredContent: {
       kind: 'diagram',
@@ -750,7 +752,7 @@ server.registerTool('diagram.routeArchitectureEdges', {
   const scene = routeArchitectureEdges(parseCanvasScene(current.source))
   const diagram = await store.update(current.path, serializeCanvasScene(scene), current.modifiedAt)
   const routedEdges = scene.elements.filter((item) => item.type === 'arrow').length
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: `Routed ${routedEdges} architecture relationship(s) in ${diagram.path} without moving nodes.` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram, routedEdges },
@@ -866,7 +868,7 @@ server.registerTool('diagram.applyProposal', {
     : proposal.source
   const diagram = await store.update(proposal.path, source, proposal.baseModifiedAt)
   threadProposals.delete(threadId)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram }) }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -1210,7 +1212,7 @@ function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface,
   }
 }
 
-function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[], trace?: ThreadTraceState, activityKind?: ThreadDrawActivity['kind']): void {
+function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[], trace?: ThreadTraceState, activityKind?: ThreadDrawActivity['kind'], activityModifiedAt?: string): void {
   const threadId = toolThreadId(meta)
   if (!threadId) return
   const current = threadSelection.get(threadId)
@@ -1219,7 +1221,7 @@ function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?:
     path: diagramPath,
     focusElementIds,
     trace,
-    activity: activityKind ? { kind: activityKind, path: diagramPath, key: `${activityKind}:${diagramPath}:${now}` } : current?.activity,
+    activity: activityKind ? { kind: activityKind, path: diagramPath, key: `${activityKind}:${diagramPath}:${now}`, modifiedAt: activityModifiedAt } : current?.activity,
     updatedAt: now,
   })
 }

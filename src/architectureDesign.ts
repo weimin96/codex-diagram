@@ -1,6 +1,8 @@
 import type {
   CanvasArrow,
+  CanvasArchitectureDensity,
   CanvasArchitectureTheme,
+  CanvasArchitectureView,
   CanvasElement,
   CanvasEmphasis,
   CanvasIcon,
@@ -17,6 +19,8 @@ export type ArchitectureTheme = CanvasArchitectureTheme
 
 export interface ArchitectureBeautifyOptions {
   theme?: ArchitectureTheme
+  view?: CanvasArchitectureView
+  density?: CanvasArchitectureDensity
   repartition?: boolean
   relayout?: boolean
   reroute?: boolean
@@ -31,6 +35,9 @@ export interface ArchitectureBeautifyResult {
     routedEdges: number
     primaryNodes: number
     bundledEdges: number
+    view: CanvasArchitectureView
+    density: CanvasArchitectureDensity
+    resolvedDensity: Exclude<CanvasArchitectureDensity, 'auto'>
   }
 }
 
@@ -72,6 +79,8 @@ const themeTones: Record<ArchitectureTheme, Record<ArchitecturePartition, Canvas
 
 export function beautifyArchitectureScene(scene: CanvasScene, options: ArchitectureBeautifyOptions = {}): ArchitectureBeautifyResult {
   const theme = options.theme ?? 'enterprise'
+  const view = options.view ?? scene.architecture?.view ?? 'detail'
+  const density = options.density ?? scene.architecture?.density ?? 'auto'
   const repartition = options.repartition !== false
   const relayout = options.relayout !== false
   const reroute = options.reroute !== false
@@ -80,7 +89,8 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   const semanticBoxes = originalBoxes.map((item) => enrichArchitectureBox(item))
   const partitionById = new Map(semanticBoxes.map((item) => [item.id, classifyArchitectureBox(item)]))
   const activePartitions = partitionOrder.filter((partition) => semanticBoxes.some((item) => partitionById.get(item.id) === partition))
-  const lanes = repartition ? buildArchitectureLanes(semanticBoxes, partitionById, activePartitions, theme) : scene.lanes
+  const resolvedDensity = resolveArchitectureLayoutDensity(density, semanticBoxes.length)
+  const lanes = repartition ? buildArchitectureLanes(semanticBoxes, partitionById, activePartitions, theme, resolvedDensity) : scene.lanes
   const laneByPartition = new Map<ArchitecturePartition, CanvasLane>()
   if (repartition) activePartitions.forEach((partition, index) => laneByPartition.set(partition, lanes?.[index] as CanvasLane))
 
@@ -105,9 +115,10 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   let height = scene.height
   if (repartition && lanes?.length) {
     const presentation = theme === 'presentation'
-    width = Math.max(presentation ? 1440 : 1280, Math.ceil(lanes[lanes.length - 1].start + lanes[lanes.length - 1].size + (presentation ? 60 : 48)))
+    const metrics = architectureLayoutMetrics(theme, resolvedDensity)
+    width = Math.max(presentation ? 1440 : 1280, Math.ceil(lanes[lanes.length - 1].start + lanes[lanes.length - 1].size + metrics.canvasTail))
     const maxRows = Math.max(1, ...activePartitions.map((partition) => Math.ceil((semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length || 1) / partitionColumns(semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length))))
-    height = Math.max(presentation ? 900 : 820, (presentation ? 230 : 160) + maxRows * (presentation ? 154 : 138))
+    height = Math.max(presentation ? 900 : 820, metrics.canvasTop + maxRows * metrics.rowStep)
   }
 
   let next: CanvasScene = {
@@ -119,10 +130,12 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
     architecture: {
       theme,
       ...(theme === 'presentation' ? { presentation: true } : {}),
+      view,
+      density,
     },
   }
 
-  if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition, theme)
+  if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition, theme, resolvedDensity)
   if (repartition) next = ensureArchitectureSystemBoundary(next, partitionById)
   next = applyArchitectureTheme(next, theme, partitionById)
   next = applyArchitectureEmphasis(next, partitionById)
@@ -150,6 +163,9 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
       routedEdges: reroute ? next.elements.filter((item) => item.type === 'arrow').length : 0,
       primaryNodes: next.elements.filter((item) => item.type !== 'arrow' && item.emphasis === 'primary').length,
       bundledEdges: next.elements.filter((item) => item.type === 'arrow' && Boolean(item.bundleKey)).length,
+      view,
+      density,
+      resolvedDensity,
     },
   }
 }
@@ -541,13 +557,14 @@ function buildArchitectureLanes(
   partitions: Map<string, ArchitecturePartition>,
   active: ArchitecturePartition[],
   theme: ArchitectureTheme,
+  density: Exclude<CanvasArchitectureDensity, 'auto'>,
 ): CanvasLane[] {
-  const presentation = theme === 'presentation'
-  let start = presentation ? 44 : 36
+  const metrics = architectureLayoutMetrics(theme, density)
+  let start = metrics.laneStart
   return active.map((partition) => {
     const count = boxes.filter((item) => partitions.get(item.id) === partition).length
     const columns = partitionColumns(count)
-    const size = (presentation ? 88 : 72) + columns * (presentation ? 276 : 252)
+    const size = metrics.lanePadding + columns * metrics.columnStep
     const lane: CanvasLane = {
       id: `arch-${partition}`,
       label: partitionMeta[partition].label,
@@ -556,7 +573,7 @@ function buildArchitectureLanes(
       size,
       tone: themeTones[theme][partition],
     }
-    start += size + (presentation ? 30 : 24)
+    start += size + metrics.laneGap
     return lane
   })
 }
@@ -566,8 +583,9 @@ function layoutArchitecturePartitions(
   partitions: Map<string, ArchitecturePartition>,
   laneByPartition: Map<ArchitecturePartition, CanvasLane>,
   theme: ArchitectureTheme,
+  density: Exclude<CanvasArchitectureDensity, 'auto'>,
 ): CanvasScene {
-  const presentation = theme === 'presentation'
+  const metrics = architectureLayoutMetrics(theme, density)
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const positionById = new Map<string, { x: number; y: number }>()
   for (const partition of partitionOrder) {
@@ -582,8 +600,8 @@ function layoutArchitecturePartitions(
         const col = Math.floor(index / rows)
         const row = index % rows
         positionById.set(item.id, {
-          x: lane.start + (presentation ? 42 : 34) + col * (presentation ? 276 : 252),
-          y: (presentation ? 132 : 92) + row * (presentation ? 150 : 132),
+          x: lane.start + metrics.nodeInset + col * metrics.columnStep,
+          y: metrics.nodeTop + row * metrics.rowStep,
         })
       })
   }
@@ -597,10 +615,76 @@ function layoutArchitecturePartitions(
         ...item,
         x: position.x,
         y: position.y,
-        width: Math.max(presentation ? 204 : 190, Math.min(presentation ? 236 : 232, item.width)),
-        height: Math.max(presentation ? 94 : 86, Math.min(presentation ? 108 : 104, item.height)),
+        width: Math.max(metrics.nodeMinWidth, Math.min(metrics.nodeMaxWidth, item.width)),
+        height: Math.max(metrics.nodeMinHeight, Math.min(metrics.nodeMaxHeight, item.height)),
       }
     }),
+  }
+}
+
+function resolveArchitectureLayoutDensity(
+  density: CanvasArchitectureDensity,
+  nodeCount: number,
+): Exclude<CanvasArchitectureDensity, 'auto'> {
+  if (density !== 'auto') return density
+  if (nodeCount >= 46) return 'dense'
+  if (nodeCount >= 22) return 'compact'
+  return 'comfortable'
+}
+
+function architectureLayoutMetrics(
+  theme: ArchitectureTheme,
+  density: Exclude<CanvasArchitectureDensity, 'auto'>,
+) {
+  const presentation = theme === 'presentation'
+  if (density === 'dense') {
+    return {
+      laneStart: presentation ? 38 : 30,
+      lanePadding: presentation ? 62 : 54,
+      laneGap: presentation ? 20 : 16,
+      columnStep: presentation ? 214 : 204,
+      rowStep: presentation ? 112 : 104,
+      nodeInset: presentation ? 28 : 24,
+      nodeTop: presentation ? 122 : 86,
+      nodeMinWidth: 168,
+      nodeMaxWidth: presentation ? 194 : 188,
+      nodeMinHeight: 74,
+      nodeMaxHeight: presentation ? 88 : 84,
+      canvasTop: presentation ? 204 : 142,
+      canvasTail: presentation ? 44 : 38,
+    }
+  }
+  if (density === 'compact') {
+    return {
+      laneStart: presentation ? 42 : 34,
+      lanePadding: presentation ? 74 : 64,
+      laneGap: presentation ? 24 : 20,
+      columnStep: presentation ? 240 : 228,
+      rowStep: presentation ? 132 : 120,
+      nodeInset: presentation ? 34 : 28,
+      nodeTop: presentation ? 128 : 90,
+      nodeMinWidth: 184,
+      nodeMaxWidth: presentation ? 212 : 204,
+      nodeMinHeight: 82,
+      nodeMaxHeight: presentation ? 98 : 92,
+      canvasTop: presentation ? 218 : 150,
+      canvasTail: presentation ? 52 : 44,
+    }
+  }
+  return {
+    laneStart: presentation ? 44 : 36,
+    lanePadding: presentation ? 88 : 72,
+    laneGap: presentation ? 30 : 24,
+    columnStep: presentation ? 276 : 252,
+    rowStep: presentation ? 150 : 132,
+    nodeInset: presentation ? 42 : 34,
+    nodeTop: presentation ? 132 : 92,
+    nodeMinWidth: presentation ? 204 : 190,
+    nodeMaxWidth: presentation ? 236 : 232,
+    nodeMinHeight: presentation ? 94 : 86,
+    nodeMaxHeight: presentation ? 108 : 104,
+    canvasTop: presentation ? 230 : 160,
+    canvasTail: presentation ? 60 : 48,
   }
 }
 
