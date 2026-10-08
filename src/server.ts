@@ -657,12 +657,13 @@ server.registerTool('diagram.create', {
     workspacePath: z.string().optional(),
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
     title: z.string().min(1).max(120),
+    animate: z.boolean().optional(),
   }),
   annotations: write,
-}, async ({ workspacePath, type, title }, extra) => {
+}, async ({ workspacePath, type, title, animate }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.create(type, title)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'create')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'create')
   return {
     content: [{ type: 'text', text: `Created ${diagram.path}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
@@ -677,12 +678,13 @@ server.registerTool('diagram.update', {
     path: z.string().min(1),
     source: z.string().min(1),
     expectedModifiedAt: z.string().optional(),
+    animate: z.boolean().optional(),
   }),
   annotations: write,
-}, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt }, extra) => {
+}, async ({ workspacePath, path: diagramPath, source, expectedModifiedAt, animate }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
   const diagram = await store.update(diagramPath, source, expectedModifiedAt)
-  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'update')
+  markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'update')
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },

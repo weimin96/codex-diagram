@@ -686,6 +686,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         path: selected.path,
         source,
         expectedModifiedAt: selected.modifiedAt,
+        animate: false,
       })
       setSelected(result.diagram)
       setSource(result.diagram.source)
@@ -734,6 +735,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         path: review.after.path,
         source: review.before.source,
         expectedModifiedAt: review.after.modifiedAt,
+        animate: false,
       })
       setSelected(result.diagram)
       setSource(result.diagram.source)
@@ -884,7 +886,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   async function createDiagram(type: DiagramType, title: string) {
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.create', { workspacePath, type, title })
+      const result = await callTool<DiagramResult>('diagram.create', { workspacePath, type, title, animate: false })
       const next = [result.diagram, ...snapshot.diagrams.filter((item) => item.path !== result.diagram.path)]
       onSnapshot({ ...snapshot, diagrams: next })
       setSelected(result.diagram)

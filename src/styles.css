@@ -463,6 +463,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.is-trace-dimmed { opacity: .22; }
 .freeform-box.is-ai-drawing-target { animation: freeform-ai-node-pop .34s cubic-bezier(.2,.9,.2,1); }
 .freeform-box.is-ai-drawing-target rect { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 28%, transparent)); }
+.freeform-box.is-ai-dragging rect { stroke: var(--accent); stroke-width: 2.6; filter: drop-shadow(0 8px 12px color-mix(in srgb, var(--accent) 18%, transparent)); }
+.freeform-box.is-ai-final-highlight rect { animation: freeform-ai-final-highlight .62s ease-out; }
+.freeform-arrow.is-ai-final-highlight path { animation: freeform-ai-final-line .62s ease-out; }
+.freeform-ai-caret { fill: var(--accent); animation: freeform-ai-caret .7s steps(1) infinite; }
 .freeform-arrow.is-ai-drawing path { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 1; stroke-dashoffset: 1; animation: freeform-ai-line-draw .42s ease-out forwards; }
 .freeform-ai-cursor { filter: drop-shadow(0 4px 8px rgba(0,0,0,.18)); }
 .freeform-ai-cursor-pointer { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
@@ -479,6 +483,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes freeform-ai-line-draw { to { stroke-dashoffset: 0; } }
 @keyframes freeform-ai-click { 0% { transform: scale(.7); opacity: .9; } 100% { transform: scale(1.65); opacity: 0; } }
 @keyframes freeform-playback-pulse { 0%,100% { opacity: .35; transform: scale(.82); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes freeform-ai-caret { 0%,48% { opacity: 1; } 49%,100% { opacity: 0; } }
+@keyframes freeform-ai-final-highlight { 0% { stroke: var(--accent); stroke-width: 3.2; filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 34%, transparent)); } 100% { filter: none; } }
+@keyframes freeform-ai-final-line { 0% { stroke: var(--accent); stroke-width: 3.4; } 100% { } }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
 .freeform-anchor-points circle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: crosshair; vector-effect: non-scaling-stroke; }
 .freeform-anchor-points circle:hover { fill: var(--accent); }

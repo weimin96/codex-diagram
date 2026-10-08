@@ -42,6 +42,11 @@ type PlaybackState = {
   clicking: boolean
   currentElementId?: string
   drawingArrowId?: string
+  typing?: { id: string; text: string }
+  positionOverrides?: Record<string, CanvasPoint>
+  toolHint?: 'select' | 'node' | 'note' | 'connect'
+  phase?: 'placing' | 'typing' | 'connecting' | 'arranging' | 'finishing'
+  finalHighlightIds?: string[]
   step: number
   total: number
   label: string
@@ -94,11 +99,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const clipboard = useRef<CanvasElement[]>([])
   const playbackRun = useRef(0)
   const playbackCursor = useRef<CanvasPoint>({ x: 72, y: 72 })
+  const viewportRef = useRef(viewport)
 
   useEffect(() => {
     sourceRef.current = source
     sceneRef.current = parsed.scene
   }, [parsed.scene, source])
+
+  useEffect(() => {
+    viewportRef.current = viewport
+  }, [viewport])
 
   useEffect(() => {
     if (!parsed.scene) return
@@ -270,6 +280,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       setPlayback(null)
       return
     }
+    const pace = plan.actions.length > 60 ? 0.3 : plan.actions.length > 36 ? 0.46 : plan.actions.length > 20 ? 0.68 : 1
     const firstTarget = playbackActionTarget(parsed.scene, plan.actions[0]) ?? { x: 72, y: 72 }
     playbackCursor.current = { x: Math.max(36, firstTarget.x - 96), y: Math.max(36, firstTarget.y - 72) }
     setPlayback({
@@ -300,32 +311,139 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       window.requestAnimationFrame(frame)
     })
 
+    const moveCamera = (target: CanvasPoint, duration = 260, preferredZoom = 1.12) => new Promise<void>((resolve) => {
+      const live = parsed.scene!
+      const from = viewportRef.current
+      const zoom = clamp(preferredZoom, 1, 1.6)
+      const width = live.width / zoom
+      const height = live.height / zoom
+      const to: Viewport = {
+        zoom,
+        x: clamp(target.x - width / 2, 0, Math.max(0, live.width - width)),
+        y: clamp(target.y - height / 2, 0, Math.max(0, live.height - height)),
+      }
+      if (Math.abs(from.x - to.x) < 8 && Math.abs(from.y - to.y) < 8 && Math.abs(from.zoom - to.zoom) < 0.03) return resolve()
+      const started = performance.now()
+      const frame = (now: number) => {
+        if (playbackRun.current !== runId) return resolve()
+        const raw = Math.min(1, (now - started) / duration)
+        const eased = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2
+        const next = {
+          x: from.x + (to.x - from.x) * eased,
+          y: from.y + (to.y - from.y) * eased,
+          zoom: from.zoom + (to.zoom - from.zoom) * eased,
+        }
+        viewportRef.current = next
+        setViewport(next)
+        if (raw < 1) window.requestAnimationFrame(frame)
+        else resolve()
+      }
+      window.requestAnimationFrame(frame)
+    })
+
+    const typeText = async (id: string, text: string, fromText = '') => {
+      if (!text || text === fromText) return
+      setPlayback((current) => current ? { ...current, phase: 'typing', typing: { id, text: fromText }, toolHint: 'select' } : current)
+      const prefix = commonPrefixLength(fromText, text)
+      const start = fromText.slice(0, prefix)
+      const tail = text.slice(prefix)
+      const chunks = Math.min(pace < 0.5 ? 8 : pace < 0.8 ? 14 : 24, Math.max(1, tail.length))
+      for (let index = 1; index <= chunks; index += 1) {
+        if (playbackRun.current !== runId) return
+        const end = Math.ceil((tail.length * index) / chunks)
+        setPlayback((current) => current ? { ...current, typing: { id, text: start + tail.slice(0, end) } } : current)
+        await sleep(Math.max(10, Math.min(44, (360 * pace) / chunks)))
+      }
+      setPlayback((current) => current ? { ...current, typing: undefined } : current)
+    }
+
+    const dragBoxToFinal = (id: string, before: CanvasNode | CanvasNote, after: CanvasNode | CanvasNote) => new Promise<void>((resolve) => {
+      if (before.x === after.x && before.y === after.y) return resolve()
+      const from = { x: before.x, y: before.y }
+      const to = { x: after.x, y: after.y }
+      const started = performance.now()
+      const duration = 420 * pace
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'arranging',
+        toolHint: 'select',
+        clicking: true,
+        positionOverrides: { ...(current.positionOverrides ?? {}), [id]: from },
+      } : current)
+      const frame = (now: number) => {
+        if (playbackRun.current !== runId) return resolve()
+        const raw = Math.min(1, (now - started) / duration)
+        const eased = 1 - Math.pow(1 - raw, 3)
+        const point = { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased }
+        playbackCursor.current = { x: point.x + after.width / 2, y: point.y + after.height / 2 }
+        setPlayback((current) => current ? {
+          ...current,
+          cursor: playbackCursor.current,
+          positionOverrides: { ...(current.positionOverrides ?? {}), [id]: point },
+        } : current)
+        if (raw < 1) window.requestAnimationFrame(frame)
+        else {
+          setPlayback((current) => {
+            if (!current) return current
+            const next = { ...(current.positionOverrides ?? {}) }
+            delete next[id]
+            return { ...current, clicking: false, positionOverrides: next }
+          })
+          resolve()
+        }
+      }
+      window.requestAnimationFrame(frame)
+    })
+
     void (async () => {
-      await sleep(140)
+      await sleep(140 * pace)
       for (let index = 0; index < plan.actions.length; index += 1) {
         if (playbackRun.current !== runId) return
         const action = plan.actions[index]
         const target = playbackActionTarget(parsed.scene!, action)
         if (!target) continue
+        await moveCamera(target, 260 * pace)
         if (action.kind === 'box') {
-          await moveCursor(target, 300)
+          const box = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === action.id)
+          if (!box) continue
+          const isMoved = Boolean(action.before && (action.before.x !== box.x || action.before.y !== box.y))
+          const toolHint = action.added ? (box.type === 'note' ? 'note' : 'node') : 'select'
+          setPlayback((current) => current ? { ...current, phase: action.added ? 'placing' : isMoved ? 'arranging' : 'typing', toolHint } : current)
+          if (action.before && isMoved) {
+            const beforeCenter = center(action.before)
+            playbackCursor.current = beforeCenter
+            setPlayback((current) => current ? {
+              ...current,
+              cursor: beforeCenter,
+              positionOverrides: { ...(current.positionOverrides ?? {}), [action.id]: { x: action.before!.x, y: action.before!.y } },
+            } : current)
+            await sleep(80 * pace)
+            await dragBoxToFinal(action.id, action.before, box)
+          } else {
+            await moveCursor(target, 300 * pace)
+          }
           if (playbackRun.current !== runId) return
           setPlayback((current) => current ? {
             ...current,
             visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
             currentElementId: action.id,
             clicking: true,
+            typing: action.added ? { id: action.id, text: '' } : current.typing,
+            toolHint,
+            phase: action.added ? 'placing' : current.phase,
             step: index + 1,
           } : current)
-          await sleep(100)
+          await sleep(100 * pace)
           setPlayback((current) => current ? { ...current, clicking: false } : current)
-          await sleep(action.added ? 180 : 120)
+          await typeText(action.id, box.text, action.added ? '' : action.before?.text ?? box.text)
+          await sleep((action.added ? 120 : 80) * pace)
         } else {
           const arrow = parsed.scene!.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === action.id)
           const from = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from) : undefined
           const to = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to) : undefined
           if (!arrow || !from || !to) continue
-          await moveCursor(center(from), 190)
+          setPlayback((current) => current ? { ...current, phase: 'connecting', toolHint: 'connect' } : current)
+          await moveCursor(center(from), 190 * pace)
           setPlayback((current) => current ? {
             ...current,
             visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
@@ -334,22 +452,30 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             clicking: true,
             step: index + 1,
           } : current)
-          await sleep(90)
+          await sleep(90 * pace)
           setPlayback((current) => current ? { ...current, clicking: false } : current)
-          await moveCursor(center(to), 360)
+          await moveCursor(center(to), 360 * pace)
           setPlayback((current) => current ? { ...current, drawingArrowId: undefined } : current)
-          await sleep(90)
+          await sleep(90 * pace)
         }
       }
       if (playbackRun.current !== runId) return
+      const changedIds = plan.actions.map((action) => action.id)
       setPlayback((current) => current ? {
         ...current,
         visibleIds: parsed.scene!.elements.map((item) => item.id),
         currentElementId: undefined,
         drawingArrowId: undefined,
+        typing: undefined,
+        toolHint: 'select',
+        phase: 'finishing',
+        finalHighlightIds: changedIds,
         step: current.total,
       } : current)
-      await sleep(280)
+      await moveCamera({ x: parsed.scene!.width / 2, y: parsed.scene!.height / 2 }, 360 * pace, 1)
+      viewportRef.current = { x: 0, y: 0, zoom: 1 }
+      setViewport({ x: 0, y: 0, zoom: 1 })
+      await sleep(520 * pace)
       if (playbackRun.current === runId) {
         setPlayback(null)
         onPlaybackComplete?.(playbackRequest.key)
@@ -934,16 +1060,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const viewWidth = scene.width / viewport.zoom
   const viewHeight = scene.height / viewport.zoom
 
+  function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
+    const position = playback?.positionOverrides?.[item.id]
+    return position ? { ...item, x: position.x, y: position.y } : item
+  }
+
   return (
     <div ref={editorRef} className="freeform-editor" tabIndex={0} aria-label="自由画布编辑器">
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
-          <ToolButton active={tool === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
+          <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
           <ToolButton active={tool === 'hand'} title="平移 (H / Space)" onClick={() => { setTool('hand'); setConnectFrom(null) }}>抓手</ToolButton>
           <span className="freeform-toolbar-separator" />
-          <ToolButton active={tool === 'node'} title="节点 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}>节点</ToolButton>
-          <ToolButton active={tool === 'note'} title="备注 (T)" onClick={() => { setTool('note'); setConnectFrom(null) }}>备注</ToolButton>
-          <ToolButton active={tool === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
+          <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="节点 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}>节点</ToolButton>
+          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (T)" onClick={() => { setTool('note'); setConnectFrom(null) }}>备注</ToolButton>
+          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
           <span className="freeform-toolbar-separator" />
           <select
             className="freeform-layout-select"
@@ -1365,8 +1496,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             </g>
           ))}
           {visibleRenderArrows.map((arrow) => {
-            const from = boxes.find((item) => item.id === arrow.from)
-            const to = boxes.find((item) => item.id === arrow.to)
+            const fromRaw = boxes.find((item) => item.id === arrow.from)
+            const toRaw = boxes.find((item) => item.id === arrow.to)
+            const from = fromRaw ? playbackBoxPosition(fromRaw) : undefined
+            const to = toRaw ? playbackBoxPosition(toRaw) : undefined
             if (!from || !to) return null
             const fromCenter = center(from)
             const toCenter = center(to)
@@ -1375,7 +1508,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const path = canvasArrowPath(start, end, arrow)
             const labelPoint = pathLabelPoint(start, end, arrow.points)
             return (
-              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
                 {arrow.label ? <text x={labelPoint.x} y={labelPoint.y - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
                 {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
@@ -1412,11 +1545,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
-          {visibleRenderBoxes.map((item) => (
+          {visibleRenderBoxes.map((item) => {
+            const playbackPosition = playback?.positionOverrides?.[item.id]
+            const displayX = playbackPosition?.x ?? item.x
+            const displayY = playbackPosition?.y ?? item.y
+            const displayText = playback?.typing?.id === item.id ? playback.typing.text : item.text
+            return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}`}
-              transform={`translate(${item.x} ${item.y})`}
+              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}`}
+              transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
               onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
@@ -1435,7 +1573,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               {item.stencil || item.icon ? <text className="freeform-node-icon" x="13" y="19">{item.stencil ? canvasStencilLabel(item.stencil) : canvasIconLabel(item.icon!)}</text> : null}
               {item.c4Type ? <text className="freeform-c4-badge" x={item.width - 10} y={19} textAnchor="end">{c4Label(item.c4Type)}</text> : null}
               <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">
-                {truncate(item.text, 28)}
+                {truncate(displayText, 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text>
               {item.subtitle ? <text className="freeform-node-subtitle" x={item.width / 2} y={item.height - 12} textAnchor="middle">{truncate(item.subtitle, 32)}</text> : null}
               {item.sourcePaths?.length ? <text className="freeform-source-badge" x={item.width - 10} y={item.c4Type ? 34 : 18} textAnchor="end">⌘ {item.sourcePaths.length}</text> : null}
@@ -1462,7 +1600,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 />
               ) : null}
             </g>
-          ))}
+          )})}
           {selectionRect ? (() => {
             const rect = normalizeRect(selectionRect)
             return <rect className="freeform-marquee" x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
@@ -1485,7 +1623,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <span className="freeform-playback-pulse" />
             <div>
               <strong>{playback.label}</strong>
-              <span>{playback.step}/{playback.total}</span>
+              <span>{playbackPhaseLabel(playback.phase)} · {playback.step}/{playback.total}</span>
             </div>
             <button type="button" onClick={() => { playbackRun.current += 1; setPlayback(null); onPlaybackComplete?.(playbackRequest?.key ?? '') }}>跳过</button>
           </div>
@@ -1528,8 +1666,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 }
 
 type CanvasPlaybackAction =
-  | { kind: 'box'; id: string; added: boolean }
-  | { kind: 'arrow'; id: string; added: boolean }
+  | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote }
+  | { kind: 'arrow'; id: string; added: boolean; before?: CanvasArrow }
 
 function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: CanvasScene, mode: 'create' | 'update'): { initialVisibleIds: string[]; actions: CanvasPlaybackAction[] } {
   const previousById = new Map(previous?.elements.map((item) => [item.id, item]) ?? [])
@@ -1541,23 +1679,33 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
     else if (JSON.stringify(before) !== JSON.stringify(item)) changed.add(item.id)
   }
   const orderedBoxes = playbackBoxOrder(next)
-  const boxActions: CanvasPlaybackAction[] = orderedBoxes.flatMap((id) => {
-    if (added.has(id)) return [{ kind: 'box' as const, id, added: true }]
-    if (changed.has(id)) return [{ kind: 'box' as const, id, added: false }]
-    return []
-  })
-  const arrowActions: CanvasPlaybackAction[] = next.elements.flatMap((item) => {
-    if (item.type !== 'arrow') return []
-    if (added.has(item.id)) return [{ kind: 'arrow' as const, id: item.id, added: true }]
-    if (changed.has(item.id)) return [{ kind: 'arrow' as const, id: item.id, added: false }]
-    return []
-  })
+  const changedArrows = next.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && (added.has(item.id) || changed.has(item.id)))
+  const actions: CanvasPlaybackAction[] = []
+  const visitedBoxes = new Set<string>()
+  const emittedArrows = new Set<string>()
+  for (const id of orderedBoxes) {
+    const before = previousById.get(id)
+    if (added.has(id)) actions.push({ kind: 'box', id, added: true })
+    else if (changed.has(id)) actions.push({ kind: 'box', id, added: false, ...(before && before.type !== 'arrow' ? { before } : {}) })
+    visitedBoxes.add(id)
+    for (const arrow of changedArrows) {
+      if (emittedArrows.has(arrow.id) || !visitedBoxes.has(arrow.from) || !visitedBoxes.has(arrow.to)) continue
+      const arrowBefore = previousById.get(arrow.id)
+      actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), ...(arrowBefore?.type === 'arrow' ? { before: arrowBefore } : {}) })
+      emittedArrows.add(arrow.id)
+    }
+  }
+  for (const arrow of changedArrows) {
+    if (emittedArrows.has(arrow.id)) continue
+    const before = previousById.get(arrow.id)
+    actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), ...(before?.type === 'arrow' ? { before } : {}) })
+  }
   const hidden = mode === 'create'
     ? new Set(next.elements.map((item) => item.id))
     : added
   return {
     initialVisibleIds: next.elements.filter((item) => !hidden.has(item.id)).map((item) => item.id),
-    actions: [...boxActions, ...arrowActions],
+    actions,
   }
 }
 
@@ -1602,6 +1750,22 @@ function playbackActionTarget(scene: CanvasScene, action: CanvasPlaybackAction):
   const to = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.to)
   if (!from || !to) return null
   return { x: (center(from).x + center(to).x) / 2, y: (center(from).y + center(to).y) / 2 }
+}
+
+function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length)
+  let index = 0
+  while (index < max && left[index] === right[index]) index += 1
+  return index
+}
+
+function playbackPhaseLabel(phase: PlaybackState['phase']): string {
+  if (phase === 'placing') return '放置节点'
+  if (phase === 'typing') return '输入内容'
+  if (phase === 'connecting') return '连接关系'
+  if (phase === 'arranging') return '整理布局'
+  if (phase === 'finishing') return '完成收尾'
+  return '准备绘制'
 }
 
 function ToolButton({ active, title, onClick, children }: { active: boolean; title: string; onClick: () => void; children: string }) {
