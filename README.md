@@ -1,6 +1,6 @@
 # Codex Diagram
 
-Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、命名容器、自动布局、技术角色节点、源码双向定位、样式 Inspector、MiniMap 与选区 Codex 上下文。
+Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、命名容器、自动布局、技术角色节点、源码双向定位、样式 Inspector 与 MiniMap。Diagram 不再把当前图常驻注入聊天 Model Context；Codex 通过 MCP 按需读取图表，选区修改由右侧操作显式携带 element ids。
 
 当前支持：
 
@@ -8,7 +8,7 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - AI 可直接打开伴随面板：`diagram.thread` 同时对 model/app 可见，因此可以直接在聊天里说“打开右侧画板/Diagram”，让 Codex 调 MCP 工具打开右侧面板
 - 聊天目录优先：模型调用 `diagram.create` 时默认使用当前 thread 绑定的项目目录，不需要传 `workspacePath`；新图统一进入该项目的 `docs/diagrams/`
 - 自由画板：让 Codex 调 `diagram.create(type=canvas)` 即可在当前聊天项目中创建 `.diagram.json` 画板，创建后右侧面板自动跟随到新画板
-- 对话双向联动：Codex 在同一聊天调用 `diagram.get/create/update/rename/duplicate` 后，右侧面板自动跟随到对应图；用户在面板切图后，Model Context 也同步回当前聊天
+- 对话双向联动：Codex 在同一聊天调用 `diagram.get/create/update/rename/duplicate` 后，右侧面板自动跟随到对应图；用户在面板切图不会再向聊天注入常驻 Model Context
 - Thread 右侧会把当前聊天最近涉及的图表收进临时 Tabs；Codex 操作新图时自动加入，用户可手动切换/关闭，最多保留 6 张，避免架构图、时序图、ER 图之间反复使用下拉框
 - “跟随”可随时暂停，避免 Codex 为分析临时读取其他图时右侧面板频繁跳转；恢复后会继续跟随当前对话状态
 - Thread 空面板会自动发现当前项目中新创建或恢复的图表，不需要关闭重开 Diagram
@@ -47,6 +47,7 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - Canvas 节点支持默认/强调/成功/警告/危险/弱化语义色，圆角/方形/胶囊形状，以及锁定；节点详情可保存副标题、说明、标签、源码绑定和常用技术栈 stencil；连线支持标签、实线/虚线、智能正交路由、四向锚点和可拖动手工折点
 - Canvas 支持右键菜单、前后图层调整和 MiniMap；锁定节点仍可选中查看，但不会被拖动、resize、对齐或 AI 无意重排
 - Canvas 支持 AI 动态绘制回放：Codex 创建/更新/源码同步画板时，右侧会根据前后 Canvas diff 播放虚拟鼠标移动、工具高亮、节点落点、标题逐字输入、节点拖拽重排、连线逐条拉出与镜头自动跟随；绘制会优先按命名容器/泳道拆成区域，没有结构信息时再按空间自动聚类。新增节点先进入区域内的临时粗排位置，随后由 Cursor 框选并整理到最终布局；新增系统边界会播放“框选成员 → 拖出 Boundary → 自动分组”，已有边界变化会模拟 resize。节点属性变化会弹出临时 Inspector，并通过点击/下拉选择展示语义色、形状、角色、技术栈和 C4 等切换；创建连接时显示真实 from/to 锚点吸附。被 AI 删除的旧节点和连线会以 ghost 保留到 Delete 动作后再淡出。Cursor 旁只显示“添加服务层 / 连接缓存 / 整理位置”等可观察动作。区域完成后镜头会轻微 zoom-out 再进入下一块，最后 Fit 全图、高亮本轮修改并完成收尾轨迹。大图会自动加速播放；底层文件仍保持单次原子写入，不为动画制造额外 revision
+- Mermaid 预览会把 Mermaid 11 返回的 HTML-label / `foreignObject` SVG 先按浏览器语义解析、清理并规范化，再用于右侧预览和 PNG 导出；不会再因为严格 XML 二次解析误报“Mermaid 返回了无效 SVG”
 - Canvas 组合可升级为带名称和语义色的系统/领域容器；支持 `parentId` 嵌套边界，可表达 Software System → Container 的层级；编辑器提供全图与当前选区/容器的局部自动布局，并保留锁定元素位置
 - Canvas 节点支持 C4 `Person / Software System / Container / Component` 语义、`user/web/api/service/database/cache/queue/cloud/file/external` 运行角色，以及 Spring/React/Vue/Postgres/MySQL/Redis/Kafka/Docker/Kubernetes/Qdrant/OpenSearch/MinIO 技术 stencil；生成面板提供 C4 Context、C4 Container、C4 Component、服务拓扑、事件/数据流预设
 - Canvas 容器支持系统边界、命名、说明、语义色和折叠；折叠后内部节点隐藏，但跨边界依赖会汇聚到容器代理节点并显示数量，SVG/PNG 导出保持同样语义。泳道支持水平/垂直三分区、节点 lane 归属、lane 命名/色调以及按泳道自动布局
@@ -55,16 +56,16 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 画布可直接插入 Web→API→Service、Event-driven、Cache Aside 三种架构骨架，再由 Codex 根据真实代码和配置补全
 - Canvas 支持节点组合/取消组合；组内任一节点默认按组选择和移动，Alt 可临时单独操作一个成员；复制组合会生成新的 groupId，不会和原组合串联
 - Canvas 连线支持四向锚点和手工折点：选中节点会显示边缘连接点，选中连线可以添加/拖动/双击删除折点；SVG/PNG 导出使用同一套路径数据
-- Canvas 节点可绑定一个或多个真实工作区源码文件；Inspector 支持真实源码搜索、绑定、移除和原生打开，绑定信息会同步给 Codex Model Context
+- Canvas 节点可绑定一个或多个真实工作区源码文件；Inspector 支持真实源码搜索、绑定、移除和原生打开，Codex 可通过 MCP 按需读取这些绑定信息
 - MCP `diagram.findBySource` 可按源码文件反查关联的 Canvas 节点；唯一命中时会同步当前聊天 active diagram + element ids，右侧会自动切图、选中节点并聚焦视口
-- Canvas 节点可直接追踪上游 / 下游 / 双向邻域，支持 1～3 跳影响范围高亮；非相关区域自动降噪，距离层级逐级弱化。手工追踪状态会同步到当前聊天 Model Context，Codex 也可调用 `diagram.trace` 直接触发同样的右侧影响视图
+- Canvas 节点可直接追踪上游 / 下游 / 双向邻域，支持 1～3 跳影响范围高亮；非相关区域自动降噪，距离层级逐级弱化。Codex 可调用 `diagram.trace` 直接触发同样的右侧影响视图
 - Canvas 可把当前 Git staged / unstaged / untracked 改动真实映射到 `sourcePaths` 节点，并自动区分直接修改、1 跳、2 跳等影响层级；右侧“代码改动影响”报告列出已映射/未映射文件，可直接定位节点或把报告交给 Codex 做风险与回归分析
 - Git 影响分析支持可选 `baseRef`（例如 `origin/main`），把 `baseRef...HEAD` 分支提交差异与当前工作区改动统一映射到架构图；分析结果只作为临时视图状态，不写入 `.diagram.json`
 - MCP `diagram.upsertSourceNode` 可在 Codex 阅读真实源码后，只创建/刷新对应架构节点并绑定 sourcePath；不需要为了同步一个类或模块重写整张 Canvas，完成后右侧会自动定位该节点
 - MCP `diagram.upsertSourceNodes` 可一次同步最多 80 个真实源码文件，单次读取源码索引、单次写入 Canvas revision，适合 Codex 分析一个模块后批量补齐 Controller / Service / Repository / DB 节点
 - 对已有图的对话修改默认走 `diagram.proposeUpdate`：候选源码先进入右侧 Proposal Diff，不写盘；Canvas Proposal 可按稳定 element id 勾选部分节点/连线后只应用选中修改，也可全部接受或拒绝；写入仍使用原 revision 防止覆盖并发修改
 - “调整选中”现在走 `diagram.proposeSubgraphUpdate`：模型必须声明允许修改的现有 element ids 和新增 element ids，服务端会拒绝任何范围外已有元素、画布尺寸、容器或泳道元数据的越界修改，再进入右侧 Subgraph Proposal 审查
-- Canvas 选中元素会同步到当前聊天 Model Context；右侧可直接“调整选中”，让 Codex 只修改当前选区
+- 右侧可直接“调整选中”，该操作会显式携带当前 element ids 和选区结构，让 Codex 只修改当前选区，不需要常驻聊天上下文
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
 - Canvas 文档默认保存为 `docs/diagrams/*.diagram.json`，可以直接进入 Git diff，也不会被源码选择器误当成业务 JSON
 - Codex 生成面板可以直接选择“自由画布”或“架构画布”预设，生成时使用独立 Canvas JSON 协议，不会混入 Mermaid 语法

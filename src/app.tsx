@@ -317,7 +317,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       ? snapshot.diagrams.find((diagram) => diagram.path === snapshot.activeDiagramPath)
       : undefined
     if (initialDiagram ?? snapshot.diagrams[0]) void selectDiagram((initialDiagram ?? snapshot.diagrams[0])!.path, true)
-    else clearModelContext(workspacePath)
     // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
@@ -331,10 +330,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   useEffect(() => {
     if (!selected || selected.type !== 'canvas') {
       if (canvasSelection) setCanvasSelection(null)
-      return
     }
-    updateModelContext(workspacePath, selected, canvasSelection ?? undefined)
-  }, [canvasSelection, selected?.path, selected?.modifiedAt, workspacePath])
+  }, [canvasSelection, selected])
 
   useEffect(() => {
     if (!isThread) return
@@ -395,7 +392,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               setSelected(null)
               setSource('')
               if (remaining[0]) await selectDiagram(remaining[0].path, true)
-              else clearModelContext(workspacePath)
               if (!disposed) setNotice('当前图已从对话中删除，已切换到可用图表')
             }
             return
@@ -522,7 +518,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             ...snapshot,
             diagrams: snapshot.diagrams.map((item) => item.path === latest.diagram.path ? latest.diagram : item),
           })
-          updateModelContext(workspacePath, latest.diagram)
           setNotice('已同步磁盘上的最新修改')
         })
         .catch(async () => {
@@ -542,7 +537,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 await selectDiagram(fallback.path, true)
                 if (!disposed) setNotice('当前图已被外部删除，已切换到其他图表')
               } else {
-                clearModelContext(workspacePath)
                 if (!disposed) setNotice('当前图已被外部删除')
               }
               return
@@ -645,7 +639,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSource(result.diagram.source)
       setExternalChange(false)
       if (remember) rememberThreadTab(result.diagram.path)
-      updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -697,7 +690,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -717,7 +709,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      updateModelContext(workspacePath, result.diagram)
       setNotice('已重新载入磁盘版本')
     } catch (cause) {
       setError(errorMessage(cause))
@@ -746,7 +737,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      updateModelContext(workspacePath, result.diagram)
       setNotice('已恢复到本次外部修改前的版本')
     } catch (cause) {
       setError(errorMessage(cause))
@@ -778,7 +768,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      updateModelContext(workspacePath, result.diagram)
       setNotice('已接受 Codex 候选修改')
     } catch (cause) {
       setError(errorMessage(cause))
@@ -893,7 +882,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSource(result.diagram.source)
       setCreating(false)
       rememberThreadTab(result.diagram.path)
-      updateModelContext(workspacePath, result.diagram)
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -918,7 +906,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setRenaming(false)
       setDocumentMenuOpen(false)
       if (isThread) setThreadTabs((current) => current.map((path) => path === selected.path ? result.diagram.path : path))
-      updateModelContext(workspacePath, result.diagram)
       setNotice(`已重命名为 ${result.diagram.name}`)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -940,7 +927,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setDocumentMenuOpen(false)
       setRenaming(false)
       rememberThreadTab(result.diagram.path)
-      updateModelContext(workspacePath, result.diagram)
       setNotice(`已复制为 ${result.diagram.name}`)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -966,7 +952,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setDeleteConfirmOpen(false)
       setNotice(`已删除 ${deleting.name}`)
       if (remaining[0]) await selectDiagram(remaining[0].path)
-      else clearModelContext(workspacePath)
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -1943,17 +1928,14 @@ function MermaidPreview({ source }: { source: string }) {
       try {
         const svg = await renderMermaidSvg(source, `${renderId}-${Date.now()}`)
         if (cancelled || !container.current) return
-        const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
-        if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG。')
-        const svgElement = parsed.documentElement
+        const svgElement = createSafeSvgElement(svg)
         const viewBox = svgElement.getAttribute('viewBox')?.trim().split(/\s+/).map(Number)
         const width = viewBox?.length === 4 && Number.isFinite(viewBox[2]) ? viewBox[2] : Number.parseFloat(svgElement.getAttribute('width') || '800')
         const height = viewBox?.length === 4 && Number.isFinite(viewBox[3]) ? viewBox[3] : Number.parseFloat(svgElement.getAttribute('height') || '500')
         svgElement.removeAttribute('width')
         svgElement.removeAttribute('height')
         svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet')
-        const imported = document.importNode(svgElement, true)
-        container.current.replaceChildren(imported)
+        container.current.replaceChildren(svgElement)
         setSvgSize({ width: Math.max(1, width), height: Math.max(1, height) })
         setError(null)
         window.requestAnimationFrame(() => {
@@ -2048,7 +2030,35 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
     },
   })
   const result = await mermaid.render(renderId, source || 'flowchart LR\n  A[空图表]')
-  return result.svg
+  return serializeSafeSvg(result.svg)
+}
+
+function createSafeSvgElement(markup: string): SVGSVGElement {
+  const template = document.createElement('template')
+  template.innerHTML = markup.trim()
+  const svg = template.content.querySelector('svg')
+  if (!(svg instanceof SVGSVGElement)) throw new Error('Mermaid 没有返回可渲染的 SVG。')
+  const clone = svg.cloneNode(true) as SVGSVGElement
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  if (Array.from(clone.querySelectorAll('*')).some((element) => element.hasAttribute('xlink:href'))) {
+    clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+  }
+  clone.querySelectorAll('script, iframe, object, embed').forEach((node) => node.remove())
+  const elements = [clone, ...Array.from(clone.querySelectorAll('*'))]
+  for (const element of elements) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase()
+      const value = attribute.value.trim().toLowerCase()
+      if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href') && value.startsWith('javascript:'))) {
+        element.removeAttribute(attribute.name)
+      }
+    }
+  }
+  return clone
+}
+
+function serializeSafeSvg(markup: string): string {
+  return new XMLSerializer().serializeToString(createSafeSvgElement(markup))
 }
 
 function renderCanvasSvg(source: string): string {
@@ -2063,9 +2073,8 @@ function renderCanvasSvg(source: string): string {
 }
 
 async function svgToPngBase64(svg: string, background: string): Promise<string> {
-  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
-  if (parsed.querySelector('parsererror')) throw new Error('Mermaid 返回了无效 SVG，无法导出 PNG。')
-  const root = parsed.documentElement
+  const root = createSafeSvgElement(svg)
+  const normalizedSvg = new XMLSerializer().serializeToString(root)
   const viewBox = root.getAttribute('viewBox')?.trim().split(/\s+/).map(Number)
   const sourceWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2])
     ? Math.max(1, viewBox[2])
@@ -2079,7 +2088,7 @@ async function svgToPngBase64(svg: string, background: string): Promise<string> 
   // MCP Apps run under a restrictive CSP. A blob: URL can be rejected by the
   // host even though the SVG was produced locally, while an inline data URL
   // remains self-contained and needs no resource-domain permission.
-  const imageUrl = `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+  const imageUrl = `data:image/svg+xml;base64,${utf8ToBase64(normalizedSvg)}`
   const image = new Image()
   await new Promise<void>((resolve, reject) => {
     image.onload = () => resolve()
@@ -2162,34 +2171,6 @@ async function sendCodexMessage(text: string): Promise<void> {
     role: 'user',
     content: [{ type: 'text', text }],
     _meta: { 'openai/message': { target: 'active', send: true } },
-  })
-}
-
-function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
-  const selectedCanvasElements = canvasSelection?.elements.map((element) => {
-    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
-    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, stencil: element.stencil, c4Type: element.c4Type, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
-  })
-  void openai.modelContext?.update({
-    content: [{
-      type: 'text',
-      text: selectedCanvasElements?.length
-        ? `Selected diagram ${diagram.path} (${diagram.type}); selected canvas elements: ${selectedCanvasElements.map((item) => item.id).join(', ')}.${canvasSelection?.trace ? ` Active trace: ${canvasSelection.trace.direction} ${canvasSelection.trace.depth} hop(s), ${canvasSelection.trace.nodeIds.length} node(s), ${canvasSelection.trace.arrowIds.length} relation(s).` : ''}`
-        : `Selected diagram ${diagram.path} (${diagram.type}).`,
-    }],
-    structuredContent: {
-      workspacePath,
-      selectedDiagram: { path: diagram.path, type: diagram.type, source: diagram.source.slice(0, 24_000) },
-      selectedCanvasElements: selectedCanvasElements ?? null,
-      canvasTrace: canvasSelection?.trace ?? null,
-    },
-  })
-}
-
-function clearModelContext(workspacePath: string) {
-  void openai.modelContext?.update({
-    content: [{ type: 'text', text: 'No diagram is currently selected.' }],
-    structuredContent: { workspacePath, selectedDiagram: null },
   })
 }
 
