@@ -321,6 +321,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-property-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .freeform-align-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .freeform-lock-button { width: 100%; }
+.freeform-source-links { display: flex; flex-wrap: wrap; gap: 4px; }
+.freeform-source-link { max-width: 100%; display: inline-flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); }
+.freeform-source-link button { min-width: 0; max-width: 150px; overflow: hidden; border: 0; border-radius: 0; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-source-link button:last-child { width: 24px; flex: 0 0 24px; padding: 0; border-left: 1px solid var(--border); }
+.freeform-source-picker { position: relative; }
+.freeform-source-options { position: absolute; z-index: 14; top: calc(100% + 4px); left: 0; right: 0; max-height: 170px; overflow: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-panel); box-shadow: 0 12px 30px rgba(0,0,0,.12); }
+.freeform-source-options > span { display: block; padding: 6px 8px; color: var(--text-tertiary); font-size: 10px; }
+.freeform-source-options button { width: 100%; display: block; overflow: hidden; border: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .freeform-status {
   position: absolute;
   z-index: 6;
@@ -362,10 +370,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-arrow.is-dashed path { stroke-dasharray: 10 7; }
 .freeform-arrow text { fill: var(--text-secondary); font-size: 13px; font-family: var(--font-sans); paint-order: stroke; stroke: var(--surface-panel); stroke-width: 5px; stroke-linejoin: round; }
 .freeform-arrow-head { fill: var(--border-strong); }
+.freeform-arrow-point { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
+.freeform-group-outline { fill: color-mix(in srgb, var(--accent) 4%, transparent); stroke: color-mix(in srgb, var(--accent) 65%, transparent); stroke-width: 1.5; stroke-dasharray: 10 7; pointer-events: none; vector-effect: non-scaling-stroke; }
 .freeform-box { cursor: grab; }
 .freeform-box:active { cursor: grabbing; }
 .freeform-box rect { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 1.6; }
 .freeform-box text { fill: var(--text-primary); font-size: 15px; font-family: var(--font-sans); pointer-events: none; user-select: none; }
+.freeform-box .freeform-source-badge { fill: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .freeform-note rect { fill: color-mix(in srgb, #f7c948 26%, var(--surface-panel)); }
 .freeform-box.tone-accent rect { fill: color-mix(in srgb, #818cf8 15%, var(--surface-panel)); stroke: #818cf8; }
 .freeform-box.tone-success rect { fill: color-mix(in srgb, #34d399 15%, var(--surface-panel)); stroke: #34d399; }
@@ -376,6 +387,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.is-locked rect { stroke-dasharray: 6 4; }
 .freeform-box.is-selected rect { stroke: var(--accent); stroke-width: 3; }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
+.freeform-anchor-points circle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: crosshair; vector-effect: non-scaling-stroke; }
+.freeform-anchor-points circle:hover { fill: var(--accent); }
 .freeform-box .freeform-resize-handle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: nwse-resize; }
 .freeform-marquee { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 7 5; pointer-events: none; }
 .freeform-context-menu { position: absolute; z-index: 10; width: 150px; padding: 4px; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface-panel) 98%, transparent); box-shadow: 0 16px 40px rgba(0,0,0,.16); backdrop-filter: blur(12px); }

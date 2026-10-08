@@ -3,6 +3,8 @@ export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger'
 export type CanvasShape = 'rounded' | 'square' | 'pill'
 export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasRouting = 'straight' | 'orthogonal'
+export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
+export interface CanvasPoint { x: number; y: number }
 
 export interface CanvasScene {
   type: 'codex-diagram-canvas'
@@ -24,6 +26,8 @@ export interface CanvasNode {
   tone?: CanvasTone
   shape?: CanvasShape
   locked?: boolean
+  groupId?: string
+  sourcePaths?: string[]
 }
 
 export interface CanvasNote {
@@ -37,6 +41,8 @@ export interface CanvasNote {
   tone?: CanvasTone
   shape?: CanvasShape
   locked?: boolean
+  groupId?: string
+  sourcePaths?: string[]
 }
 
 export interface CanvasArrow {
@@ -47,6 +53,9 @@ export interface CanvasArrow {
   label?: string
   lineStyle?: CanvasLineStyle
   routing?: CanvasRouting
+  fromAnchor?: CanvasAnchor
+  toAnchor?: CanvasAnchor
+  points?: CanvasPoint[]
 }
 
 export function createCanvasSource(title: string): string {
@@ -103,16 +112,14 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     if (!from || !to) return ''
     const fromCenter = centerOfCanvasBox(from)
     const toCenter = centerOfCanvasBox(to)
-    const start = edgePoint(from, toCenter)
-    const end = edgePoint(to, fromCenter)
+    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
     const x1 = start.x
     const y1 = start.y
     const x2 = end.x
     const y2 = end.y
     const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
-    const geometry = arrow.routing === 'orthogonal'
-      ? orthogonalSvgPath(x1, y1, x2, y2)
-      : `M ${x1} ${y1} L ${x2} ${y2}`
+    const geometry = canvasArrowPath(start, end, arrow)
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
@@ -128,13 +135,32 @@ function centerOfCanvasBox(item: CanvasNode | CanvasNote) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
 }
 
-function edgePoint(item: CanvasNode | CanvasNote, toward: { x: number; y: number }) {
+function edgePoint(item: CanvasNode | CanvasNote, toward: CanvasPoint) {
   const origin = centerOfCanvasBox(item)
   const dx = toward.x - origin.x
   const dy = toward.y - origin.y
   if (dx === 0 && dy === 0) return origin
   const scale = 1 / Math.max(Math.abs(dx) / Math.max(1, item.width / 2), Math.abs(dy) / Math.max(1, item.height / 2))
   return { x: origin.x + dx * scale, y: origin.y + dy * scale }
+}
+
+export function anchorPoint(item: CanvasNode | CanvasNote, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
+  const center = centerOfCanvasBox(item)
+  switch (anchor) {
+    case 'top': return { x: center.x, y: item.y }
+    case 'right': return { x: item.x + item.width, y: center.y }
+    case 'bottom': return { x: center.x, y: item.y + item.height }
+    case 'left': return { x: item.x, y: center.y }
+    default: return edgePoint(item, toward)
+  }
+}
+
+export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points'>): string {
+  const points = arrow.points?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
+  if (points.length > 0) return [`M ${start.x} ${start.y}`, ...points.map((point) => `L ${point.x} ${point.y}`), `L ${end.x} ${end.y}`].join(' ')
+  return arrow.routing === 'orthogonal'
+    ? orthogonalSvgPath(start.x, start.y, end.x, end.y)
+    : `M ${start.x} ${start.y} L ${end.x} ${end.y}`
 }
 
 function orthogonalSvgPath(x1: number, y1: number, x2: number, y2: number): string {
@@ -188,6 +214,9 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(typeof item.label === 'string' && item.label ? { label: item.label } : {}),
       ...(item.lineStyle === 'solid' || item.lineStyle === 'dashed' ? { lineStyle: item.lineStyle } : {}),
       ...(item.routing === 'straight' || item.routing === 'orthogonal' ? { routing: item.routing } : {}),
+      ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.fromAnchor ?? '') ? { fromAnchor: item.fromAnchor } : {}),
+      ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.toAnchor ?? '') ? { toAnchor: item.toAnchor } : {}),
+      ...(Array.isArray(item.points) ? { points: item.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({ x: point.x, y: point.y })) } : {}),
     }
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
@@ -203,6 +232,8 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(item.tone && tones.includes(item.tone) ? { tone: item.tone } : {}),
     ...(item.shape && shapes.includes(item.shape) ? { shape: item.shape } : {}),
     ...(item.locked === true ? { locked: true } : {}),
+    ...(typeof item.groupId === 'string' && item.groupId.trim() ? { groupId: item.groupId.trim() } : {}),
+    ...(Array.isArray(item.sourcePaths) ? { sourcePaths: item.sourcePaths.filter((path) => typeof path === 'string' && path.trim()).map((path) => path.trim()).slice(0, 12) } : {}),
   }
 }
 

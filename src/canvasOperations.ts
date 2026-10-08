@@ -9,13 +9,24 @@ export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasEl
 
 export function pasteCanvasSelection(scene: CanvasScene, copied: CanvasElement[], offset = 32): { scene: CanvasScene; selectedIds: string[] } {
   const idMap = new Map<string, string>()
+  const groupMap = new Map<string, string>()
+  const groupCounts = new Map<string, number>()
+  copied.forEach((item) => {
+    if (item.type !== 'arrow' && item.groupId) groupCounts.set(item.groupId, (groupCounts.get(item.groupId) ?? 0) + 1)
+  })
   const used: Array<Pick<CanvasElement, 'id'>> = [...scene.elements]
   const boxes = copied.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => {
     const id = nextCanvasElementId(item.type, used)
     idMap.set(item.id, id)
+    let groupId = item.groupId && (groupCounts.get(item.groupId) ?? 0) > 1 ? item.groupId : undefined
+    if (groupId) {
+      if (!groupMap.has(groupId)) groupMap.set(groupId, nextCanvasGroupId(scene, [...groupMap.values()]))
+      groupId = groupMap.get(groupId)
+    }
     const pasted = {
       ...item,
       id,
+      ...(groupId ? { groupId } : {}),
       x: clamp(item.x + offset, 0, scene.width - item.width),
       y: clamp(item.y + offset, 0, scene.height - item.height),
     }
@@ -108,6 +119,61 @@ export function reorderCanvasSelection(scene: CanvasScene, ids: string[], direct
       ? [...arrows, ...rest, ...chosen]
       : [...arrows, ...chosen, ...rest],
   }
+}
+
+export function groupCanvasSelection(scene: CanvasScene, ids: string[]): { scene: CanvasScene; groupId?: string } {
+  const chosen = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id))
+  if (chosen.length < 2) return { scene }
+  const existing = chosen.map((item) => item.groupId).filter((value): value is string => Boolean(value))
+  const groupId = existing.length === chosen.length && existing.every((value) => value === existing[0])
+    ? existing[0]
+    : nextCanvasGroupId(scene)
+  return {
+    groupId,
+    scene: {
+      ...scene,
+      elements: scene.elements.map((item) => item.type !== 'arrow' && ids.includes(item.id) ? { ...item, groupId } : item),
+    },
+  }
+}
+
+export function ungroupCanvasSelection(scene: CanvasScene, ids: string[]): CanvasScene {
+  const groupIds = new Set(scene.elements
+    .filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id) && Boolean(item.groupId))
+    .map((item) => item.groupId!))
+  if (groupIds.size === 0) return scene
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || !item.groupId || !groupIds.has(item.groupId)) return item
+      const { groupId: _groupId, ...rest } = item
+      return rest
+    }),
+  }
+}
+
+export function expandCanvasGroupSelection(scene: CanvasScene, ids: string[]): string[] {
+  const groups = new Set(scene.elements
+    .filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id) && Boolean(item.groupId))
+    .map((item) => item.groupId!))
+  if (groups.size === 0) return ids
+  const result = new Set(ids)
+  scene.elements.forEach((item) => {
+    if (item.type !== 'arrow' && item.groupId && groups.has(item.groupId)) result.add(item.id)
+  })
+  return [...result]
+}
+
+export function nextCanvasGroupId(scene: CanvasScene, reserved: string[] = []): string {
+  const used = new Set([
+    ...reserved,
+    ...scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!),
+  ])
+  for (let index = 1; index < 100_000; index += 1) {
+    const id = `group-${index}`
+    if (!used.has(id)) return id
+  }
+  return `group-${Date.now()}`
 }
 
 export function nextCanvasElementId(prefix: string, elements: Array<Pick<CanvasElement, 'id'>>): string {

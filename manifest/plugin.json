@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Create, inspect and edit Mermaid diagrams beside Codex conversations.",
   "author": {
     "name": "Codex Diagram"

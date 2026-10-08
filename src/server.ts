@@ -7,6 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
+import { parseCanvasScene } from './canvas.js'
 import { DiagramStore } from './store.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
@@ -56,7 +57,7 @@ const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: fa
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
-const threadSelection = new Map<string, { path?: string; updatedAt: string }>()
+const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; updatedAt: string }>()
 const ui = (
   resourceUri: string,
   entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
@@ -135,6 +136,7 @@ server.registerTool('diagram.threadState', {
   const payload = {
     kind: 'diagram-thread-state',
     activeDiagramPath: state?.path,
+    focusElementIds: state?.focusElementIds,
     updatedAt: state?.updatedAt,
   }
   return {
@@ -215,6 +217,45 @@ server.registerTool('diagram.sources', {
   return {
     content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
     structuredContent: payload,
+  }
+})
+
+server.registerTool('diagram.findBySource', {
+  title: 'Find diagram nodes by source file',
+  description: 'Find Canvas nodes linked to a workspace source file. Use this to locate the visual node for code the user is discussing.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    sourcePath: z.string().min(1).max(600),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, sourcePath }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const normalized = normalizeSourcePath(sourcePath)
+  const summaries = await store.list()
+  const matches: Array<{ diagramPath: string; diagramName: string; nodes: Array<{ id: string; text: string; sourcePaths: string[] }> }> = []
+  for (const summary of summaries) {
+    if (summary.type !== 'canvas') continue
+    const diagram = await store.get(summary.path)
+    try {
+      const scene = parseCanvasScene(diagram.source)
+      const nodes = scene.elements.flatMap((element) => {
+        if (element.type === 'arrow' || !element.sourcePaths?.some((path) => sourcePathMatches(normalizeSourcePath(path), normalized))) return []
+        return [{ id: element.id, text: element.text, sourcePaths: element.sourcePaths }]
+      })
+      if (nodes.length) matches.push({ diagramPath: summary.path, diagramName: summary.name, nodes })
+    } catch {
+      // Ignore malformed Canvas files here; diagram.get remains the source of truth for repair flows.
+    }
+  }
+  if (matches.length === 1) markThreadDiagram(extra._meta, matches[0].diagramPath, matches[0].nodes.map((node) => node.id))
+  return {
+    content: [{
+      type: 'text',
+      text: matches.length
+        ? matches.map((match) => `${match.diagramPath}: ${match.nodes.map((node) => `${node.id} (${node.text})`).join(', ')}`).join('\n')
+        : `No Canvas nodes are linked to ${sourcePath}.`,
+    }],
+    structuredContent: { kind: 'diagram-source-matches', workspacePath: store.workspacePath, sourcePath, matches },
   }
 })
 
@@ -485,6 +526,14 @@ function fuzzyPathMatch(pathValue: string, query: string): boolean {
   return terms.every((term) => pathValue.includes(term))
 }
 
+function normalizeSourcePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '').toLocaleLowerCase()
+}
+
+function sourcePathMatches(candidate: string, query: string): boolean {
+  return candidate === query || candidate.endsWith(`/${query}`) || query.endsWith(`/${candidate}`)
+}
+
 function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface, threadId?: string): Record<string, unknown> {
   const activeDiagramPath = threadId ? threadSelection.get(threadId)?.path : snapshot.activeDiagramPath
   return {
@@ -497,10 +546,10 @@ function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface,
   }
 }
 
-function markThreadDiagram(meta: unknown, diagramPath: string): void {
+function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?: string[]): void {
   const threadId = toolThreadId(meta)
   if (!threadId) return
-  threadSelection.set(threadId, { path: diagramPath, updatedAt: new Date().toISOString() })
+  threadSelection.set(threadId, { path: diagramPath, focusElementIds, updatedAt: new Date().toISOString() })
 }
 
 function clearThreadDiagram(meta: unknown, deletedPath: string): void {

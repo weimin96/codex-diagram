@@ -60,6 +60,7 @@ interface DiagramExportResult {
 interface DiagramThreadStateResult {
   kind: 'diagram-thread-state'
   activeDiagramPath?: string
+  focusElementIds?: string[]
   updatedAt?: string
 }
 
@@ -208,6 +209,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [followConversation, setFollowConversation] = useState(true)
   const [threadTabs, setThreadTabs] = useState<string[]>([])
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
+  const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string } | null>(null)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
@@ -243,6 +245,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setSelected(null)
     setThreadTabs([])
     setCanvasSelection(null)
+    setCanvasFocus(null)
     setChangeReview(null)
     setChangeReviewOpen(false)
     setSource('')
@@ -303,7 +306,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             }
             return
           }
-          if (nextPath === selected?.path) return
+          if (nextPath === selected?.path) {
+            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt } : null)
+            if (state.focusElementIds?.length) setNotice(`已定位 ${state.focusElementIds.length} 个源码关联节点`)
+            return
+          }
           let diagrams = snapshot.diagrams
           if (!diagrams.some((diagram) => diagram.path === nextPath)) {
             const result = await callTool<DiagramListResult>('diagram.list', { workspacePath })
@@ -313,7 +320,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           }
           if (diagrams.some((diagram) => diagram.path === nextPath)) {
             await selectDiagram(nextPath, true)
-            if (!disposed) setNotice('已跟随当前对话中的图表')
+            setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt } : null)
+            if (!disposed) setNotice(state.focusElementIds?.length ? `已切换并定位 ${state.focusElementIds.length} 个源码关联节点` : '已跟随当前对话中的图表')
           }
         })
         .catch(() => {
@@ -769,8 +777,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   async function updateSelectedCanvasFromConversation() {
     if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
     const compact = canvasSelection.elements.map((element) => {
-      if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing }
-      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked }
+      if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
     })
     await sendModification([
       '结合当前对话中用户最新的要求，只调整自由画布里当前选中的元素以及为了保持连线正确而必须连带修改的元素。',
@@ -863,6 +871,19 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       await fileApi.open(resolveWorkspaceFilePath(workspacePath, selected.path))
     } catch (cause) {
       setError(`打开图表文件失败：${errorMessage(cause)}`)
+    }
+  }
+
+  async function openWorkspaceSource(path: string) {
+    const fileApi = openai.files
+    if (!fileApi) {
+      setError('当前 Codex Host 没有提供原生文件打开能力。')
+      return
+    }
+    try {
+      await fileApi.open(resolveWorkspaceFilePath(workspacePath, path))
+    } catch (cause) {
+      setError(`打开源码失败：${errorMessage(cause)}`)
     }
   }
 
@@ -1161,7 +1182,15 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <section className="preview-pane">
                   {!isThread || selected.type !== 'canvas' ? <div className="pane-head"><span>{selected.type === 'canvas' ? '画布' : '预览'}</span><span>{selected.type === 'canvas' ? '可视化编辑' : '实时渲染'}</span></div> : null}
                   {selected.type === 'canvas'
-                    ? <CanvasEditor source={source} onChange={setSource} onSelectionChange={setCanvasSelection} />
+                    ? <CanvasEditor
+                        source={source}
+                        onChange={setSource}
+                        onSelectionChange={setCanvasSelection}
+                        onOpenSource={(path) => void openWorkspaceSource(path)}
+                        onSearchSources={searchSourceFiles}
+                        focusElementIds={canvasFocus?.ids}
+                        focusKey={canvasFocus?.key}
+                      />
                     : <MermaidPreview source={source} />}
                 </section>
               ) : null}
@@ -1651,8 +1680,8 @@ async function sendCodexMessage(text: string): Promise<void> {
 
 function updateModelContext(workspacePath: string, diagram: DiagramDocument, canvasSelection?: CanvasSelection) {
   const selectedCanvasElements = canvasSelection?.elements.map((element) => {
-    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing }
-    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked }
+    if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points }
+    return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, locked: element.locked, groupId: element.groupId, sourcePaths: element.sourcePaths }
   })
   void openai.modelContext?.update({
     content: [{
