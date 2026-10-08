@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.8.24",
+  "version": "0.8.25",
   "private": true,
   "type": "module",
   "description": "Visual diagram workspace for Codex with Mermaid editing and MCP tools.",

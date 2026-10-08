@@ -1655,6 +1655,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     ? -playbackBubbleWidth - 24
     : 26
   const playbackBubbleOffsetY = playback?.intent && playback.cursor.y < viewport.y + viewHeight * 0.14 ? 40 : -32
+  const architectureToolbarLabel = scene.architecture
+    ? architectureScope
+      ? `架构 · ${architectureScope.kind === 'node' ? '聚焦' : '下钻'}`
+      : `架构 · ${architectureView === 'overview' ? '总览' : '详情'}`
+    : '架构'
+  const analysisToolbarLabel = traceDirection
+    ? `分析 · ${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}`
+    : '分析'
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
     const presentation = playback?.boxOverrides?.[item.id] ?? item
@@ -1672,30 +1680,38 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
           <span className="freeform-toolbar-separator" />
           <div className="freeform-toolbar-menu-wrap">
-            <button type="button" className={toolbarMenu === 'architecture' ? 'is-active' : ''} aria-expanded={toolbarMenu === 'architecture'} onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'architecture' ? null : 'architecture') }}>架构⌄</button>
+            <button
+              type="button"
+              className={`${toolbarMenu === 'architecture' ? 'is-active' : ''}${scene.architecture ? ' has-mode-state' : ''}`}
+              aria-expanded={toolbarMenu === 'architecture'}
+              title={scene.architecture ? `${architectureView === 'overview' ? '总览视图' : '详情视图'} · ${architectureDensity === 'auto' ? '自动密度' : architectureDensity}${architectureScope ? ' · 当前处于局部视图' : ''}` : '架构工具'}
+              onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'architecture' ? null : 'architecture') }}
+            >
+              <span className="freeform-toolbar-state-dot" />{architectureToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
+            </button>
             {toolbarMenu === 'architecture' ? (
               <div className="freeform-toolbar-menu is-architecture" role="menu" aria-label="架构设置">
                 {scene.architecture ? <>
                   <section>
                     <span>视图</span>
                     <div className="freeform-menu-grid two">
-                      <button type="button" className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
-                      <button type="button" className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
+                      <button type="button" aria-pressed={architectureView === 'overview'} className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
+                      <button type="button" aria-pressed={architectureView === 'detail'} className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
                     </div>
                   </section>
                   <section>
                     <span>主题</span>
                     <div className="freeform-menu-grid three">
-                      <button type="button" className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
-                      <button type="button" className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
-                      <button type="button" className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
+                      <button type="button" aria-pressed={architectureTheme === 'enterprise'} className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
+                      <button type="button" aria-pressed={architectureTheme === 'technical'} className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
+                      <button type="button" aria-pressed={architectureTheme === 'presentation'} className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
                     </div>
                   </section>
                   <section>
                     <span>密度</span>
                     <div className="freeform-menu-grid four">
                       {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
-                        <button key={value} type="button" className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
+                        <button key={value} type="button" aria-pressed={architectureDensity === value} className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
                       ))}
                     </div>
                   </section>
@@ -1745,16 +1761,24 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </div>
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setLayersOpen((value) => !value) }}>层级</button>
           <div className="freeform-toolbar-menu-wrap">
-            <button type="button" className={toolbarMenu === 'analysis' ? 'is-active' : ''} aria-expanded={toolbarMenu === 'analysis'} onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'analysis' ? null : 'analysis') }}>分析⌄</button>
+            <button
+              type="button"
+              className={`${toolbarMenu === 'analysis' ? 'is-active' : ''}${traceDirection ? ' has-mode-state' : ''}`}
+              aria-expanded={toolbarMenu === 'analysis'}
+              title={traceDirection ? `正在追踪${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}依赖 · ${traceDepth} 跳` : '架构与代码分析'}
+              onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'analysis' ? null : 'analysis') }}
+            >
+              <span className="freeform-toolbar-state-dot" />{analysisToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
+            </button>
             {toolbarMenu === 'analysis' ? (
               <div className="freeform-toolbar-menu is-analysis" role="menu" aria-label="架构分析">
                 {selectedBoxes.length ? (
                   <section>
                     <span>依赖追踪</span>
                     <div className="freeform-menu-grid three">
-                      <button type="button" className={traceDirection === 'upstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('upstream'); setToolbarMenu(null) }}>上游</button>
-                      <button type="button" className={traceDirection === 'both' ? 'is-selected' : ''} onClick={() => { setTraceDirection('both'); setToolbarMenu(null) }}>上下游</button>
-                      <button type="button" className={traceDirection === 'downstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('downstream'); setToolbarMenu(null) }}>下游</button>
+                      <button type="button" aria-pressed={traceDirection === 'upstream'} className={traceDirection === 'upstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('upstream'); setToolbarMenu(null) }}>上游</button>
+                      <button type="button" aria-pressed={traceDirection === 'both'} className={traceDirection === 'both' ? 'is-selected' : ''} onClick={() => { setTraceDirection('both'); setToolbarMenu(null) }}>上下游</button>
+                      <button type="button" aria-pressed={traceDirection === 'downstream'} className={traceDirection === 'downstream' ? 'is-selected' : ''} onClick={() => { setTraceDirection('downstream'); setToolbarMenu(null) }}>下游</button>
                     </div>
                     <label className="freeform-menu-depth"><span>深度</span><select value={traceDepth} onChange={(event) => setTraceDepth(Number(event.target.value))}><option value={1}>1 跳</option><option value={2}>2 跳</option><option value={3}>3 跳</option></select></label>
                   </section>
@@ -1775,13 +1799,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
         {architectureScope ? (
           <nav className="freeform-architecture-breadcrumb" aria-label="架构导航路径">
-            <button type="button" onClick={leaveArchitectureScope}>全局</button>
+            <span className="freeform-scope-label">{architectureScope.kind === 'node' ? 'FOCUS' : 'SCOPE'}</span>
+            <button type="button" className="freeform-breadcrumb-root" onClick={leaveArchitectureScope}>全局</button>
             {architectureBreadcrumbs.map((item, index) => (
               <span key={`${item.kind}:${item.id}`}>
                 <i>/</i>
                 <button
                   type="button"
                   className={index === architectureBreadcrumbs.length - 1 ? 'is-current' : ''}
+                  aria-current={index === architectureBreadcrumbs.length - 1 ? 'page' : undefined}
                   onClick={() => enterArchitectureScope({ kind: item.kind, id: item.id, ...(item.kind === 'node' ? { depth: architectureScope.depth ?? 1 } : {}) })}
                 >{truncate(item.label, 26)}</button>
               </span>
@@ -1857,7 +1883,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         {selected.length > 0 ? (
           <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
-              <strong>{selectedGroup ? selectedGroup.label || '边界' : selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
+              <div className="freeform-inspector-title">
+                <strong>{selectedGroup ? selectedGroup.label || '边界' : selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
+                {selectedBox?.locked ? <span className="freeform-inspector-badge">已锁定</span> : null}
+                {selectedGroup?.c4Type ? <span className="freeform-inspector-badge">{c4Label(selectedGroup.c4Type)}</span> : selectedBox?.c4Type ? <span className="freeform-inspector-badge">{c4Label(selectedBox.c4Type)}</span> : null}
+              </div>
               <div className="freeform-inspector-actions">
                 {scene.architecture && selectedBox ? <button type="button" title="只查看当前节点及邻域" onClick={() => enterArchitectureScope({ kind: 'node', id: selectedBox.id, depth: 1 })}>聚焦</button> : null}
                 {scene.architecture && selectedGroupId ? <button type="button" title="进入当前边界查看内部结构" onClick={() => enterArchitectureScope({ kind: 'group', id: selectedGroupId })}>下钻</button> : null}
