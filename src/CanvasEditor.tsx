@@ -45,7 +45,12 @@ type PlaybackState = {
   typing?: { id: string; text: string }
   positionOverrides?: Record<string, CanvasPoint>
   toolHint?: 'select' | 'node' | 'note' | 'connect'
-  phase?: 'placing' | 'typing' | 'connecting' | 'arranging' | 'finishing'
+  phase?: 'planning' | 'transitioning' | 'placing' | 'typing' | 'connecting' | 'arranging' | 'finishing'
+  intent?: string
+  regionLabel?: string
+  regionIndex?: number
+  totalRegions?: number
+  activeRegionIds?: string[]
   finalHighlightIds?: string[]
   step: number
   total: number
@@ -281,7 +286,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       return
     }
     const pace = plan.actions.length > 60 ? 0.3 : plan.actions.length > 36 ? 0.46 : plan.actions.length > 20 ? 0.68 : 1
+    const regionByKey = new Map(plan.regions.map((region, index) => [region.key, { ...region, index }]))
     const firstTarget = playbackActionTarget(parsed.scene, plan.actions[0]) ?? { x: 72, y: 72 }
+    const firstRegion = regionByKey.get(plan.actions[0].regionKey)
     playbackCursor.current = { x: Math.max(36, firstTarget.x - 96), y: Math.max(36, firstTarget.y - 72) }
     setPlayback({
       active: true,
@@ -289,6 +296,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       cursor: playbackCursor.current,
       cursorVisible: true,
       clicking: false,
+      phase: 'planning',
+      intent: firstRegion ? `准备绘制 ${firstRegion.label}` : '准备绘制画板',
+      regionLabel: firstRegion?.label,
+      regionIndex: firstRegion ? firstRegion.index + 1 : undefined,
+      totalRegions: plan.regions.length || undefined,
+      activeRegionIds: firstRegion?.elementIds,
       step: 0,
       total: plan.actions.length,
       label: playbackRequest.label || (playbackRequest.mode === 'create' ? 'Codex 正在绘制画板' : 'Codex 正在调整画板'),
@@ -314,7 +327,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const moveCamera = (target: CanvasPoint, duration = 260, preferredZoom = 1.12) => new Promise<void>((resolve) => {
       const live = parsed.scene!
       const from = viewportRef.current
-      const zoom = clamp(preferredZoom, 1, 1.6)
+      const zoom = clamp(preferredZoom, 0.82, 1.85)
       const width = live.width / zoom
       const height = live.height / zoom
       const to: Viewport = {
@@ -341,9 +354,48 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       window.requestAnimationFrame(frame)
     })
 
+    const enterRegion = async (regionKey: string, previousRegionKey?: string) => {
+      const nextRegion = regionByKey.get(regionKey)
+      if (!nextRegion) return
+      const previousRegion = previousRegionKey ? regionByKey.get(previousRegionKey) : undefined
+      if (previousRegion && previousRegion.key !== nextRegion.key) {
+        setPlayback((current) => current ? {
+          ...current,
+          phase: 'transitioning',
+          intent: `完成 ${previousRegion.label}`,
+          toolHint: 'select',
+          activeRegionIds: previousRegion.elementIds,
+        } : current)
+        await moveCamera(previousRegion.center, 180 * pace, 0.9)
+        await sleep(100 * pace)
+      }
+      const regionZoom = clamp(Math.min(
+        parsed.scene!.width / Math.max(540, nextRegion.width + 420),
+        parsed.scene!.height / Math.max(360, nextRegion.height + 300),
+      ), 1.02, 1.55)
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'planning',
+        intent: `进入 ${nextRegion.label}`,
+        regionLabel: nextRegion.label,
+        regionIndex: nextRegion.index + 1,
+        totalRegions: plan.regions.length,
+        activeRegionIds: nextRegion.elementIds,
+        toolHint: 'select',
+      } : current)
+      await moveCamera(nextRegion.center, 300 * pace, regionZoom)
+      await sleep(90 * pace)
+    }
+
     const typeText = async (id: string, text: string, fromText = '') => {
       if (!text || text === fromText) return
-      setPlayback((current) => current ? { ...current, phase: 'typing', typing: { id, text: fromText }, toolHint: 'select' } : current)
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'typing',
+        typing: { id, text: fromText },
+        toolHint: 'select',
+        intent: `输入 ${truncate(text, 22)}`,
+      } : current)
       const prefix = commonPrefixLength(fromText, text)
       const start = fromText.slice(0, prefix)
       const tail = text.slice(prefix)
@@ -397,9 +449,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
     void (async () => {
       await sleep(140 * pace)
+      let activeRegionKey: string | undefined
       for (let index = 0; index < plan.actions.length; index += 1) {
         if (playbackRun.current !== runId) return
         const action = plan.actions[index]
+        if (action.regionKey !== activeRegionKey) {
+          await enterRegion(action.regionKey, activeRegionKey)
+          activeRegionKey = action.regionKey
+        }
         const target = playbackActionTarget(parsed.scene!, action)
         if (!target) continue
         await moveCamera(target, 260 * pace)
@@ -408,7 +465,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           if (!box) continue
           const isMoved = Boolean(action.before && (action.before.x !== box.x || action.before.y !== box.y))
           const toolHint = action.added ? (box.type === 'note' ? 'note' : 'node') : 'select'
-          setPlayback((current) => current ? { ...current, phase: action.added ? 'placing' : isMoved ? 'arranging' : 'typing', toolHint } : current)
+          setPlayback((current) => current ? {
+            ...current,
+            phase: action.added ? 'placing' : isMoved ? 'arranging' : 'typing',
+            toolHint,
+            intent: playbackActionIntent(parsed.scene!, action),
+          } : current)
           if (action.before && isMoved) {
             const beforeCenter = center(action.before)
             playbackCursor.current = beforeCenter
@@ -442,7 +504,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           const from = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from) : undefined
           const to = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to) : undefined
           if (!arrow || !from || !to) continue
-          setPlayback((current) => current ? { ...current, phase: 'connecting', toolHint: 'connect' } : current)
+          setPlayback((current) => current ? {
+            ...current,
+            phase: 'connecting',
+            toolHint: 'connect',
+            intent: playbackActionIntent(parsed.scene!, action),
+          } : current)
           await moveCursor(center(from), 190 * pace)
           setPlayback((current) => current ? {
             ...current,
@@ -469,13 +536,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         typing: undefined,
         toolHint: 'select',
         phase: 'finishing',
+        intent: '检查整体布局',
+        regionLabel: '全图',
+        regionIndex: plan.regions.length,
+        totalRegions: plan.regions.length,
+        activeRegionIds: undefined,
         finalHighlightIds: changedIds,
         step: current.total,
       } : current)
       await moveCamera({ x: parsed.scene!.width / 2, y: parsed.scene!.height / 2 }, 360 * pace, 1)
       viewportRef.current = { x: 0, y: 0, zoom: 1 }
       setViewport({ x: 0, y: 0, zoom: 1 })
-      await sleep(520 * pace)
+      setPlayback((current) => current ? { ...current, intent: '确认最终结果' } : current)
+      await sleep(180 * pace)
+      await moveCursor({ x: Math.max(72, parsed.scene!.width - 92), y: 72 }, 260 * pace)
+      setPlayback((current) => current ? { ...current, intent: '完成画板', cursorVisible: false } : current)
+      await sleep(340 * pace)
       if (playbackRun.current === runId) {
         setPlayback(null)
         onPlaybackComplete?.(playbackRequest.key)
@@ -540,6 +616,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : boxes
   const tracedNodeIds = new Set(traceResult?.nodeIds ?? [])
   const tracedArrowIds = new Set(traceResult?.arrowIds ?? [])
+  const activePlaybackRegionIds = new Set(playback?.activeRegionIds ?? [])
+  const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
 
   function currentScene(): CanvasScene {
     if (!sceneRef.current) throw new Error('Canvas scene unavailable')
@@ -1059,6 +1137,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   const viewWidth = scene.width / viewport.zoom
   const viewHeight = scene.height / viewport.zoom
+  const playbackBubbleOffsetX = playback?.intent && playback.cursor.x > viewport.x + viewWidth * 0.7
+    ? -playbackBubbleWidth - 24
+    : 26
+  const playbackBubbleOffsetY = playback?.intent && playback.cursor.y < viewport.y + viewHeight * 0.14 ? 40 : -32
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
     const position = playback?.positionOverrides?.[item.id]
@@ -1485,7 +1567,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {groupBounds.filter((group) => !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => (
             <g
               key={group.id}
-              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}`}
+              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
               pointerEvents={group.collapsed ? 'all' : 'none'}
               onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
               onDoubleClick={group.collapsed ? (event) => { event.stopPropagation(); commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false })); setSelectedGroupTarget(group.id) } : undefined}
@@ -1508,7 +1590,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const path = canvasArrowPath(start, end, arrow)
             const labelPoint = pathLabelPoint(start, end, arrow.points)
             return (
-              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(arrow.from) || activePlaybackRegionIds.has(arrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
                 {arrow.label ? <text x={labelPoint.x} y={labelPoint.y - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
                 {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
@@ -1553,7 +1635,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}`}
+              className={`freeform-box freeform-${item.type} tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${item.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -1614,6 +1696,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <circle className="freeform-ai-cursor-ring" cx="3" cy="4" r="16" />
               <path className="freeform-ai-cursor-pointer" d="M0 0 L0 24 L6 18 L11 29 L17 26 L12 15 L22 15 Z" />
               <circle className="freeform-ai-cursor-dot" cx="3" cy="4" r="3" />
+              {playback.intent ? (
+                <g className="freeform-ai-intent-bubble" transform={`translate(${playbackBubbleOffsetX} ${playbackBubbleOffsetY})`}>
+                  <rect x="0" y="-22" width={playbackBubbleWidth} height="30" rx="9" />
+                  <text x="10" y="-3">{truncate(playback.intent, 34)}</text>
+                </g>
+              ) : null}
             </g>
           ) : null}
         </svg>
@@ -1623,7 +1711,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <span className="freeform-playback-pulse" />
             <div>
               <strong>{playback.label}</strong>
-              <span>{playbackPhaseLabel(playback.phase)} · {playback.step}/{playback.total}</span>
+              <span>{playback.regionIndex && playback.totalRegions ? `区域 ${playback.regionIndex}/${playback.totalRegions} · ` : ''}{playbackPhaseLabel(playback.phase)} · {playback.step}/{playback.total}</span>
             </div>
             <button type="button" onClick={() => { playbackRun.current += 1; setPlayback(null); onPlaybackComplete?.(playbackRequest?.key ?? '') }}>跳过</button>
           </div>
@@ -1666,10 +1754,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 }
 
 type CanvasPlaybackAction =
-  | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote }
-  | { kind: 'arrow'; id: string; added: boolean; before?: CanvasArrow }
+  | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote; regionKey: string }
+  | { kind: 'arrow'; id: string; added: boolean; before?: CanvasArrow; regionKey: string }
 
-function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: CanvasScene, mode: 'create' | 'update'): { initialVisibleIds: string[]; actions: CanvasPlaybackAction[] } {
+type CanvasPlaybackRegion = {
+  key: string
+  label: string
+  elementIds: string[]
+  center: CanvasPoint
+  width: number
+  height: number
+}
+
+function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: CanvasScene, mode: 'create' | 'update'): { initialVisibleIds: string[]; actions: CanvasPlaybackAction[]; regions: CanvasPlaybackRegion[] } {
   const previousById = new Map(previous?.elements.map((item) => [item.id, item]) ?? [])
   const changed = new Set<string>()
   const added = new Set<string>()
@@ -1679,34 +1776,98 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
     else if (JSON.stringify(before) !== JSON.stringify(item)) changed.add(item.id)
   }
   const orderedBoxes = playbackBoxOrder(next)
+  const boxOrderIndex = new Map(orderedBoxes.map((id, index) => [id, index]))
+  const regionByBoxId = new Map<string, string>()
+  const regions = buildCanvasPlaybackRegions(next)
+  regions.forEach((region) => region.elementIds.forEach((id) => regionByBoxId.set(id, region.key)))
+  const arrowRegionKey = (arrow: CanvasArrow) => {
+    const fromIndex = boxOrderIndex.get(arrow.from) ?? -1
+    const toIndex = boxOrderIndex.get(arrow.to) ?? -1
+    const laterId = toIndex >= fromIndex ? arrow.to : arrow.from
+    return regionByBoxId.get(laterId) ?? regionByBoxId.get(arrow.to) ?? regionByBoxId.get(arrow.from) ?? 'canvas'
+  }
   const changedArrows = next.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && (added.has(item.id) || changed.has(item.id)))
   const actions: CanvasPlaybackAction[] = []
   const visitedBoxes = new Set<string>()
   const emittedArrows = new Set<string>()
   for (const id of orderedBoxes) {
     const before = previousById.get(id)
-    if (added.has(id)) actions.push({ kind: 'box', id, added: true })
-    else if (changed.has(id)) actions.push({ kind: 'box', id, added: false, ...(before && before.type !== 'arrow' ? { before } : {}) })
+    const regionKey = regionByBoxId.get(id) ?? 'canvas'
+    if (added.has(id)) actions.push({ kind: 'box', id, added: true, regionKey })
+    else if (changed.has(id)) actions.push({ kind: 'box', id, added: false, regionKey, ...(before && before.type !== 'arrow' ? { before } : {}) })
     visitedBoxes.add(id)
     for (const arrow of changedArrows) {
       if (emittedArrows.has(arrow.id) || !visitedBoxes.has(arrow.from) || !visitedBoxes.has(arrow.to)) continue
       const arrowBefore = previousById.get(arrow.id)
-      actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), ...(arrowBefore?.type === 'arrow' ? { before: arrowBefore } : {}) })
+      const regionKey = arrowRegionKey(arrow)
+      actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey, ...(arrowBefore?.type === 'arrow' ? { before: arrowBefore } : {}) })
       emittedArrows.add(arrow.id)
     }
   }
   for (const arrow of changedArrows) {
     if (emittedArrows.has(arrow.id)) continue
     const before = previousById.get(arrow.id)
-    actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), ...(before?.type === 'arrow' ? { before } : {}) })
+    const regionKey = arrowRegionKey(arrow)
+    actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey, ...(before?.type === 'arrow' ? { before } : {}) })
   }
   const hidden = mode === 'create'
     ? new Set(next.elements.map((item) => item.id))
     : added
+  const regionOrder = [...new Set(actions.map((action) => action.regionKey))]
+  const orderedActions = regionOrder.flatMap((regionKey) => actions.filter((action) => action.regionKey === regionKey))
+  const regionMap = new Map(regions.map((region) => [region.key, region]))
   return {
     initialVisibleIds: next.elements.filter((item) => !hidden.has(item.id)).map((item) => item.id),
-    actions,
+    actions: orderedActions,
+    regions: regionOrder.flatMap((key) => {
+      const region = regionMap.get(key)
+      return region ? [region] : []
+    }),
   }
+}
+
+function buildCanvasPlaybackRegions(scene: CanvasScene): CanvasPlaybackRegion[] {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const groups = new Map<string, CanvasNode | CanvasNote[]>()
+  const labels = new Map<string, string>()
+  const groupMeta = new Map((scene.groups ?? []).map((group) => [group.id, group]))
+  const laneMeta = new Map((scene.lanes ?? []).map((lane) => [lane.id, lane]))
+  for (const box of boxes) {
+    let key: string
+    let label: string
+    if (box.groupId && groupMeta.has(box.groupId)) {
+      key = `group:${box.groupId}`
+      label = groupMeta.get(box.groupId)?.label || '系统区域'
+    } else if (box.laneId && laneMeta.has(box.laneId)) {
+      key = `lane:${box.laneId}`
+      label = laneMeta.get(box.laneId)?.label || '泳道区域'
+    } else {
+      const column = Math.floor((box.x + box.width / 2) / 760)
+      const row = Math.floor((box.y + box.height / 2) / 520)
+      key = `area:${column}:${row}`
+      label = boxes.length <= 8 ? '核心画布' : `区域 ${row + 1}-${column + 1}`
+    }
+    const members = groups.get(key) ?? []
+    members.push(box)
+    groups.set(key, members)
+    labels.set(key, label)
+  }
+  return [...groups.entries()]
+    .map(([key, members]) => {
+      const left = Math.min(...members.map((item) => item.x))
+      const top = Math.min(...members.map((item) => item.y))
+      const right = Math.max(...members.map((item) => item.x + item.width))
+      const bottom = Math.max(...members.map((item) => item.y + item.height))
+      return {
+        key,
+        label: labels.get(key) ?? '画布区域',
+        elementIds: members.map((item) => item.id),
+        center: { x: (left + right) / 2, y: (top + bottom) / 2 },
+        width: right - left,
+        height: bottom - top,
+      }
+    })
+    .sort((left, right) => left.center.x - right.center.x || left.center.y - right.center.y)
 }
 
 function playbackBoxOrder(scene: CanvasScene): string[] {
@@ -1752,6 +1913,21 @@ function playbackActionTarget(scene: CanvasScene, action: CanvasPlaybackAction):
   return { x: (center(from).x + center(to).x) / 2, y: (center(from).y + center(to).y) / 2 }
 }
 
+function playbackActionIntent(scene: CanvasScene, action: CanvasPlaybackAction): string {
+  const item = scene.elements.find((candidate) => candidate.id === action.id)
+  if (!item) return action.kind === 'arrow' ? '连接关系' : '调整节点'
+  if (item.type !== 'arrow') {
+    if (action.added) return `添加 ${truncate(item.text, 22)}`
+    const moved = action.before && (action.before.x !== item.x || action.before.y !== item.y)
+    if (moved) return `整理 ${truncate(item.text, 22)} 位置`
+    return `更新 ${truncate(item.text, 22)}`
+  }
+  const from = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.from)
+  const to = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.to)
+  if (from && to) return `连接 ${truncate(from.text, 12)} → ${truncate(to.text, 12)}`
+  return item.label ? `连接 ${truncate(item.label, 22)}` : '连接节点关系'
+}
+
 function commonPrefixLength(left: string, right: string): number {
   const max = Math.min(left.length, right.length)
   let index = 0
@@ -1760,6 +1936,8 @@ function commonPrefixLength(left: string, right: string): number {
 }
 
 function playbackPhaseLabel(phase: PlaybackState['phase']): string {
+  if (phase === 'planning') return '规划区域'
+  if (phase === 'transitioning') return '切换区域'
   if (phase === 'placing') return '放置节点'
   if (phase === 'typing') return '输入内容'
   if (phase === 'connecting') return '连接关系'
