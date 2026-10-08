@@ -21,6 +21,8 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '需要用于评审、方案汇报或截图交付时使用 presentation 主题；该模式会保留标题带、图例、更宽松的列距与卡片信息层级。',
     '当图超过约 20 个节点时优先使用 density=auto，让插件自动从 comfortable 切到 compact/dense；不要靠缩小字体硬塞节点。',
     '大型架构图需要先给 overview，再按需要切 detail：overview 只隐藏低优先级显示项，不删除节点数据，并保留主链路、直接依赖和每个区域的代表节点。',
+    '40 个节点以上优先建立稳定的 Software System / Container / Domain 边界和 lane，使 Diagram 可以按区域下钻；不要生成 100+ 个无层级平铺节点。',
+    'Container/Domain 边界必须对应真实职责、部署或运行边界；节点 Focus 由插件按 1~3 跳邻域完成，不要为了局部视图复制节点。',
     '节点卡片按 Actor / Edge / Runtime / Async / Data / External 等语义模板呈现；真实技术仍由 stencil/subtitle 表达，不要把模板标签当成具体技术。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
     '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',

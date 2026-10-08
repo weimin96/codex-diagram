@@ -9,6 +9,7 @@ export type CanvasArchitectureTheme = 'enterprise' | 'technical' | 'presentation
 export type CanvasArchitectureView = 'overview' | 'detail'
 export type CanvasArchitectureDensity = 'auto' | 'comfortable' | 'compact' | 'dense'
 export type CanvasArchitectureCardKind = 'actor' | 'entry' | 'compute' | 'messaging' | 'data' | 'external' | 'generic'
+export type CanvasArchitectureScopeKind = 'group' | 'lane' | 'node'
 export type CanvasIcon = 'user' | 'web' | 'api' | 'gateway' | 'service' | 'worker' | 'database' | 'cache' | 'queue' | 'search' | 'vector' | 'cloud' | 'file' | 'auth' | 'ai' | 'mcp' | 'scheduler' | 'external'
 export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'rabbitmq' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'elasticsearch' | 'mongodb' | 'minio' | 'nginx' | 'grpc' | 'oidc' | 'openai' | 'mcp'
 export type CanvasGroupKind = 'group' | 'boundary'
@@ -163,6 +164,26 @@ export interface CanvasArchitectureProjection {
   scene: CanvasScene
   view: CanvasArchitectureView
   density: Exclude<CanvasArchitectureDensity, 'auto'>
+  hiddenNodes: number
+  hiddenArrows: number
+}
+
+export interface CanvasArchitectureScope {
+  kind: CanvasArchitectureScopeKind
+  id: string
+  depth?: number
+}
+
+export interface CanvasArchitectureBreadcrumb {
+  kind: CanvasArchitectureScopeKind
+  id: string
+  label: string
+}
+
+export interface CanvasArchitectureScopeProjection {
+  scene: CanvasScene
+  scope: CanvasArchitectureScope
+  breadcrumbs: CanvasArchitectureBreadcrumb[]
   hiddenNodes: number
   hiddenArrows: number
 }
@@ -425,6 +446,125 @@ export function canvasArchitectureProjection(scene: CanvasScene): CanvasArchitec
   }
 }
 
+export function canvasArchitectureScopeProjection(scene: CanvasScene, scope: CanvasArchitectureScope): CanvasArchitectureScopeProjection {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const boxById = new Map(boxes.map((item) => [item.id, item]))
+  const groupById = new Map((scene.groups ?? []).map((group) => [group.id, group]))
+  const visible = new Set<string>()
+  const breadcrumbs: CanvasArchitectureBreadcrumb[] = []
+
+  if (scope.kind === 'group') {
+    const target = groupById.get(scope.id)
+    if (!target) return { scene, scope, breadcrumbs, hiddenNodes: 0, hiddenArrows: 0 }
+    for (const entry of architectureGroupBreadcrumbs(target.id, groupById)) breadcrumbs.push(entry)
+    boxes.forEach((item) => {
+      if (item.groupId && groupContains(target.id, item.groupId, groupById)) visible.add(item.id)
+    })
+  } else if (scope.kind === 'lane') {
+    const lane = scene.lanes?.find((item) => item.id === scope.id)
+    if (!lane) return { scene, scope, breadcrumbs, hiddenNodes: 0, hiddenArrows: 0 }
+    breadcrumbs.push({ kind: 'lane', id: lane.id, label: lane.label })
+    boxes.forEach((item) => {
+      if (item.laneId === lane.id) visible.add(item.id)
+    })
+  } else {
+    const target = boxById.get(scope.id)
+    if (!target) return { scene, scope, breadcrumbs, hiddenNodes: 0, hiddenArrows: 0 }
+    if (target.groupId) breadcrumbs.push(...architectureGroupBreadcrumbs(target.groupId, groupById))
+    breadcrumbs.push({ kind: 'node', id: target.id, label: target.text })
+    const depth = Math.max(1, Math.min(3, scope.depth ?? 1))
+    const adjacency = new Map<string, Set<string>>()
+    boxes.forEach((item) => adjacency.set(item.id, new Set()))
+    arrows.forEach((arrow) => {
+      adjacency.get(arrow.from)?.add(arrow.to)
+      adjacency.get(arrow.to)?.add(arrow.from)
+    })
+    let frontier = new Set([target.id])
+    visible.add(target.id)
+    for (let level = 0; level < depth; level += 1) {
+      const next = new Set<string>()
+      frontier.forEach((id) => adjacency.get(id)?.forEach((neighbor) => {
+        if (visible.has(neighbor)) return
+        visible.add(neighbor)
+        next.add(neighbor)
+      }))
+      frontier = next
+    }
+  }
+
+  // Region focus keeps one-hop boundary dependencies so a local view does not
+  // lose the contracts entering or leaving the selected subsystem.
+  if (scope.kind !== 'node') {
+    arrows.forEach((arrow) => {
+      const fromVisible = visible.has(arrow.from)
+      const toVisible = visible.has(arrow.to)
+      if (fromVisible !== toVisible) visible.add(fromVisible ? arrow.to : arrow.from)
+    })
+  }
+
+  const density = resolveCanvasArchitectureDensity(scene, boxes.length)
+  const focusLimit = density === 'dense' ? 56 : density === 'compact' ? 48 : 42
+  const hasImmediateChildGroups = scope.kind === 'group' && (scene.groups ?? []).some((group) => group.parentId === scope.id)
+  if (visible.size > focusLimit && !hasImmediateChildGroups) {
+    const degree = new Map<string, number>(boxes.map((item) => [item.id, 0]))
+    arrows.forEach((arrow) => {
+      degree.set(arrow.from, (degree.get(arrow.from) ?? 0) + 1)
+      degree.set(arrow.to, (degree.get(arrow.to) ?? 0) + 1)
+    })
+    const mustKeep = new Set<string>()
+    if (scope.kind === 'node') mustKeep.add(scope.id)
+    boxes.forEach((item) => {
+      if (!visible.has(item.id)) return
+      if (item.emphasis === 'primary') mustKeep.add(item.id)
+    })
+    const laneBuckets = new Map<string, Array<CanvasNode | CanvasNote>>()
+    boxes.forEach((item) => {
+      if (!visible.has(item.id) || !item.laneId) return
+      laneBuckets.set(item.laneId, [...(laneBuckets.get(item.laneId) ?? []), item])
+    })
+    laneBuckets.forEach((members) => {
+      const representative = members.slice().sort((left, right) => architectureOverviewScore(right, degree) - architectureOverviewScore(left, degree))[0]
+      if (representative) mustKeep.add(representative.id)
+    })
+    const trimmed = new Set(mustKeep)
+    boxes
+      .filter((item) => visible.has(item.id) && !trimmed.has(item.id))
+      .sort((left, right) => architectureOverviewScore(right, degree) - architectureOverviewScore(left, degree))
+      .slice(0, Math.max(0, focusLimit - trimmed.size))
+      .forEach((item) => trimmed.add(item.id))
+    visible.clear()
+    trimmed.forEach((id) => visible.add(id))
+  }
+
+  const visibleArrows = arrows.filter((arrow) => visible.has(arrow.from) && visible.has(arrow.to))
+  const visibleArrowIds = new Set(visibleArrows.map((arrow) => arrow.id))
+  const scopedGroups = (scene.groups ?? []).map((group) => {
+    if (scope.kind !== 'group') return group
+    if (group.id === scope.id || architectureGroupBreadcrumbs(scope.id, groupById).some((entry) => entry.id === group.id)) {
+      return group.collapsed ? { ...group, collapsed: undefined } : group
+    }
+    // Immediate C4/domain children become navigable summaries. Their members
+    // remain in the projection so existing collapsed-edge aggregation works.
+    if (group.parentId === scope.id) return { ...group, collapsed: true }
+    return group
+  })
+  const usedLaneIds = new Set(boxes.filter((item) => visible.has(item.id) && item.laneId).map((item) => item.laneId as string))
+  const elements = scene.elements.filter((item) => item.type === 'arrow' ? visibleArrowIds.has(item.id) : visible.has(item.id))
+  return {
+    scene: {
+      ...scene,
+      elements,
+      groups: scopedGroups,
+      ...(scene.lanes ? { lanes: scene.lanes.filter((lane) => usedLaneIds.has(lane.id) || scope.kind === 'lane' && lane.id === scope.id) } : {}),
+    },
+    scope,
+    breadcrumbs,
+    hiddenNodes: boxes.length - visible.size,
+    hiddenArrows: arrows.length - visibleArrows.length,
+  }
+}
+
 export function resolveCanvasArchitectureDensity(
   scene: CanvasScene,
   nodeCount = scene.elements.filter((item) => item.type !== 'arrow').length,
@@ -634,6 +774,20 @@ function groupContains(targetId: string, candidateId: string, groups: Map<string
     current = groups.get(current)?.parentId
   }
   return false
+}
+
+function architectureGroupBreadcrumbs(groupId: string, groups: Map<string, CanvasGroup>): CanvasArchitectureBreadcrumb[] {
+  const chain: CanvasArchitectureBreadcrumb[] = []
+  let current: string | undefined = groupId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    const group = groups.get(current)
+    if (!group) break
+    chain.push({ kind: 'group', id: group.id, label: group.label || group.id })
+    current = group.parentId
+  }
+  return chain.reverse()
 }
 
 function isInsideCollapsedAncestor(groupId: string, groups: CanvasGroup[]): boolean {

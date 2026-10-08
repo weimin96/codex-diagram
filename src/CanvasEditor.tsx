@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { beautifyArchitectureScene, routeArchitectureEdges, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -92,6 +92,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [architectureTheme, setArchitectureTheme] = useState<ArchitectureTheme>(parsed.scene?.architecture?.theme ?? 'enterprise')
   const [architectureView, setArchitectureView] = useState<CanvasArchitectureView>(parsed.scene?.architecture?.view ?? 'detail')
   const [architectureDensity, setArchitectureDensity] = useState<CanvasArchitectureDensity>(parsed.scene?.architecture?.density ?? 'auto')
+  const [architectureScope, setArchitectureScope] = useState<CanvasArchitectureScope | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [connectFromAnchor, setConnectFromAnchor] = useState<CanvasAnchor>('auto')
@@ -133,6 +134,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setArchitectureView(parsed.scene.architecture.view ?? 'detail')
     setArchitectureDensity(parsed.scene.architecture.density ?? 'auto')
   }, [parsed.scene?.architecture?.density, parsed.scene?.architecture?.theme, parsed.scene?.architecture?.view])
+
+  useEffect(() => {
+    if (!parsed.scene || !architectureScope) return
+    const exists = architectureScope.kind === 'group'
+      ? parsed.scene.groups?.some((group) => group.id === architectureScope.id)
+      : architectureScope.kind === 'lane'
+        ? parsed.scene.lanes?.some((lane) => lane.id === architectureScope.id)
+        : parsed.scene.elements.some((item) => item.type !== 'arrow' && item.id === architectureScope.id)
+    if (!exists) setArchitectureScope(null)
+  }, [architectureScope, parsed.scene])
 
   useEffect(() => {
     viewportRef.current = viewport
@@ -194,6 +205,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         return
       }
       if (event.key === 'Escape') {
+        if (architectureScope) {
+          setArchitectureScope(null)
+          setViewport({ x: 0, y: 0, zoom: 1 })
+          return
+        }
         setContextMenu(null)
         setSelectedIds([])
         setSelectedGroupTarget(null)
@@ -907,10 +923,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const scene = parsed.scene
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const architectureProjection = playback?.active
+  const baseArchitectureProjection = playback?.active
     ? { scene, view: scene.architecture?.view ?? 'detail' as const, density: 'comfortable' as const, hiddenNodes: 0, hiddenArrows: 0 }
     : canvasArchitectureProjection(scene)
+  const scopedArchitectureProjection = !playback?.active && architectureScope
+    ? canvasArchitectureScopeProjection(scene, architectureScope)
+    : null
+  const architectureProjection = scopedArchitectureProjection
+    ? {
+        ...baseArchitectureProjection,
+        scene: scopedArchitectureProjection.scene,
+        hiddenNodes: scopedArchitectureProjection.hiddenNodes,
+        hiddenArrows: scopedArchitectureProjection.hiddenArrows,
+      }
+    : baseArchitectureProjection
   const renderScene = architectureProjection.scene
+  const architectureBreadcrumbs = scopedArchitectureProjection?.breadcrumbs ?? []
   const projectedBoxes = renderScene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const projectedArrows = renderScene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const selected = scene.elements.filter((item) => selectedIds.includes(item.id))
@@ -930,10 +958,31 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const collapsedMemberIds = new Set(collapsedOwners.keys())
   const renderBoxes = projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
   const renderArrows = projectedArrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
+  const largeSceneViewportCulling = Boolean(
+    !playback?.active
+    && !architectureScope
+    && scene.architecture
+    && architectureProjection.view === 'detail'
+    && renderBoxes.length > 100,
+  )
+  const viewportMargin = 220 / Math.max(0.45, viewport.zoom)
+  const viewportBounds = {
+    x: viewport.x - viewportMargin,
+    y: viewport.y - viewportMargin,
+    width: scene.width / viewport.zoom + viewportMargin * 2,
+    height: scene.height / viewport.zoom + viewportMargin * 2,
+  }
+  const viewportRenderBoxes = largeSceneViewportCulling
+    ? renderBoxes.filter((item) => selectedIds.includes(item.id) || intersects(viewportBounds, item))
+    : renderBoxes
+  const viewportNodeIds = new Set(viewportRenderBoxes.map((item) => item.id))
+  const viewportRenderArrows = largeSceneViewportCulling
+    ? renderArrows.filter((arrow) => selectedIds.includes(arrow.id) || viewportNodeIds.has(arrow.from) || viewportNodeIds.has(arrow.to))
+    : renderArrows
   const playbackVisibleIds = playback?.active ? new Set(playback.visibleIds) : null
   const playbackVisibleGroupIds = playback?.active ? new Set(playback.visibleGroupIds ?? []) : null
-  const visibleRenderBoxes = playbackVisibleIds ? renderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : renderBoxes
-  const visibleRenderArrows = playbackVisibleIds ? renderArrows.filter((item) => playbackVisibleIds.has(item.id)) : renderArrows
+  const visibleRenderBoxes = playbackVisibleIds ? viewportRenderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderBoxes
+  const visibleRenderArrows = playbackVisibleIds ? viewportRenderArrows.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderArrows
   const collapsedConnections = playback?.active ? [] : canvasCollapsedConnections(renderScene, projectedGroupBounds)
   const relationBundleTrunks = playback?.active ? [] : canvasBundleTrunks(renderScene)
   const relationLabelLayouts = canvasArrowLabelLayouts(renderScene)
@@ -1170,6 +1219,51 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const width = Math.max(280, right - left + 200)
     const height = Math.max(180, bottom - top + 160)
     const zoom = clamp(Math.min(live.width / width, live.height / height), 0.8, 2.6)
+    const viewWidth = live.width / zoom
+    const viewHeight = live.height / zoom
+    setViewport({
+      zoom,
+      x: clamp((left + right) / 2 - viewWidth / 2, 0, Math.max(0, live.width - viewWidth)),
+      y: clamp((top + bottom) / 2 - viewHeight / 2, 0, Math.max(0, live.height - viewHeight)),
+    })
+  }
+
+  function enterArchitectureScope(scope: CanvasArchitectureScope) {
+    const projected = canvasArchitectureScopeProjection(currentScene(), scope)
+    setArchitectureScope(scope)
+    setSelectedGroupTarget(null)
+    setSelectedIds(scope.kind === 'node' ? [scope.id] : [])
+    setTraceDirection(null)
+    focusArchitectureScene(projected.scene)
+  }
+
+  function leaveArchitectureScope() {
+    setArchitectureScope(null)
+    setSelectedGroupTarget(null)
+    setSelectedIds([])
+    setViewport({ x: 0, y: 0, zoom: 1 })
+  }
+
+  function focusArchitectureScene(projected: CanvasScene) {
+    const collapsed = canvasCollapsedOwners(projected)
+    const boxes = projected.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !collapsed.has(item.id))
+    const collapsedFrames = canvasGroupFrames(projected).filter((group) => group.collapsed)
+    const rects = [
+      ...boxes.map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height })),
+      ...collapsedFrames.map((group) => ({ x: group.x, y: group.y, width: group.width, height: group.height })),
+    ]
+    if (!rects.length) {
+      setViewport({ x: 0, y: 0, zoom: 1 })
+      return
+    }
+    const left = Math.min(...rects.map((item) => item.x))
+    const top = Math.min(...rects.map((item) => item.y))
+    const right = Math.max(...rects.map((item) => item.x + item.width))
+    const bottom = Math.max(...rects.map((item) => item.y + item.height))
+    const width = Math.max(360, right - left + 220)
+    const height = Math.max(240, bottom - top + 190)
+    const live = currentScene()
+    const zoom = clamp(Math.min(live.width / width, live.height / height), 0.65, 2.3)
     const viewWidth = live.width / zoom
     const viewHeight = live.height / zoom
     setViewport({
@@ -1626,12 +1720,45 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </select>
           <button type="button" title="自动分区、配色、补图标并整理连线" onClick={beautifyArchitecture}>美化</button>
           <button type="button" title="保留节点位置，仅重新计算锚点、避障路径和线路通道" onClick={tidyArchitectureRoutes}>理线</button>
+          {architectureScope ? <button type="button" className="is-active" title="返回完整架构视图" onClick={leaveArchitectureScope}>退出聚焦</button> : null}
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
           {onAnalyzeGitImpact ? <button type="button" title="将当前 Git 改动映射到架构节点" onClick={() => void onAnalyzeGitImpact()}>改动影响</button> : null}
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
         </div>
+
+        {architectureScope ? (
+          <nav className="freeform-architecture-breadcrumb" aria-label="架构导航路径">
+            <button type="button" onClick={leaveArchitectureScope}>全局</button>
+            {architectureBreadcrumbs.map((item, index) => (
+              <span key={`${item.kind}:${item.id}`}>
+                <i>/</i>
+                <button
+                  type="button"
+                  className={index === architectureBreadcrumbs.length - 1 ? 'is-current' : ''}
+                  onClick={() => enterArchitectureScope({ kind: item.kind, id: item.id, ...(item.kind === 'node' ? { depth: architectureScope.depth ?? 1 } : {}) })}
+                >{truncate(item.label, 26)}</button>
+              </span>
+            ))}
+            {architectureScope.kind === 'node' ? (
+              <span className="freeform-focus-depth" aria-label="聚焦深度">
+                {[1, 2, 3].map((depth) => (
+                  <button
+                    key={depth}
+                    type="button"
+                    className={(architectureScope.depth ?? 1) === depth ? 'is-current' : ''}
+                    onClick={() => enterArchitectureScope({ kind: 'node', id: architectureScope.id, depth })}
+                  >{depth} 跳</button>
+                ))}
+              </span>
+            ) : null}
+            <em>{visibleRenderBoxes.length} 节点 · {displayGroupBounds.filter((group) => group.collapsed).length} 区域 · {visibleRenderArrows.length} 关系</em>
+          </nav>
+        ) : null}
+        {largeSceneViewportCulling ? (
+          <div className="freeform-large-scene-hint">大图视窗渲染 · {visibleRenderBoxes.length}/{renderBoxes.length} 节点</div>
+        ) : null}
 
         {layersOpen ? (
           <aside className="freeform-layer-panel" aria-label="画布层级与搜索">
@@ -1687,6 +1814,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <div className="freeform-inspector-head">
               <strong>{selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
               <div>
+                {scene.architecture && selectedBox ? <button type="button" title="只查看当前节点及邻域" onClick={() => enterArchitectureScope({ kind: 'node', id: selectedBox.id, depth: 1 })}>聚焦</button> : null}
+                {scene.architecture && selectedGroupId ? <button type="button" title="进入当前边界查看内部结构" onClick={() => enterArchitectureScope({ kind: 'group', id: selectedGroupId })}>下钻</button> : null}
                 {selectedBox || selectedGroup ? <button type="button" aria-pressed={detailsExpanded} onClick={() => setDetailsExpanded((value) => !value)}>{detailsExpanded ? '收起' : '详情'}</button> : null}
                 <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
               </div>
@@ -2007,7 +2136,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               })}
             </g>
           ) : null}
-          {(scene.lanes ?? []).map((lane) => {
+          {(renderScene.lanes ?? []).map((lane) => {
             const x = lane.axis === 'vertical' ? lane.start : 0
             const y = lane.axis === 'horizontal' ? lane.start : architectureHeader?.height ?? 0
             const width = lane.axis === 'vertical' ? lane.size : scene.width
@@ -2015,26 +2144,75 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
               <g key={lane.id} className={`freeform-lane tone-${lane.tone ?? 'muted'}`} pointerEvents="none">
                 <rect className="freeform-lane-body" x={x} y={y} width={width} height={height} rx="14" />
-                <rect className="freeform-lane-head" x={x} y={y} width={width} height={34} rx="14" />
+                <rect
+                  className="freeform-lane-head is-navigable"
+                  x={x}
+                  y={y}
+                  width={width}
+                  height={34}
+                  rx="14"
+                  pointerEvents="all"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    const ids = boxes.filter((item) => item.laneId === lane.id).map((item) => item.id)
+                    setSelectedGroupTarget(null)
+                    setSelectedIds(ids)
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    if (scene.architecture) enterArchitectureScope({ kind: 'lane', id: lane.id })
+                    else focusBoxes(boxes.filter((item) => item.laneId === lane.id).map((item) => item.id))
+                  }}
+                />
                 <text x={x + 14} y={y + 22}>{truncate(lane.label, 32)}</text>
               </g>
             )
           })}
           {displayGroupBounds.filter((group) => (
-            !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])
+            !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
             && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
           )).map((group) => (
             <g
               key={group.id}
               className={`freeform-group-frame kind-${group.kind ?? 'group'} c4-${group.c4Type ?? 'none'}${group.parentId ? ' has-parent' : ''}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
-              pointerEvents={group.collapsed ? 'all' : 'none'}
-              onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
-              onDoubleClick={group.collapsed ? (event) => { event.stopPropagation(); commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false })); setSelectedGroupTarget(group.id) } : undefined}
+              pointerEvents="none"
             >
               {group.description ? <title>{group.description}</title> : null}
-              <rect x={group.x} y={group.y} width={group.width} height={group.height} rx="20" />
+              <rect
+                x={group.x}
+                y={group.y}
+                width={group.width}
+                height={group.height}
+                rx="20"
+                pointerEvents={group.collapsed ? 'all' : 'none'}
+                onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
+                onDoubleClick={group.collapsed ? (event) => {
+                  event.stopPropagation()
+                  if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
+                  else {
+                    commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false }))
+                    setSelectedGroupTarget(group.id)
+                  }
+                } : undefined}
+              />
               {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx="20" /> : null}
-              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? ' · 双击展开' : ''}</text> : null}
+              {!group.collapsed ? (
+                <rect
+                  className="freeform-group-navigation-hit"
+                  x={group.x}
+                  y={group.y}
+                  width={Math.min(group.width, 260)}
+                  height="34"
+                  rx="12"
+                  pointerEvents="all"
+                  onClick={(event) => { event.stopPropagation(); selectGroup(group.id) }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
+                  }}
+                />
+              ) : null}
+              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : ' · 双击展开' : ''}</text> : null}
             </g>
           ))}
           {relationBundleTrunks.map((bundle) => (
@@ -2151,6 +2329,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
               onDoubleClick={(event) => {
                 event.stopPropagation()
+                if (scene.architecture && architectureProjection.view === 'overview') {
+                  enterArchitectureScope({ kind: 'node', id: item.id, depth: 1 })
+                  return
+                }
                 setSelectedGroupTarget(null)
                 setSelectedIds([item.id])
                 if (!item.locked) window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
@@ -2319,10 +2501,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <rect width={scene.width} height={scene.height} className="freeform-minimap-bg" />
           {displayGroupBounds.filter((group) => (
             group.collapsed
-            && !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])
+            && !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
             && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
           )).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
-          {visibleRenderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
+          {renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
           <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
         </svg>
       </div>

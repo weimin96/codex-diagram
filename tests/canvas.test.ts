@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArrowLabelLayouts, canvasSceneToSvg, createCanvasSource, parseCanvasScene, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasSceneToSvg, createCanvasSource, parseCanvasScene, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -155,4 +155,67 @@ test('SVG export honors architecture overview projection', () => {
   assert.match(svg, />DB</)
   assert.doesNotMatch(svg, />Muted 19</)
   assert.match(svg, /总览/)
+})
+
+test('architecture group drill-down collapses immediate child boundaries and keeps boundary dependencies', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Drill down',
+    width: 1800,
+    height: 1000,
+    architecture: { theme: 'presentation', view: 'overview', density: 'auto' },
+    groups: [
+      { id: 'system', label: 'Knowledge Platform', kind: 'boundary', c4Type: 'software-system' },
+      { id: 'runtime', label: 'Runtime', kind: 'boundary', c4Type: 'container', parentId: 'system' },
+      { id: 'data', label: 'Data', kind: 'boundary', c4Type: 'container', parentId: 'system' },
+    ],
+    elements: [
+      { id: 'web', type: 'node', x: 120, y: 200, width: 200, height: 90, text: 'Web', groupId: 'system', icon: 'web' },
+      { id: 'api', type: 'node', x: 500, y: 200, width: 200, height: 90, text: 'API', groupId: 'runtime', icon: 'api' },
+      { id: 'worker', type: 'node', x: 500, y: 380, width: 200, height: 90, text: 'Worker', groupId: 'runtime', icon: 'worker' },
+      { id: 'db', type: 'node', x: 900, y: 200, width: 200, height: 90, text: 'DB', groupId: 'data', icon: 'database' },
+      { id: 'oidc', type: 'node', x: 120, y: 560, width: 200, height: 90, text: 'OIDC Provider', icon: 'external' },
+      { id: 'web-api', type: 'arrow', from: 'web', to: 'api' },
+      { id: 'api-db', type: 'arrow', from: 'api', to: 'db' },
+      { id: 'web-oidc', type: 'arrow', from: 'web', to: 'oidc' },
+    ],
+  }
+
+  const projection = canvasArchitectureScopeProjection(scene, { kind: 'group', id: 'system' })
+  assert.deepEqual(projection.breadcrumbs.map((item) => item.label), ['Knowledge Platform'])
+  assert.equal(projection.scene.groups?.find((group) => group.id === 'system')?.collapsed, undefined)
+  assert.equal(projection.scene.groups?.find((group) => group.id === 'runtime')?.collapsed, true)
+  assert.equal(projection.scene.groups?.find((group) => group.id === 'data')?.collapsed, true)
+  assert.ok(projection.scene.elements.some((item) => item.id === 'oidc'))
+  assert.ok(projection.scene.elements.some((item) => item.id === 'web-oidc'))
+})
+
+test('architecture node focus keeps a bounded neighborhood and group breadcrumbs', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Node focus',
+    width: 1600,
+    height: 900,
+    architecture: { theme: 'technical', view: 'detail', density: 'auto' },
+    groups: [
+      { id: 'system', label: 'System', kind: 'boundary', c4Type: 'software-system' },
+      { id: 'runtime', label: 'Runtime', kind: 'boundary', c4Type: 'container', parentId: 'system' },
+    ],
+    elements: [
+      { id: 'a', type: 'node', x: 100, y: 200, width: 180, height: 80, text: 'A', groupId: 'runtime' },
+      { id: 'b', type: 'node', x: 400, y: 200, width: 180, height: 80, text: 'B', groupId: 'runtime' },
+      { id: 'c', type: 'node', x: 700, y: 200, width: 180, height: 80, text: 'C', groupId: 'runtime' },
+      { id: 'd', type: 'node', x: 1000, y: 200, width: 180, height: 80, text: 'D', groupId: 'runtime' },
+      { id: 'ab', type: 'arrow', from: 'a', to: 'b' },
+      { id: 'bc', type: 'arrow', from: 'b', to: 'c' },
+      { id: 'cd', type: 'arrow', from: 'c', to: 'd' },
+    ],
+  }
+
+  const projection = canvasArchitectureScopeProjection(scene, { kind: 'node', id: 'b', depth: 1 })
+  assert.deepEqual(projection.breadcrumbs.map((item) => item.label), ['System', 'Runtime', 'B'])
+  assert.deepEqual(projection.scene.elements.filter((item) => item.type !== 'arrow').map((item) => item.id).sort(), ['a', 'b', 'c'])
+  assert.ok(!projection.scene.elements.some((item) => item.id === 'd'))
 })
