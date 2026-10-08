@@ -55,6 +55,10 @@ type PlaybackState = {
   boundaryDraft?: { x: number; y: number; width: number; height: number; label?: string }
   visibleGroupIds?: string[]
   inspectorPreview?: { title: string; rows: Array<{ label: string; value: string }>; activeIndex: number }
+  inspectorDropdownOpen?: boolean
+  ghostElements?: CanvasElement[]
+  deletingIds?: string[]
+  anchorPreview?: { from: CanvasPoint; to: CanvasPoint; active: 'from' | 'to' }
   finalHighlightIds?: string[]
   step: number
   total: number
@@ -303,6 +307,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       cursorVisible: true,
       clicking: false,
       positionOverrides: plan.initialPositionOverrides,
+      ghostElements: plan.ghostElements,
       phase: 'planning',
       intent: firstRegion ? `准备绘制 ${firstRegion.label}` : '准备绘制画板',
       regionLabel: firstRegion?.label,
@@ -515,19 +520,23 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       await sleep(80 * pace)
     }
 
-    const drawBoundary = async (groupId: string, regionLabel: string) => {
+    const drawBoundary = async (groupId: string, regionLabel: string, beforeRect?: { x: number; y: number; width: number; height: number }) => {
       const frame = canvasGroupFrames(parsed.scene!).find((group) => group.id === groupId)
       if (!frame) return
       await animateSelection(frame.memberIds, `框选 ${regionLabel} 成员`)
-      const start = { x: frame.x, y: frame.y }
-      const end = { x: frame.x + frame.width, y: frame.y + frame.height }
-      await moveCursor(start, 120 * pace)
+      const finalRect = { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+      const initialRect = beforeRect ?? { x: frame.x, y: frame.y, width: 0, height: 0 }
+      const startHandle = beforeRect
+        ? { x: beforeRect.x + beforeRect.width, y: beforeRect.y + beforeRect.height }
+        : { x: frame.x, y: frame.y }
+      const endHandle = { x: frame.x + frame.width, y: frame.y + frame.height }
+      await moveCursor(startHandle, 120 * pace)
       setPlayback((current) => current ? {
         ...current,
         phase: 'grouping',
-        intent: `创建 ${regionLabel} 边界`,
+        intent: `${beforeRect ? '调整' : '创建'} ${regionLabel} 边界`,
         clicking: true,
-        boundaryDraft: { x: start.x, y: start.y, width: 0, height: 0, label: frame.label },
+        boundaryDraft: { ...initialRect, label: frame.label },
       } : current)
       const started = performance.now()
       await new Promise<void>((resolve) => {
@@ -536,12 +545,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           if (playbackRun.current !== runId) return resolve()
           const raw = Math.min(1, (now - started) / Math.max(90, duration))
           const eased = 1 - Math.pow(1 - raw, 3)
-          const cursor = { x: start.x + (end.x - start.x) * eased, y: start.y + (end.y - start.y) * eased }
+          const cursor = { x: startHandle.x + (endHandle.x - startHandle.x) * eased, y: startHandle.y + (endHandle.y - startHandle.y) * eased }
           playbackCursor.current = cursor
           setPlayback((current) => current ? {
             ...current,
             cursor,
-            boundaryDraft: { x: start.x, y: start.y, width: cursor.x - start.x, height: cursor.y - start.y, label: frame.label },
+            boundaryDraft: {
+              x: initialRect.x + (finalRect.x - initialRect.x) * eased,
+              y: initialRect.y + (finalRect.y - initialRect.y) * eased,
+              width: initialRect.width + (finalRect.width - initialRect.width) * eased,
+              height: initialRect.height + (finalRect.height - initialRect.height) * eased,
+              label: frame.label,
+            },
           } : current)
           if (raw < 1) window.requestAnimationFrame(tick)
           else resolve()
@@ -573,14 +588,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       } : current)
       for (let index = 0; index < rows.length; index += 1) {
         if (playbackRun.current !== runId) return
+        const dropdown = ['语义色', '形状', '角色', '技术栈', 'C4'].includes(rows[index].label)
         setPlayback((current) => current?.inspectorPreview ? {
           ...current,
           intent: `设置 ${rows[index].label} · ${rows[index].value}`,
           inspectorPreview: { ...current.inspectorPreview, activeIndex: index },
+          inspectorDropdownOpen: dropdown,
+          clicking: true,
         } : current)
-        await sleep(150 * pace)
+        await sleep(90 * pace)
+        setPlayback((current) => current ? { ...current, clicking: false } : current)
+        await sleep((dropdown ? 150 : 80) * pace)
+        setPlayback((current) => current ? { ...current, inspectorDropdownOpen: false } : current)
       }
-      setPlayback((current) => current ? { ...current, inspectorPreview: undefined, currentElementId: undefined } : current)
+      setPlayback((current) => current ? { ...current, inspectorPreview: undefined, inspectorDropdownOpen: false, currentElementId: undefined } : current)
       await sleep(60 * pace)
     }
 
@@ -593,6 +614,45 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         if (action.regionKey !== activeRegionKey) {
           await enterRegion(action.regionKey, activeRegionKey)
           activeRegionKey = action.regionKey
+        }
+        if (action.kind === 'delete') {
+          const deleted = action.element
+          const ghostBoxes = [...plan.ghostElements, ...parsed.scene!.elements].filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+          const target = deleted.type !== 'arrow'
+            ? center(deleted)
+            : (() => {
+                const from = ghostBoxes.find((item) => item.id === deleted.from)
+                const to = ghostBoxes.find((item) => item.id === deleted.to)
+                return from && to ? { x: (center(from).x + center(to).x) / 2, y: (center(from).y + center(to).y) / 2 } : null
+              })()
+          if (target) {
+            await moveCamera(target, 220 * pace, 1.08)
+            await moveCursor(target, 180 * pace)
+          }
+          const selection = deleted.type === 'arrow'
+            ? undefined
+            : { x: deleted.x - 10, y: deleted.y - 10, width: deleted.width + 20, height: deleted.height + 20 }
+          setPlayback((current) => current ? {
+            ...current,
+            phase: 'selecting',
+            toolHint: 'select',
+            intent: playbackActionIntent(parsed.scene!, action),
+            selectionBox: selection,
+            deletingIds: [deleted.id],
+            clicking: true,
+            step: index + 1,
+          } : current)
+          await sleep(120 * pace)
+          setPlayback((current) => current ? { ...current, clicking: false } : current)
+          await sleep(160 * pace)
+          setPlayback((current) => current ? {
+            ...current,
+            ghostElements: current.ghostElements?.filter((item) => item.id !== deleted.id),
+            deletingIds: undefined,
+            selectionBox: undefined,
+          } : current)
+          await sleep(70 * pace)
+          continue
         }
         const target = playbackActionTarget(parsed.scene!, action)
         if (!target) continue
@@ -634,7 +694,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         } else if (action.kind === 'boundary') {
           const region = regionByKey.get(action.regionKey)
           setPlayback((current) => current ? { ...current, step: index + 1 } : current)
-          await drawBoundary(action.groupId, region?.label ?? '当前区域')
+          await drawBoundary(action.groupId, region?.label ?? '当前区域', action.beforeRect)
         } else if (action.kind === 'style') {
           setPlayback((current) => current ? { ...current, step: index + 1 } : current)
           await previewStyle(action.id, action.rows)
@@ -643,13 +703,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           const from = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from) : undefined
           const to = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to) : undefined
           if (!arrow || !from || !to) continue
+          const fromDisplay = playbackBoxPosition(from)
+          const toDisplay = playbackBoxPosition(to)
+          const fromAnchorPoint = anchorPoint(fromDisplay, arrow.fromAnchor, center(toDisplay))
+          const toAnchorPoint = anchorPoint(toDisplay, arrow.toAnchor, center(fromDisplay))
           setPlayback((current) => current ? {
             ...current,
             phase: 'connecting',
             toolHint: 'connect',
             intent: playbackActionIntent(parsed.scene!, action),
+            anchorPreview: { from: fromAnchorPoint, to: toAnchorPoint, active: 'from' },
           } : current)
-          await moveCursor(center(from), 190 * pace)
+          await moveCursor(fromAnchorPoint, 190 * pace)
           setPlayback((current) => current ? {
             ...current,
             visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
@@ -659,14 +724,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             step: index + 1,
           } : current)
           await sleep(90 * pace)
-          setPlayback((current) => current ? { ...current, clicking: false } : current)
-          await moveCursor(center(to), 360 * pace)
-          setPlayback((current) => current ? { ...current, drawingArrowId: undefined } : current)
+          setPlayback((current) => current ? { ...current, clicking: false, anchorPreview: current.anchorPreview ? { ...current.anchorPreview, active: 'to' } : undefined } : current)
+          await moveCursor(toAnchorPoint, 360 * pace)
+          setPlayback((current) => current ? { ...current, drawingArrowId: undefined, anchorPreview: undefined } : current)
           await sleep(90 * pace)
         }
       }
       if (playbackRun.current !== runId) return
-      const changedIds = plan.actions.map((action) => action.id)
+      const changedIds = [...new Set(plan.actions.flatMap((action) => {
+        if (action.kind === 'box' || action.kind === 'arrow' || action.kind === 'style') return [action.id]
+        if (action.kind === 'arrange') return action.ids
+        return []
+      }))]
       setPlayback((current) => current ? {
         ...current,
         visibleIds: parsed.scene!.elements.map((item) => item.id),
@@ -677,6 +746,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         selectionBox: undefined,
         boundaryDraft: undefined,
         inspectorPreview: undefined,
+        inspectorDropdownOpen: false,
+        ghostElements: [],
+        deletingIds: undefined,
+        anchorPreview: undefined,
         toolHint: 'select',
         phase: 'finishing',
         intent: '检查整体布局',
@@ -761,6 +834,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const tracedNodeIds = new Set(traceResult?.nodeIds ?? [])
   const tracedArrowIds = new Set(traceResult?.arrowIds ?? [])
   const activePlaybackRegionIds = new Set(playback?.activeRegionIds ?? [])
+  const playbackGhostElements = playback?.ghostElements ?? []
+  const playbackGhostBoxes = playbackGhostElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...boxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
   const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
 
   function currentScene(): CanvasScene {
@@ -1724,6 +1801,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? ' · 双击展开' : ''}</text> : null}
             </g>
           ))}
+          {playbackGhostArrows.map((arrow) => {
+            const from = playbackBoxLookup.get(arrow.from)
+            const to = playbackBoxLookup.get(arrow.to)
+            if (!from || !to) return null
+            const fromCenter = center(from)
+            const toCenter = center(to)
+            const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+            const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+            return (
+              <g key={`ghost-${arrow.id}`} className={`freeform-arrow freeform-ai-ghost${playback?.deletingIds?.includes(arrow.id) ? ' is-deleting' : ''}`} pointerEvents="none">
+                <path d={canvasArrowPath(start, end, arrow)} markerEnd="url(#canvas-arrow)" />
+              </g>
+            )
+          })}
           {visibleRenderArrows.map((arrow) => {
             const fromRaw = boxes.find((item) => item.id === arrow.from)
             const toRaw = boxes.find((item) => item.id === arrow.to)
@@ -1774,6 +1865,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
+          {playbackGhostBoxes.map((item) => (
+            <g
+              key={`ghost-${item.id}`}
+              className={`freeform-box freeform-${item.type} freeform-ai-ghost tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${playback?.deletingIds?.includes(item.id) ? ' is-deleting' : ''}`}
+              transform={`translate(${item.x} ${item.y})`}
+              pointerEvents="none"
+            >
+              <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
+              <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">{truncate(item.text, 28)}</text>
+            </g>
+          ))}
           {visibleRenderBoxes.map((item) => {
             const playbackPosition = playback?.positionOverrides?.[item.id]
             const displayX = playbackPosition?.x ?? item.x
@@ -1859,6 +1961,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               ) : null}
             </g>
           ) : null}
+          {playback?.anchorPreview ? (
+            <g className="freeform-ai-anchor-preview" pointerEvents="none">
+              <path d={`M ${playback.anchorPreview.from.x} ${playback.anchorPreview.from.y} L ${playback.anchorPreview.to.x} ${playback.anchorPreview.to.y}`} />
+              <circle className={playback.anchorPreview.active === 'from' ? 'is-active' : ''} cx={playback.anchorPreview.from.x} cy={playback.anchorPreview.from.y} r="9" />
+              <circle className={playback.anchorPreview.active === 'to' ? 'is-active' : ''} cx={playback.anchorPreview.to.x} cy={playback.anchorPreview.to.y} r="9" />
+            </g>
+          ) : null}
           {playback?.active && playback.cursorVisible ? (
             <g
               className={`freeform-ai-cursor${playback.clicking ? ' is-clicking' : ''}`}
@@ -1899,6 +2008,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <div key={`${row.label}-${index}`} className={`freeform-ai-inspector-row${index === playback.inspectorPreview!.activeIndex ? ' is-active' : ''}`}>
                 <span>{row.label}</span>
                 <strong>{truncate(row.value, 24)}</strong>
+                {index === playback.inspectorPreview!.activeIndex && playback.inspectorDropdownOpen ? (
+                  <div className="freeform-ai-inspector-menu">
+                    {playbackInspectorOptions(row.label, row.value).map((option) => (
+                      <span key={option} className={option === row.value ? 'is-selected' : ''}>{option === row.value ? '✓ ' : ''}{truncate(option, 22)}</span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
           </aside>
@@ -1947,9 +2063,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 type CanvasPlaybackAction =
   | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote; rough?: CanvasPoint; regionKey: string }
   | { kind: 'arrange'; ids: string[]; regionKey: string }
-  | { kind: 'boundary'; groupId: string; regionKey: string }
+  | { kind: 'boundary'; groupId: string; regionKey: string; beforeRect?: { x: number; y: number; width: number; height: number } }
   | { kind: 'style'; id: string; rows: Array<{ label: string; value: string }>; regionKey: string }
   | { kind: 'arrow'; id: string; added: boolean; before?: CanvasArrow; regionKey: string }
+  | { kind: 'delete'; element: CanvasElement; regionKey: string }
 
 type CanvasPlaybackRegion = {
   key: string
@@ -1964,11 +2081,15 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
   initialVisibleIds: string[]
   initialVisibleGroupIds: string[]
   initialPositionOverrides: Record<string, CanvasPoint>
+  ghostElements: CanvasElement[]
   actions: CanvasPlaybackAction[]
   regions: CanvasPlaybackRegion[]
 } {
   const previousById = new Map(previous?.elements.map((item) => [item.id, item]) ?? [])
+  const nextIds = new Set(next.elements.map((item) => item.id))
+  const removedElements = previous?.elements.filter((item) => !nextIds.has(item.id)) ?? []
   const previousGroups = new Map(previous?.groups?.map((group) => [group.id, group]) ?? [])
+  const previousGroupFrames = new Map((previous ? canvasGroupFrames(previous) : []).map((group) => [group.id, group]))
   const changed = new Set<string>()
   const added = new Set<string>()
   for (const item of next.elements) {
@@ -1989,6 +2110,7 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
   }
   const changedArrows = next.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && (added.has(item.id) || changed.has(item.id)))
   const nextGroups = new Map((next.groups ?? []).map((group) => [group.id, group]))
+  const nextGroupFrames = new Map(canvasGroupFrames(next).map((group) => [group.id, group]))
   const initialPositionOverrides: Record<string, CanvasPoint> = {}
   next.elements.forEach((item) => {
     if (item.type === 'arrow') return
@@ -2035,8 +2157,18 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
       const groupId = region.key.slice('group:'.length)
       const group = nextGroups.get(groupId)
       const before = previousGroups.get(groupId)
-      if (group && (!before || JSON.stringify(before) !== JSON.stringify(group))) {
-        actions.push({ kind: 'boundary', groupId, regionKey: region.key })
+      const beforeFrame = previousGroupFrames.get(groupId)
+      const afterFrame = nextGroupFrames.get(groupId)
+      const frameChanged = Boolean(beforeFrame && afterFrame && (
+        beforeFrame.x !== afterFrame.x || beforeFrame.y !== afterFrame.y || beforeFrame.width !== afterFrame.width || beforeFrame.height !== afterFrame.height
+      ))
+      if (group && (!before || JSON.stringify(before) !== JSON.stringify(group) || frameChanged)) {
+        actions.push({
+          kind: 'boundary',
+          groupId,
+          regionKey: region.key,
+          ...(beforeFrame ? { beforeRect: { x: beforeFrame.x, y: beforeFrame.y, width: beforeFrame.width, height: beforeFrame.height } } : {}),
+        })
       }
     }
 
@@ -2069,6 +2201,37 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
       const before = previousById.get(arrow.id)
       actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey: 'canvas', ...(before?.type === 'arrow' ? { before } : {}) })
     })
+
+  let deletionRegion: CanvasPlaybackRegion | undefined
+  if (removedElements.length) {
+    const previousBoxes = previous?.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow') ?? []
+    const removedBoxes = removedElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+    const relatedBoxes = removedBoxes.length
+      ? removedBoxes
+      : previousBoxes.filter((box) => removedElements.some((item) => item.type === 'arrow' && (item.from === box.id || item.to === box.id)))
+    if (relatedBoxes.length) {
+      const left = Math.min(...relatedBoxes.map((item) => item.x))
+      const top = Math.min(...relatedBoxes.map((item) => item.y))
+      const right = Math.max(...relatedBoxes.map((item) => item.x + item.width))
+      const bottom = Math.max(...relatedBoxes.map((item) => item.y + item.height))
+      deletionRegion = {
+        key: 'cleanup',
+        label: '清理旧结构',
+        elementIds: relatedBoxes.map((item) => item.id),
+        center: { x: (left + right) / 2, y: (top + bottom) / 2 },
+        width: right - left,
+        height: bottom - top,
+      }
+    } else {
+      deletionRegion = { key: 'cleanup', label: '清理旧结构', elementIds: [], center: { x: next.width / 2, y: next.height / 2 }, width: 480, height: 320 }
+    }
+    removedElements
+      .filter((item) => item.type === 'arrow')
+      .forEach((element) => actions.push({ kind: 'delete', element, regionKey: 'cleanup' }))
+    removedElements
+      .filter((item) => item.type !== 'arrow')
+      .forEach((element) => actions.push({ kind: 'delete', element, regionKey: 'cleanup' }))
+  }
   const hidden = mode === 'create'
     ? new Set(next.elements.map((item) => item.id))
     : added
@@ -2078,17 +2241,18 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
     initialVisibleIds: next.elements.filter((item) => !hidden.has(item.id)).map((item) => item.id),
     initialVisibleGroupIds: mode === 'create' ? [] : [...previousGroups.keys()],
     initialPositionOverrides,
+    ghostElements: removedElements,
     actions,
     regions: regionOrder.flatMap((key) => {
       const region = regionMap.get(key)
       return region ? [region] : []
-    }),
+    }).concat(deletionRegion ? [deletionRegion] : []),
   }
 }
 
 function buildCanvasPlaybackRegions(scene: CanvasScene): CanvasPlaybackRegion[] {
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-  const groups = new Map<string, CanvasNode | CanvasNote[]>()
+  const groups = new Map<string, Array<CanvasNode | CanvasNote>>()
   const labels = new Map<string, string>()
   const groupMeta = new Map((scene.groups ?? []).map((group) => [group.id, group]))
   const laneMeta = new Map((scene.lanes ?? []).map((lane) => [lane.id, lane]))
@@ -2164,6 +2328,10 @@ function playbackBoxOrder(scene: CanvasScene): string[] {
 }
 
 function playbackActionTarget(scene: CanvasScene, action: CanvasPlaybackAction): CanvasPoint | null {
+  if (action.kind === 'delete') {
+    if (action.element.type !== 'arrow') return center(action.element)
+    return null
+  }
   if (action.kind === 'arrange') {
     const bounds = playbackBoundsForIds(scene, action.ids)
     return bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } : null
@@ -2231,21 +2399,43 @@ function playbackStyleRows(before: CanvasNode | CanvasNote | undefined, after: C
   return rows.slice(0, 6)
 }
 
+function playbackInspectorOptions(label: string, selected: string): string[] {
+  const options = label === '语义色'
+    ? ['default', 'accent', 'success', 'warning', 'danger', 'muted']
+    : label === '形状'
+      ? ['rounded', 'square', 'pill']
+      : label === '角色'
+        ? ['User', 'Web', 'API', 'Service', 'Database', 'Cache', 'Queue', 'External']
+        : label === '技术栈'
+          ? ['Spring', 'React', 'Vue', 'Postgres', 'Redis', 'Kafka', 'Kubernetes']
+          : label === 'C4'
+            ? ['Person', 'Software System', 'Container', 'Component']
+            : [selected]
+  return [...new Set([selected, ...options])].slice(0, 6)
+}
+
 function playbackActionIntent(scene: CanvasScene, action: CanvasPlaybackAction): string {
+  if (action.kind === 'delete') {
+    return action.element.type === 'arrow'
+      ? `删除 ${action.element.label ? truncate(action.element.label, 22) : '旧连接'}`
+      : `删除 ${truncate(action.element.text, 22)}`
+  }
   if (action.kind === 'arrange') return '整理当前区域布局'
   if (action.kind === 'boundary') {
     const group = scene.groups?.find((item) => item.id === action.groupId)
     return `创建 ${truncate(group?.label || '系统', 20)} 边界`
   }
   if (action.kind === 'style') return '调整节点属性'
-  const item = scene.elements.find((candidate) => candidate.id === action.id)
-  if (!item) return action.kind === 'arrow' ? '连接关系' : '调整节点'
-  if (item.type !== 'arrow') {
+  if (action.kind === 'box') {
+    const item = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === action.id)
+    if (!item) return '调整节点'
     if (action.added) return `添加 ${truncate(item.text, 22)}`
     const moved = action.before && (action.before.x !== item.x || action.before.y !== item.y)
     if (moved) return `整理 ${truncate(item.text, 22)} 位置`
     return `更新 ${truncate(item.text, 22)}`
   }
+  const item = scene.elements.find((candidate): candidate is CanvasArrow => candidate.type === 'arrow' && candidate.id === action.id)
+  if (!item) return '连接关系'
   const from = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.from)
   const to = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.to)
   if (from && to) return `连接 ${truncate(from.text, 12)} → ${truncate(to.text, 12)}`

@@ -1761,14 +1761,15 @@ function buildCanvasProposalChanges(before: DiagramDocument, after: DiagramDocum
     const leftById = new Map(left.elements.map((item) => [item.id, item]))
     const rightById = new Map(right.elements.map((item) => [item.id, item]))
     const ids = [...new Set([...leftById.keys(), ...rightById.keys()])]
-    return ids.flatMap((id) => {
+    const changes: CanvasProposalChange[] = []
+    for (const id of ids) {
       const previous = leftById.get(id)
       const next = rightById.get(id)
-      if (!previous && next) return [{ id, kind: 'add' as const, label: canvasElementReviewLabel(next) }]
-      if (previous && !next) return [{ id, kind: 'remove' as const, label: canvasElementReviewLabel(previous) }]
-      if (!previous || !next || JSON.stringify(previous) === JSON.stringify(next)) return []
-      return [{ id, kind: 'update' as const, label: canvasElementReviewLabel(next) }]
-    })
+      if (!previous && next) changes.push({ id, kind: 'add', label: canvasElementReviewLabel(next) })
+      else if (previous && !next) changes.push({ id, kind: 'remove', label: canvasElementReviewLabel(previous) })
+      else if (previous && next && JSON.stringify(previous) !== JSON.stringify(next)) changes.push({ id, kind: 'update', label: canvasElementReviewLabel(next) })
+    }
+    return changes
   } catch {
     return null
   }

@@ -162,7 +162,7 @@ export function ungroupCanvasSelection(scene: CanvasScene, ids: string[]): Canva
     const { groupId: _groupId, ...rest } = item
     return rest
   })
-  const stillUsed = new Set(nextElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!))
+  const stillUsed = new Set(nextElements.flatMap((item) => item.type !== 'arrow' && 'groupId' in item && item.groupId ? [item.groupId] : []))
   return {
     ...scene,
     elements: nextElements,

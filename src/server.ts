@@ -7,7 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene, serializeCanvasScene, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
 import { DiagramStore } from './store.js'
 import { readGitChanges } from './gitChanges.js'
@@ -311,7 +311,7 @@ server.registerTool('diagram.trace', {
   const scene = parseCanvasScene(diagram.source)
   const trace = traceCanvasGraph(scene, elementIds, direction, depth)
   const nodeMap = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
-  const arrows = scene.elements.filter((item) => item.type === 'arrow' && trace.arrowIds.includes(item.id))
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && trace.arrowIds.includes(item.id))
   markThreadDiagram(extra._meta, diagram.path, trace.nodeIds, { seedElementIds: elementIds, direction, depth })
   return {
     content: [{
@@ -734,6 +734,8 @@ server.registerTool('diagram.proposeSubgraphUpdate', {
   const current = await store.get(diagramPath)
   if (current.type !== 'canvas') throw new Error('Subgraph Proposal 仅支持自由 Canvas 图。')
   validateCanvasSubgraphProposal(current.source, source, elementIds, newElementIds)
+  const scopeElementIds = [...new Set(elementIds)]
+  const declaredNewElementIds = [...new Set(newElementIds)]
   const proposal: ThreadDiagramProposal = {
     workspacePath: store.workspacePath,
     path: current.path,
@@ -742,15 +744,15 @@ server.registerTool('diagram.proposeSubgraphUpdate', {
     reason,
     baseModifiedAt: current.modifiedAt,
     updatedAt: new Date().toISOString(),
-    scopeElementIds: [...new Set(elementIds)],
-    newElementIds: [...new Set(newElementIds)],
+    scopeElementIds,
+    newElementIds: declaredNewElementIds,
   }
   threadProposals.set(threadId, proposal)
-  markThreadDiagram(extra._meta, current.path, proposal.scopeElementIds)
+  markThreadDiagram(extra._meta, current.path, scopeElementIds)
   return {
     content: [{
       type: 'text',
-      text: `Prepared a scoped Diagram proposal for ${current.path}. ${proposal.scopeElementIds.length} existing element(s) are in scope${proposal.newElementIds.length ? ` with ${proposal.newElementIds.length} declared new element(s)` : ''}; elements outside that subgraph were verified unchanged.`,
+      text: `Prepared a scoped Diagram proposal for ${current.path}. ${scopeElementIds.length} existing element(s) are in scope${declaredNewElementIds.length ? ` with ${declaredNewElementIds.length} declared new element(s)` : ''}; elements outside that subgraph were verified unchanged.`,
     }],
     structuredContent: { kind: 'diagram-proposal', workspacePath: store.workspacePath, proposal: proposalSummary(proposal) },
   }
