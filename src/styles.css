@@ -478,12 +478,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-ai-intent-bubble rect { fill: color-mix(in srgb, var(--surface-panel) 94%, transparent); stroke: color-mix(in srgb, var(--accent) 34%, var(--border)); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-ai-intent-bubble text { fill: var(--text-primary); font-size: 11px; font-weight: 600; dominant-baseline: middle; }
 .freeform-ai-cursor.is-clicking .freeform-ai-cursor-ring { animation: freeform-ai-click .24s ease-out; }
+.freeform-ai-selection-box { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: color-mix(in srgb, var(--accent) 78%, var(--border-strong)); stroke-width: 2; stroke-dasharray: 10 7; vector-effect: non-scaling-stroke; animation: freeform-ai-selection-pulse .8s ease-in-out infinite alternate; }
+.freeform-ai-boundary-draft rect { fill: color-mix(in srgb, var(--accent) 6%, transparent); stroke: var(--accent); stroke-width: 2.2; stroke-dasharray: 12 8; vector-effect: non-scaling-stroke; }
+.freeform-ai-boundary-draft text { fill: var(--accent); font-size: 12px; font-weight: 600; }
 .freeform-playback-status { position: absolute; z-index: 12; left: 50%; top: 14px; transform: translateX(-50%); min-width: 220px; max-width: min(420px, calc(100% - 160px)); display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 10px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--surface-panel) 92%, transparent); box-shadow: 0 10px 30px rgba(0,0,0,.1); backdrop-filter: blur(12px); }
 .freeform-playback-status > div { min-width: 0; flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .freeform-playback-status strong { overflow: hidden; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .freeform-playback-status span { color: var(--text-tertiary); font: 10px var(--font-mono); }
 .freeform-playback-status button { height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 10px; }
 .freeform-playback-pulse { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--accent); animation: freeform-playback-pulse 1s ease-in-out infinite; }
+.freeform-ai-inspector { position: absolute; z-index: 11; top: 58px; right: 14px; width: 194px; padding: 8px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--surface-panel) 95%, transparent); box-shadow: 0 14px 34px rgba(0,0,0,.11); backdrop-filter: blur(12px); pointer-events: none; }
+.freeform-ai-inspector-head { display: grid; gap: 2px; padding: 2px 4px 7px; border-bottom: 1px solid var(--border); }
+.freeform-ai-inspector-head span { color: var(--text-tertiary); font: 9px var(--font-mono); letter-spacing: .08em; }
+.freeform-ai-inspector-head strong { overflow: hidden; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-ai-inspector-row { margin-top: 5px; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 27px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; color: var(--text-tertiary); font-size: 10px; transition: border-color .12s ease, background .12s ease, color .12s ease; }
+.freeform-ai-inspector-row strong { overflow: hidden; color: var(--text-secondary); font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-ai-inspector-row.is-active { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); }
+.freeform-ai-inspector-row.is-active strong { color: var(--text-primary); }
 @keyframes freeform-ai-node-pop { 0% { opacity: .18; filter: saturate(.75) brightness(1.08); } 70% { opacity: 1; filter: saturate(1.15) brightness(1.03); } 100% { opacity: 1; filter: none; } }
 @keyframes freeform-ai-line-draw { to { stroke-dashoffset: 0; } }
 @keyframes freeform-ai-click { 0% { transform: scale(.7); opacity: .9; } 100% { transform: scale(1.65); opacity: 0; } }
@@ -491,6 +502,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes freeform-ai-caret { 0%,48% { opacity: 1; } 49%,100% { opacity: 0; } }
 @keyframes freeform-ai-final-highlight { 0% { stroke: var(--accent); stroke-width: 3.2; filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 34%, transparent)); } 100% { filter: none; } }
 @keyframes freeform-ai-final-line { 0% { stroke: var(--accent); stroke-width: 3.4; } 100% { } }
+@keyframes freeform-ai-selection-pulse { from { stroke-opacity: .58; } to { stroke-opacity: 1; } }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
 .freeform-anchor-points circle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: crosshair; vector-effect: non-scaling-stroke; }
 .freeform-anchor-points circle:hover { fill: var(--accent); }

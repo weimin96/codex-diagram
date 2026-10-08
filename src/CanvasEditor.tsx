@@ -45,12 +45,16 @@ type PlaybackState = {
   typing?: { id: string; text: string }
   positionOverrides?: Record<string, CanvasPoint>
   toolHint?: 'select' | 'node' | 'note' | 'connect'
-  phase?: 'planning' | 'transitioning' | 'placing' | 'typing' | 'connecting' | 'arranging' | 'finishing'
+  phase?: 'planning' | 'transitioning' | 'placing' | 'typing' | 'selecting' | 'grouping' | 'styling' | 'connecting' | 'arranging' | 'finishing'
   intent?: string
   regionLabel?: string
   regionIndex?: number
   totalRegions?: number
   activeRegionIds?: string[]
+  selectionBox?: { x: number; y: number; width: number; height: number }
+  boundaryDraft?: { x: number; y: number; width: number; height: number; label?: string }
+  visibleGroupIds?: string[]
+  inspectorPreview?: { title: string; rows: Array<{ label: string; value: string }>; activeIndex: number }
   finalHighlightIds?: string[]
   step: number
   total: number
@@ -287,15 +291,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     const pace = plan.actions.length > 60 ? 0.3 : plan.actions.length > 36 ? 0.46 : plan.actions.length > 20 ? 0.68 : 1
     const regionByKey = new Map(plan.regions.map((region, index) => [region.key, { ...region, index }]))
+    const playbackPositions = new Map<string, CanvasPoint>(Object.entries(plan.initialPositionOverrides))
     const firstTarget = playbackActionTarget(parsed.scene, plan.actions[0]) ?? { x: 72, y: 72 }
     const firstRegion = regionByKey.get(plan.actions[0].regionKey)
     playbackCursor.current = { x: Math.max(36, firstTarget.x - 96), y: Math.max(36, firstTarget.y - 72) }
     setPlayback({
       active: true,
       visibleIds: plan.initialVisibleIds,
+      visibleGroupIds: plan.initialVisibleGroupIds,
       cursor: playbackCursor.current,
       cursorVisible: true,
       clicking: false,
+      positionOverrides: plan.initialPositionOverrides,
       phase: 'planning',
       intent: firstRegion ? `准备绘制 ${firstRegion.label}` : '准备绘制画板',
       regionLabel: firstRegion?.label,
@@ -441,11 +448,141 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             delete next[id]
             return { ...current, clicking: false, positionOverrides: next }
           })
+          playbackPositions.delete(id)
           resolve()
         }
       }
       window.requestAnimationFrame(frame)
     })
+
+    const animateSelection = async (ids: string[], intent: string) => {
+      const bounds = playbackBoundsForIds(parsed.scene!, ids, playbackPositions)
+      if (!bounds) return
+      const start = { x: Math.max(0, bounds.x - 18), y: Math.max(0, bounds.y - 18) }
+      const end = { x: Math.min(parsed.scene!.width, bounds.x + bounds.width + 18), y: Math.min(parsed.scene!.height, bounds.y + bounds.height + 18) }
+      await moveCamera({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }, 220 * pace, 1.12)
+      await moveCursor(start, 180 * pace)
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'selecting',
+        intent,
+        toolHint: 'select',
+        clicking: true,
+        selectionBox: { x: start.x, y: start.y, width: 0, height: 0 },
+      } : current)
+      const started = performance.now()
+      await new Promise<void>((resolve) => {
+        const duration = 320 * pace
+        const frame = (now: number) => {
+          if (playbackRun.current !== runId) return resolve()
+          const raw = Math.min(1, (now - started) / Math.max(80, duration))
+          const eased = 1 - Math.pow(1 - raw, 3)
+          const cursor = { x: start.x + (end.x - start.x) * eased, y: start.y + (end.y - start.y) * eased }
+          playbackCursor.current = cursor
+          setPlayback((current) => current ? {
+            ...current,
+            cursor,
+            selectionBox: { x: start.x, y: start.y, width: cursor.x - start.x, height: cursor.y - start.y },
+          } : current)
+          if (raw < 1) window.requestAnimationFrame(frame)
+          else resolve()
+        }
+        window.requestAnimationFrame(frame)
+      })
+      setPlayback((current) => current ? { ...current, clicking: false } : current)
+      await sleep(90 * pace)
+    }
+
+    const arrangeRegion = async (ids: string[], regionLabel: string) => {
+      if (!ids.length) return
+      await animateSelection(ids, `框选 ${regionLabel} 节点`)
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'arranging',
+        intent: `整理 ${regionLabel} 布局`,
+        toolHint: 'select',
+      } : current)
+      for (const id of ids) {
+        const after = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === id)
+        if (!after) continue
+        const point = playbackPositions.get(id)
+        if (!point || (Math.abs(point.x - after.x) < 1 && Math.abs(point.y - after.y) < 1)) continue
+        const before = { ...after, x: point.x, y: point.y }
+        await moveCursor(center(before), 100 * pace)
+        await dragBoxToFinal(id, before, after)
+      }
+      setPlayback((current) => current ? { ...current, selectionBox: undefined } : current)
+      await sleep(80 * pace)
+    }
+
+    const drawBoundary = async (groupId: string, regionLabel: string) => {
+      const frame = canvasGroupFrames(parsed.scene!).find((group) => group.id === groupId)
+      if (!frame) return
+      await animateSelection(frame.memberIds, `框选 ${regionLabel} 成员`)
+      const start = { x: frame.x, y: frame.y }
+      const end = { x: frame.x + frame.width, y: frame.y + frame.height }
+      await moveCursor(start, 120 * pace)
+      setPlayback((current) => current ? {
+        ...current,
+        phase: 'grouping',
+        intent: `创建 ${regionLabel} 边界`,
+        clicking: true,
+        boundaryDraft: { x: start.x, y: start.y, width: 0, height: 0, label: frame.label },
+      } : current)
+      const started = performance.now()
+      await new Promise<void>((resolve) => {
+        const duration = 340 * pace
+        const tick = (now: number) => {
+          if (playbackRun.current !== runId) return resolve()
+          const raw = Math.min(1, (now - started) / Math.max(90, duration))
+          const eased = 1 - Math.pow(1 - raw, 3)
+          const cursor = { x: start.x + (end.x - start.x) * eased, y: start.y + (end.y - start.y) * eased }
+          playbackCursor.current = cursor
+          setPlayback((current) => current ? {
+            ...current,
+            cursor,
+            boundaryDraft: { x: start.x, y: start.y, width: cursor.x - start.x, height: cursor.y - start.y, label: frame.label },
+          } : current)
+          if (raw < 1) window.requestAnimationFrame(tick)
+          else resolve()
+        }
+        window.requestAnimationFrame(tick)
+      })
+      setPlayback((current) => current ? {
+        ...current,
+        clicking: false,
+        boundaryDraft: undefined,
+        selectionBox: undefined,
+        visibleGroupIds: [...new Set([...(current.visibleGroupIds ?? []), groupId])],
+      } : current)
+      await sleep(100 * pace)
+    }
+
+    const previewStyle = async (id: string, rows: Array<{ label: string; value: string }>) => {
+      if (!rows.length) return
+      const box = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === id)
+      if (!box) return
+      await moveCursor(center(playbackBoxPosition(box)), 150 * pace)
+      setPlayback((current) => current ? {
+        ...current,
+        currentElementId: id,
+        phase: 'styling',
+        intent: `调整 ${truncate(box.text, 18)} 属性`,
+        toolHint: 'select',
+        inspectorPreview: { title: box.text, rows, activeIndex: 0 },
+      } : current)
+      for (let index = 0; index < rows.length; index += 1) {
+        if (playbackRun.current !== runId) return
+        setPlayback((current) => current?.inspectorPreview ? {
+          ...current,
+          intent: `设置 ${rows[index].label} · ${rows[index].value}`,
+          inspectorPreview: { ...current.inspectorPreview, activeIndex: index },
+        } : current)
+        await sleep(150 * pace)
+      }
+      setPlayback((current) => current ? { ...current, inspectorPreview: undefined, currentElementId: undefined } : current)
+      await sleep(60 * pace)
+    }
 
     void (async () => {
       await sleep(140 * pace)
@@ -463,34 +600,25 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         if (action.kind === 'box') {
           const box = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === action.id)
           if (!box) continue
-          const isMoved = Boolean(action.before && (action.before.x !== box.x || action.before.y !== box.y))
           const toolHint = action.added ? (box.type === 'note' ? 'note' : 'node') : 'select'
           setPlayback((current) => current ? {
             ...current,
-            phase: action.added ? 'placing' : isMoved ? 'arranging' : 'typing',
+            phase: action.added ? 'placing' : 'typing',
             toolHint,
             intent: playbackActionIntent(parsed.scene!, action),
           } : current)
-          if (action.before && isMoved) {
-            const beforeCenter = center(action.before)
-            playbackCursor.current = beforeCenter
-            setPlayback((current) => current ? {
-              ...current,
-              cursor: beforeCenter,
-              positionOverrides: { ...(current.positionOverrides ?? {}), [action.id]: { x: action.before!.x, y: action.before!.y } },
-            } : current)
-            await sleep(80 * pace)
-            await dragBoxToFinal(action.id, action.before, box)
-          } else {
-            await moveCursor(target, 300 * pace)
-          }
+          await moveCursor(target, 300 * pace)
           if (playbackRun.current !== runId) return
+          if (action.added && action.rough) playbackPositions.set(action.id, action.rough)
           setPlayback((current) => current ? {
             ...current,
             visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
             currentElementId: action.id,
             clicking: true,
             typing: action.added ? { id: action.id, text: '' } : current.typing,
+            positionOverrides: action.added && action.rough
+              ? { ...(current.positionOverrides ?? {}), [action.id]: action.rough }
+              : current.positionOverrides,
             toolHint,
             phase: action.added ? 'placing' : current.phase,
             step: index + 1,
@@ -499,6 +627,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           setPlayback((current) => current ? { ...current, clicking: false } : current)
           await typeText(action.id, box.text, action.added ? '' : action.before?.text ?? box.text)
           await sleep((action.added ? 120 : 80) * pace)
+        } else if (action.kind === 'arrange') {
+          const region = regionByKey.get(action.regionKey)
+          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
+          await arrangeRegion(action.ids, region?.label ?? '当前区域')
+        } else if (action.kind === 'boundary') {
+          const region = regionByKey.get(action.regionKey)
+          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
+          await drawBoundary(action.groupId, region?.label ?? '当前区域')
+        } else if (action.kind === 'style') {
+          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
+          await previewStyle(action.id, action.rows)
         } else {
           const arrow = parsed.scene!.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === action.id)
           const from = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from) : undefined
@@ -534,6 +673,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         currentElementId: undefined,
         drawingArrowId: undefined,
         typing: undefined,
+        positionOverrides: {},
+        selectionBox: undefined,
+        boundaryDraft: undefined,
+        inspectorPreview: undefined,
         toolHint: 'select',
         phase: 'finishing',
         intent: '检查整体布局',
@@ -606,6 +749,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const renderBoxes = boxes.filter((item) => !collapsedMemberIds.has(item.id))
   const renderArrows = arrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
   const playbackVisibleIds = playback?.active ? new Set(playback.visibleIds) : null
+  const playbackVisibleGroupIds = playback?.active ? new Set(playback.visibleGroupIds ?? []) : null
   const visibleRenderBoxes = playbackVisibleIds ? renderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : renderBoxes
   const visibleRenderArrows = playbackVisibleIds ? renderArrows.filter((item) => playbackVisibleIds.has(item.id)) : renderArrows
   const collapsedConnections = canvasCollapsedConnections(scene, groupBounds)
@@ -1564,7 +1708,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
-          {groupBounds.filter((group) => !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => (
+          {groupBounds.filter((group) => (
+            !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])
+            && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
+          )).map((group) => (
             <g
               key={group.id}
               className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
@@ -1687,6 +1834,31 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const rect = normalizeRect(selectionRect)
             return <rect className="freeform-marquee" x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
           })() : null}
+          {playback?.selectionBox ? (
+            <rect
+              className="freeform-ai-selection-box"
+              x={playback.selectionBox.x}
+              y={playback.selectionBox.y}
+              width={playback.selectionBox.width}
+              height={playback.selectionBox.height}
+              rx="10"
+              pointerEvents="none"
+            />
+          ) : null}
+          {playback?.boundaryDraft ? (
+            <g className="freeform-ai-boundary-draft" pointerEvents="none">
+              <rect
+                x={playback.boundaryDraft.x}
+                y={playback.boundaryDraft.y}
+                width={playback.boundaryDraft.width}
+                height={playback.boundaryDraft.height}
+                rx="20"
+              />
+              {playback.boundaryDraft.label && playback.boundaryDraft.width > 120 ? (
+                <text x={playback.boundaryDraft.x + 14} y={playback.boundaryDraft.y + 22}>{truncate(playback.boundaryDraft.label, 28)}</text>
+              ) : null}
+            </g>
+          ) : null}
           {playback?.active && playback.cursorVisible ? (
             <g
               className={`freeform-ai-cursor${playback.clicking ? ' is-clicking' : ''}`}
@@ -1717,6 +1889,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </div>
         ) : null}
 
+        {playback?.inspectorPreview ? (
+          <aside className="freeform-ai-inspector" aria-label="AI 正在调整属性">
+            <div className="freeform-ai-inspector-head">
+              <span>INSPECTOR</span>
+              <strong>{truncate(playback.inspectorPreview.title, 22)}</strong>
+            </div>
+            {playback.inspectorPreview.rows.map((row, index) => (
+              <div key={`${row.label}-${index}`} className={`freeform-ai-inspector-row${index === playback.inspectorPreview!.activeIndex ? ' is-active' : ''}`}>
+                <span>{row.label}</span>
+                <strong>{truncate(row.value, 24)}</strong>
+              </div>
+            ))}
+          </aside>
+        ) : null}
+
         {contextMenu ? (
           <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
             <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button>
@@ -1744,7 +1931,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         </div>
         <svg className="freeform-minimap" aria-label="画布缩略图" viewBox={`0 0 ${scene.width} ${scene.height}`} onPointerDown={recenterFromMinimap}>
           <rect width={scene.width} height={scene.height} className="freeform-minimap-bg" />
-          {groupBounds.filter((group) => group.collapsed && !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
+          {groupBounds.filter((group) => (
+            group.collapsed
+            && !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])
+            && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
+          )).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
           {visibleRenderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
           <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
         </svg>
@@ -1754,7 +1945,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 }
 
 type CanvasPlaybackAction =
-  | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote; regionKey: string }
+  | { kind: 'box'; id: string; added: boolean; before?: CanvasNode | CanvasNote; rough?: CanvasPoint; regionKey: string }
+  | { kind: 'arrange'; ids: string[]; regionKey: string }
+  | { kind: 'boundary'; groupId: string; regionKey: string }
+  | { kind: 'style'; id: string; rows: Array<{ label: string; value: string }>; regionKey: string }
   | { kind: 'arrow'; id: string; added: boolean; before?: CanvasArrow; regionKey: string }
 
 type CanvasPlaybackRegion = {
@@ -1766,8 +1960,15 @@ type CanvasPlaybackRegion = {
   height: number
 }
 
-function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: CanvasScene, mode: 'create' | 'update'): { initialVisibleIds: string[]; actions: CanvasPlaybackAction[]; regions: CanvasPlaybackRegion[] } {
+function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: CanvasScene, mode: 'create' | 'update'): {
+  initialVisibleIds: string[]
+  initialVisibleGroupIds: string[]
+  initialPositionOverrides: Record<string, CanvasPoint>
+  actions: CanvasPlaybackAction[]
+  regions: CanvasPlaybackRegion[]
+} {
   const previousById = new Map(previous?.elements.map((item) => [item.id, item]) ?? [])
+  const previousGroups = new Map(previous?.groups?.map((group) => [group.id, group]) ?? [])
   const changed = new Set<string>()
   const added = new Set<string>()
   for (const item of next.elements) {
@@ -1787,38 +1988,97 @@ function buildCanvasPlaybackPlan(previous: CanvasScene | undefined, next: Canvas
     return regionByBoxId.get(laterId) ?? regionByBoxId.get(arrow.to) ?? regionByBoxId.get(arrow.from) ?? 'canvas'
   }
   const changedArrows = next.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && (added.has(item.id) || changed.has(item.id)))
-  const actions: CanvasPlaybackAction[] = []
-  const visitedBoxes = new Set<string>()
-  const emittedArrows = new Set<string>()
-  for (const id of orderedBoxes) {
-    const before = previousById.get(id)
-    const regionKey = regionByBoxId.get(id) ?? 'canvas'
-    if (added.has(id)) actions.push({ kind: 'box', id, added: true, regionKey })
-    else if (changed.has(id)) actions.push({ kind: 'box', id, added: false, regionKey, ...(before && before.type !== 'arrow' ? { before } : {}) })
-    visitedBoxes.add(id)
-    for (const arrow of changedArrows) {
-      if (emittedArrows.has(arrow.id) || !visitedBoxes.has(arrow.from) || !visitedBoxes.has(arrow.to)) continue
-      const arrowBefore = previousById.get(arrow.id)
-      const regionKey = arrowRegionKey(arrow)
-      actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey, ...(arrowBefore?.type === 'arrow' ? { before: arrowBefore } : {}) })
-      emittedArrows.add(arrow.id)
+  const nextGroups = new Map((next.groups ?? []).map((group) => [group.id, group]))
+  const initialPositionOverrides: Record<string, CanvasPoint> = {}
+  next.elements.forEach((item) => {
+    if (item.type === 'arrow') return
+    const before = previousById.get(item.id)
+    if (before && before.type !== 'arrow' && (before.x !== item.x || before.y !== item.y)) {
+      initialPositionOverrides[item.id] = { x: before.x, y: before.y }
     }
+  })
+
+  const actions: CanvasPlaybackAction[] = []
+  for (const region of regions) {
+    const regionIds = new Set(region.elementIds)
+    const boxIds = orderedBoxes.filter((id) => regionIds.has(id) && (added.has(id) || changed.has(id)))
+    const addedBoxes = boxIds.filter((id) => added.has(id))
+    const roughById = new Map<string, CanvasPoint>()
+    addedBoxes.forEach((id, index) => {
+      const item = next.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === id)
+      if (item) roughById.set(id, playbackRoughPosition(next, region, index, addedBoxes.length, item))
+    })
+
+    for (const id of boxIds) {
+      const before = previousById.get(id)
+      actions.push({
+        kind: 'box',
+        id,
+        added: added.has(id),
+        regionKey: region.key,
+        ...(roughById.has(id) ? { rough: roughById.get(id) } : {}),
+        ...(before && before.type !== 'arrow' ? { before } : {}),
+      })
+    }
+
+    const arrangeIds = boxIds.filter((id) => {
+      if (added.has(id)) return true
+      const before = previousById.get(id)
+      const after = next.elements.find((item) => item.id === id)
+      return Boolean(before && before.type !== 'arrow' && after && after.type !== 'arrow' && (before.x !== after.x || before.y !== after.y))
+    })
+    if (arrangeIds.length) {
+      actions.push({ kind: 'arrange', ids: arrangeIds, regionKey: region.key })
+    }
+
+    if (region.key.startsWith('group:')) {
+      const groupId = region.key.slice('group:'.length)
+      const group = nextGroups.get(groupId)
+      const before = previousGroups.get(groupId)
+      if (group && (!before || JSON.stringify(before) !== JSON.stringify(group))) {
+        actions.push({ kind: 'boundary', groupId, regionKey: region.key })
+      }
+    }
+
+    for (const id of boxIds) {
+      const after = next.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === id)
+      if (!after) continue
+      const before = previousById.get(id)
+      const rows = playbackStyleRows(before && before.type !== 'arrow' ? before : undefined, after)
+      if (rows.length) actions.push({ kind: 'style', id, rows, regionKey: region.key })
+    }
+
+    changedArrows
+      .filter((arrow) => arrowRegionKey(arrow) === region.key)
+      .forEach((arrow) => {
+        const before = previousById.get(arrow.id)
+        actions.push({
+          kind: 'arrow',
+          id: arrow.id,
+          added: added.has(arrow.id),
+          regionKey: region.key,
+          ...(before?.type === 'arrow' ? { before } : {}),
+        })
+      })
   }
-  for (const arrow of changedArrows) {
-    if (emittedArrows.has(arrow.id)) continue
-    const before = previousById.get(arrow.id)
-    const regionKey = arrowRegionKey(arrow)
-    actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey, ...(before?.type === 'arrow' ? { before } : {}) })
-  }
+
+  const knownRegionKeys = new Set(regions.map((region) => region.key))
+  changedArrows
+    .filter((arrow) => !knownRegionKeys.has(arrowRegionKey(arrow)))
+    .forEach((arrow) => {
+      const before = previousById.get(arrow.id)
+      actions.push({ kind: 'arrow', id: arrow.id, added: added.has(arrow.id), regionKey: 'canvas', ...(before?.type === 'arrow' ? { before } : {}) })
+    })
   const hidden = mode === 'create'
     ? new Set(next.elements.map((item) => item.id))
     : added
   const regionOrder = [...new Set(actions.map((action) => action.regionKey))]
-  const orderedActions = regionOrder.flatMap((regionKey) => actions.filter((action) => action.regionKey === regionKey))
   const regionMap = new Map(regions.map((region) => [region.key, region]))
   return {
     initialVisibleIds: next.elements.filter((item) => !hidden.has(item.id)).map((item) => item.id),
-    actions: orderedActions,
+    initialVisibleGroupIds: mode === 'create' ? [] : [...previousGroups.keys()],
+    initialPositionOverrides,
+    actions,
     regions: regionOrder.flatMap((key) => {
       const region = regionMap.get(key)
       return region ? [region] : []
@@ -1904,16 +2164,80 @@ function playbackBoxOrder(scene: CanvasScene): string[] {
 }
 
 function playbackActionTarget(scene: CanvasScene, action: CanvasPlaybackAction): CanvasPoint | null {
+  if (action.kind === 'arrange') {
+    const bounds = playbackBoundsForIds(scene, action.ids)
+    return bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } : null
+  }
+  if (action.kind === 'boundary') {
+    const frame = canvasGroupFrames(scene).find((group) => group.id === action.groupId)
+    return frame ? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 } : null
+  }
+  if (action.kind === 'style') {
+    const item = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === action.id)
+    return item ? center(item) : null
+  }
   const item = scene.elements.find((candidate) => candidate.id === action.id)
   if (!item) return null
-  if (item.type !== 'arrow') return center(item)
+  if (item.type !== 'arrow') {
+    if (action.kind === 'box' && action.rough) return { x: action.rough.x + item.width / 2, y: action.rough.y + item.height / 2 }
+    if (action.kind === 'box' && action.before) return center(action.before)
+    return center(item)
+  }
   const from = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.from)
   const to = scene.elements.find((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && candidate.id === item.to)
   if (!from || !to) return null
   return { x: (center(from).x + center(to).x) / 2, y: (center(from).y + center(to).y) / 2 }
 }
 
+function playbackRoughPosition(scene: CanvasScene, region: CanvasPlaybackRegion, index: number, total: number, item: CanvasNode | CanvasNote): CanvasPoint {
+  const columns = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(total))))
+  const rows = Math.max(1, Math.ceil(total / columns))
+  const col = index % columns
+  const row = Math.floor(index / columns)
+  const cellWidth = Math.max(220, Math.min(300, (region.width + 260) / columns))
+  const cellHeight = Math.max(120, Math.min(180, (region.height + 180) / rows))
+  const totalWidth = columns * cellWidth
+  const totalHeight = rows * cellHeight
+  const x = region.center.x - totalWidth / 2 + col * cellWidth + (cellWidth - item.width) / 2
+  const y = region.center.y - totalHeight / 2 + row * cellHeight + (cellHeight - item.height) / 2
+  return {
+    x: clamp(x + 34, 0, Math.max(0, scene.width - item.width)),
+    y: clamp(y + 26, 0, Math.max(0, scene.height - item.height)),
+  }
+}
+
+function playbackBoundsForIds(scene: CanvasScene, ids: string[], overrides?: Map<string, CanvasPoint>): { x: number; y: number; width: number; height: number } | null {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id))
+  if (!boxes.length) return null
+  const left = Math.min(...boxes.map((item) => overrides?.get(item.id)?.x ?? item.x))
+  const top = Math.min(...boxes.map((item) => overrides?.get(item.id)?.y ?? item.y))
+  const right = Math.max(...boxes.map((item) => (overrides?.get(item.id)?.x ?? item.x) + item.width))
+  const bottom = Math.max(...boxes.map((item) => (overrides?.get(item.id)?.y ?? item.y) + item.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function playbackStyleRows(before: CanvasNode | CanvasNote | undefined, after: CanvasNode | CanvasNote): Array<{ label: string; value: string }> {
+  const rows: Array<{ label: string; value: string }> = []
+  const add = (label: string, previous: unknown, next: unknown, format = (value: unknown) => String(value ?? '默认')) => {
+    if (previous !== next && next !== undefined) rows.push({ label, value: format(next) })
+  }
+  add('语义色', before?.tone, after.tone)
+  add('形状', before?.shape, after.shape)
+  add('角色', before?.icon, after.icon, (value) => canvasIconLabel(value as CanvasIcon))
+  add('技术栈', before?.stencil, after.stencil, (value) => canvasStencilLabel(value as CanvasStencil))
+  add('C4', before?.c4Type, after.c4Type, (value) => c4Label(value as CanvasC4Type))
+  add('副标题', before?.subtitle, after.subtitle)
+  if (JSON.stringify(before?.tags ?? []) !== JSON.stringify(after.tags ?? []) && after.tags?.length) rows.push({ label: '标签', value: after.tags.slice(0, 3).join(' · ') })
+  return rows.slice(0, 6)
+}
+
 function playbackActionIntent(scene: CanvasScene, action: CanvasPlaybackAction): string {
+  if (action.kind === 'arrange') return '整理当前区域布局'
+  if (action.kind === 'boundary') {
+    const group = scene.groups?.find((item) => item.id === action.groupId)
+    return `创建 ${truncate(group?.label || '系统', 20)} 边界`
+  }
+  if (action.kind === 'style') return '调整节点属性'
   const item = scene.elements.find((candidate) => candidate.id === action.id)
   if (!item) return action.kind === 'arrow' ? '连接关系' : '调整节点'
   if (item.type !== 'arrow') {
@@ -1940,6 +2264,9 @@ function playbackPhaseLabel(phase: PlaybackState['phase']): string {
   if (phase === 'transitioning') return '切换区域'
   if (phase === 'placing') return '放置节点'
   if (phase === 'typing') return '输入内容'
+  if (phase === 'selecting') return '框选元素'
+  if (phase === 'grouping') return '创建边界'
+  if (phase === 'styling') return '调整属性'
   if (phase === 'connecting') return '连接关系'
   if (phase === 'arranging') return '整理布局'
   if (phase === 'finishing') return '完成收尾'
