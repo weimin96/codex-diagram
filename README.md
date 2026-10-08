@@ -46,9 +46,11 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 自由画布支持节点、备注、连接、拖拽、文字编辑、缩放/平移、多选/框选、复制粘贴、撤销重做、节点 resize、对齐/等距分布、删除，并与 Mermaid 共用保存、并发保护和导出链路
 - Canvas 节点支持默认/强调/成功/警告/危险/弱化语义色，圆角/方形/胶囊形状，以及锁定；节点详情可保存副标题、说明、标签、源码绑定和常用技术栈 stencil；连线支持标签、实线/虚线、智能正交路由、四向锚点和可拖动手工折点
 - Canvas 支持右键菜单、前后图层调整和 MiniMap；锁定节点仍可选中查看，但不会被拖动、resize、对齐或 AI 无意重排
-- Canvas 组合可升级为带名称和语义色的系统/领域容器；编辑器提供从左到右、从上到下、网格三种自动布局，并保留锁定元素位置
-- Canvas 节点支持 `user/web/api/service/database/cache/queue/cloud/file/external` 角色标记，以及 Spring/React/Vue/Postgres/MySQL/Redis/Kafka/Docker/Kubernetes/Qdrant/OpenSearch/MinIO 技术 stencil；生成面板提供 C4 Context、C4 Container、服务拓扑、事件/数据流预设
-- Canvas 容器支持系统边界、命名、语义色和折叠；折叠状态会进入 `.diagram.json` 并保持 SVG/PNG 导出一致。泳道支持水平/垂直三分区、节点 lane 归属、lane 命名/色调以及按泳道自动布局
+- Canvas 组合可升级为带名称和语义色的系统/领域容器；支持 `parentId` 嵌套边界，可表达 Software System → Container 的层级；编辑器提供全图与当前选区/容器的局部自动布局，并保留锁定元素位置
+- Canvas 节点支持 C4 `Person / Software System / Container / Component` 语义、`user/web/api/service/database/cache/queue/cloud/file/external` 运行角色，以及 Spring/React/Vue/Postgres/MySQL/Redis/Kafka/Docker/Kubernetes/Qdrant/OpenSearch/MinIO 技术 stencil；生成面板提供 C4 Context、C4 Container、C4 Component、服务拓扑、事件/数据流预设
+- Canvas 容器支持系统边界、命名、说明、语义色和折叠；折叠后内部节点隐藏，但跨边界依赖会汇聚到容器代理节点并显示数量，SVG/PNG 导出保持同样语义。泳道支持水平/垂直三分区、节点 lane 归属、lane 命名/色调以及按泳道自动布局
+- 大型 Canvas 提供“层级”导航面板，可按边界、泳道、节点浏览，并搜索节点标题、副标题、说明、标签和源码路径；点击结果会自动展开折叠祖先、选中并聚焦到目标节点。MiniMap 同时显示折叠边界代理
+- 节点 Inspector 默认保持紧凑；“详情”模式再展开职责说明、标签、泳道和源码绑定，避免聊天右侧窄面板长期被高级表单占满
 - 画布可直接插入 Web→API→Service、Event-driven、Cache Aside 三种架构骨架，再由 Codex 根据真实代码和配置补全
 - Canvas 支持节点组合/取消组合；组内任一节点默认按组选择和移动，Alt 可临时单独操作一个成员；复制组合会生成新的 groupId，不会和原组合串联
 - Canvas 连线支持四向锚点和手工折点：选中节点会显示边缘连接点，选中连线可以添加/拖动/双击删除折点；SVG/PNG 导出使用同一套路径数据

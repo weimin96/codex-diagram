@@ -1,4 +1,4 @@
-import type { CanvasArrow, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasScene, CanvasStencil } from './canvas.js'
+import type { CanvasArrow, CanvasC4Type, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasScene, CanvasStencil } from './canvas.js'
 
 export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasElement[] {
   const chosen = new Set(ids)
@@ -43,7 +43,14 @@ export function pasteCanvasSelection(scene: CanvasScene, copied: CanvasElement[]
   })
   const copiedGroups = [...groupMap.entries()].map(([oldId, newId]) => {
     const sourceGroup = scene.groups?.find((group) => group.id === oldId)
-    return sourceGroup ? { ...sourceGroup, id: newId, label: sourceGroup.label ? `${sourceGroup.label} Copy` : undefined } : { id: newId }
+    if (!sourceGroup) return { id: newId }
+    const remappedParent = sourceGroup.parentId ? groupMap.get(sourceGroup.parentId) : undefined
+    return {
+      ...sourceGroup,
+      id: newId,
+      label: sourceGroup.label ? `${sourceGroup.label} Copy` : undefined,
+      ...(remappedParent ? { parentId: remappedParent } : { parentId: undefined }),
+    }
   })
   return {
     scene: { ...scene, elements: [...scene.elements, ...boxes, ...arrows], groups: copiedGroups.length ? [...(scene.groups ?? []), ...copiedGroups] : scene.groups },
@@ -167,6 +174,31 @@ export function updateCanvasGroup(scene: CanvasScene, groupId: string, patch: Pa
   return { ...scene, groups: upsertCanvasGroup(scene.groups, { id: groupId, ...patch }) }
 }
 
+export function setCanvasGroupParent(scene: CanvasScene, groupId: string, parentId?: string): CanvasScene {
+  if (parentId === groupId) return scene
+  const groups = scene.groups ?? []
+  if (!groups.some((group) => group.id === groupId)) return scene
+  if (parentId && !groups.some((group) => group.id === parentId)) return scene
+  if (parentId) {
+    let current: string | undefined = parentId
+    const seen = new Set<string>()
+    while (current && !seen.has(current)) {
+      if (current === groupId) return scene
+      seen.add(current)
+      current = groups.find((group) => group.id === current)?.parentId
+    }
+  }
+  return {
+    ...scene,
+    groups: groups.map((group) => {
+      if (group.id !== groupId) return group
+      if (parentId) return { ...group, parentId }
+      const { parentId: _parentId, ...rest } = group
+      return rest
+    }),
+  }
+}
+
 export type CanvasLayoutMode = 'horizontal' | 'vertical' | 'grid'
 export type CanvasArchitectureTemplate = 'web-service' | 'event-driven' | 'cache-aside'
 
@@ -176,9 +208,9 @@ export function insertCanvasArchitectureTemplate(scene: CanvasScene, template: C
   const originX = 120 + (existingBoxes % 3) * 48
   const originY = 120 + (existingBoxes % 4) * 42
   const added: CanvasElement[] = []
-  const node = (text: string, x: number, y: number, icon: CanvasIcon, stencil?: CanvasStencil, subtitle?: string) => {
+  const node = (text: string, x: number, y: number, icon: CanvasIcon, stencil?: CanvasStencil, subtitle?: string, c4Type: CanvasC4Type = 'container') => {
     const id = nextCanvasElementId('node', [...used, ...added])
-    added.push({ id, type: 'node', x: originX + x, y: originY + y, width: 210, height: 92, text, icon, stencil, subtitle, tone: 'default' })
+    added.push({ id, type: 'node', x: originX + x, y: originY + y, width: 210, height: 92, text, icon, stencil, subtitle, c4Type, tone: 'default' })
     return id
   }
   const arrow = (from: string, to: string, label?: string) => {
@@ -208,7 +240,7 @@ export function insertCanvasArchitectureTemplate(scene: CanvasScene, template: C
     arrow(consumer, store, 'persist')
     arrow(worker, store, 'persist')
   } else {
-    const client = node('Client', 0, 140, 'web')
+    const client = node('Client', 0, 140, 'web', undefined, undefined, 'person')
     const service = node('Application Service', 300, 140, 'service', 'spring')
     const cache = node('Cache', 620, 40, 'cache', 'redis')
     const db = node('Database', 620, 240, 'database', 'postgres')
@@ -287,6 +319,28 @@ export function layoutCanvasScene(scene: CanvasScene, mode: CanvasLayoutMode, gr
     })
   })
   return applyLayoutPositions(scene, positions)
+}
+
+export function layoutCanvasSelection(scene: CanvasScene, ids: string[], mode: CanvasLayoutMode, grid = 16): CanvasScene {
+  const selected = new Set(ids)
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && selected.has(item.id) && !item.locked)
+  if (boxes.length < 2) return scene
+  const minX = Math.min(...boxes.map((item) => item.x))
+  const minY = Math.min(...boxes.map((item) => item.y))
+  const subsetElements = scene.elements.filter((item) => (
+    item.type !== 'arrow'
+      ? selected.has(item.id)
+      : selected.has(item.from) && selected.has(item.to)
+  ))
+  const arranged = layoutCanvasScene({ ...scene, elements: subsetElements, groups: undefined, lanes: undefined }, mode, grid)
+  const arrangedBoxes = arranged.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const arrangedMinX = Math.min(...arrangedBoxes.map((item) => item.x))
+  const arrangedMinY = Math.min(...arrangedBoxes.map((item) => item.y))
+  const moved = new Map(arrangedBoxes.map((item) => [item.id, {
+    x: clamp(item.x - arrangedMinX + minX, 0, scene.width - item.width),
+    y: clamp(item.y - arrangedMinY + minY, 0, scene.height - item.height),
+  }]))
+  return applyLayoutPositions(scene, moved)
 }
 
 export function createCanvasLanePreset(scene: CanvasScene, axis: CanvasLaneAxis, count = 3): CanvasScene {

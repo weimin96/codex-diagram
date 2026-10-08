@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { anchorPoint, canvasArrowPath, canvasIconLabel, canvasStencilLabel, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasElement, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode } from './canvasOperations.js'
+import { anchorPoint, canvasArrowPath, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -52,6 +52,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
   const [sourceLinkOptions, setSourceLinkOptions] = useState<string[]>([])
   const [sourceLinkLoading, setSourceLinkLoading] = useState(false)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [layerQuery, setLayerQuery] = useState('')
+  const [selectedGroupTarget, setSelectedGroupTarget] = useState<string | null>(null)
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
   const editorRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
@@ -136,6 +140,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (event.key === 'Escape') {
         setContextMenu(null)
         setSelectedIds([])
+        setSelectedGroupTarget(null)
         setConnectFrom(null)
         setConnectFromAnchor('auto')
         setTool('select')
@@ -230,23 +235,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const selectedLocked = selectedBoxes.filter((item) => item.locked)
   const selectedGroupIds = [...new Set(selectedBoxes.map((item) => item.groupId).filter((value): value is string => Boolean(value)))]
-  const groupBounds = (scene.groups ?? []).map((group) => {
-    const members = boxes.filter((item) => item.groupId === group.id)
-    if (members.length < 2) return null
-    const x = Math.min(...members.map((item) => item.x))
-    const y = Math.min(...members.map((item) => item.y))
-    const right = Math.max(...members.map((item) => item.x + item.width))
-    const bottom = Math.max(...members.map((item) => item.y + item.height))
-    return { ...group, x: x - 18, y: y - 36, width: right - x + 36, height: bottom - y + 54 }
-  }).filter((value): value is NonNullable<typeof value> => Boolean(value))
-  const selectedGroup = selectedGroupIds.length === 1
-    ? scene.groups?.find((group) => group.id === selectedGroupIds[0]) ?? { id: selectedGroupIds[0], label: selectedGroupIds[0], tone: 'muted' as CanvasTone }
+  const groupBounds = canvasGroupFrames(scene)
+  const selectedGroupId = selectedGroupTarget ?? (selectedGroupIds.length === 1 ? selectedGroupIds[0] : undefined)
+  const selectedGroup = selectedGroupId
+    ? scene.groups?.find((group) => group.id === selectedGroupId) ?? { id: selectedGroupId, label: selectedGroupId, tone: 'muted' as CanvasTone }
     : undefined
-  const collapsedGroupIds = new Set((scene.groups ?? []).filter((group) => group.collapsed).map((group) => group.id))
-  const collapsedMemberIds = new Set(boxes.filter((item) => item.groupId && collapsedGroupIds.has(item.groupId)).map((item) => item.id))
+  const collapsedOwners = canvasCollapsedOwners(scene)
+  const collapsedMemberIds = new Set(collapsedOwners.keys())
   const renderBoxes = boxes.filter((item) => !collapsedMemberIds.has(item.id))
   const renderArrows = arrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
+  const collapsedConnections = canvasCollapsedConnections(scene, groupBounds)
   const selectedLane = selectedBox?.laneId ? scene.lanes?.find((lane) => lane.id === selectedBox.laneId) : undefined
+  const layerNeedle = layerQuery.trim().toLocaleLowerCase()
+  const layerBoxes = layerNeedle
+    ? boxes.filter((item) => [item.text, item.subtitle, item.description, ...(item.tags ?? []), ...(item.sourcePaths ?? [])].some((value) => value?.toLocaleLowerCase().includes(layerNeedle)))
+    : boxes
 
   function currentScene(): CanvasScene {
     if (!sceneRef.current) throw new Error('Canvas scene unavailable')
@@ -350,22 +353,23 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const grouped = groupCanvasSelection(currentScene(), selectedIds)
     if (!grouped.groupId) return
     commit(grouped.scene)
+    setSelectedGroupTarget(grouped.groupId)
     setSelectedIds(expandCanvasGroupSelection(grouped.scene, selectedIds))
   }
 
   function ungroupSelection() {
     commit(ungroupCanvasSelection(currentScene(), selectedIds))
+    setSelectedGroupTarget(null)
   }
 
-  function updateSelectedGroup(patch: { label?: string; tone?: CanvasTone; collapsed?: boolean; kind?: 'group' | 'boundary' }) {
-    if (selectedGroupIds.length !== 1) return
-    commit(updateCanvasGroup(currentScene(), selectedGroupIds[0], patch))
+  function updateSelectedGroup(patch: Partial<Omit<CanvasGroup, 'id'>>) {
+    if (!selectedGroupId) return
+    commit(updateCanvasGroup(currentScene(), selectedGroupId, patch))
   }
 
   function toggleSelectedGroupCollapsed() {
     if (!selectedGroup) return
     updateSelectedGroup({ collapsed: !selectedGroup.collapsed })
-    if (!selectedGroup.collapsed) setSelectedIds([])
   }
 
   function applyLanePreset(axis: 'horizontal' | 'vertical') {
@@ -389,6 +393,70 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function applyLayout(mode: CanvasLayoutMode) {
     commit(layoutCanvasScene(currentScene(), mode, GRID))
     fit()
+  }
+
+  function applyLocalLayout(mode: CanvasLayoutMode) {
+    const ids = selectedGroupId
+      ? groupBounds.find((group) => group.id === selectedGroupId)?.memberIds ?? selectedIds
+      : selectedIds
+    if (ids.length < 2) return
+    commit(layoutCanvasSelection(currentScene(), ids, mode, GRID))
+    focusBoxes(ids)
+  }
+
+  function selectGroup(groupId: string) {
+    const frame = groupBounds.find((group) => group.id === groupId)
+    if (!frame) return
+    setSelectedGroupTarget(groupId)
+    setSelectedIds(frame.memberIds)
+    focusBoxes(frame.memberIds)
+  }
+
+  function focusBoxes(ids: string[]) {
+    const live = currentScene()
+    const targets = live.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && ids.includes(item.id))
+    if (!targets.length) return
+    const left = Math.min(...targets.map((item) => item.x))
+    const top = Math.min(...targets.map((item) => item.y))
+    const right = Math.max(...targets.map((item) => item.x + item.width))
+    const bottom = Math.max(...targets.map((item) => item.y + item.height))
+    const width = Math.max(280, right - left + 200)
+    const height = Math.max(180, bottom - top + 160)
+    const zoom = clamp(Math.min(live.width / width, live.height / height), 0.8, 2.6)
+    const viewWidth = live.width / zoom
+    const viewHeight = live.height / zoom
+    setViewport({
+      zoom,
+      x: clamp((left + right) / 2 - viewWidth / 2, 0, Math.max(0, live.width - viewWidth)),
+      y: clamp((top + bottom) / 2 - viewHeight / 2, 0, Math.max(0, live.height - viewHeight)),
+    })
+  }
+
+  function revealAndFocus(ids: string[]) {
+    const live = currentScene()
+    const groups = new Map((live.groups ?? []).map((group) => [group.id, group]))
+    const expand = new Set<string>()
+    live.elements.forEach((item) => {
+      if (item.type === 'arrow' || !ids.includes(item.id) || !item.groupId) return
+      let groupId: string | undefined = item.groupId
+      const seen = new Set<string>()
+      while (groupId && !seen.has(groupId)) {
+        seen.add(groupId)
+        const group = groups.get(groupId)
+        if (!group) break
+        if (group.collapsed) expand.add(group.id)
+        groupId = group.parentId
+      }
+    })
+    if (expand.size) {
+      commit({
+        ...live,
+        groups: live.groups?.map((group) => expand.has(group.id) ? { ...group, collapsed: undefined } : group),
+      })
+    }
+    setSelectedGroupTarget(null)
+    setSelectedIds(ids)
+    focusBoxes(ids)
   }
 
   function reorderSelection(direction: 'front' | 'back') {
@@ -420,12 +488,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     event.preventDefault()
     event.stopPropagation()
     editorRef.current?.focus({ preventScroll: true })
+    setSelectedGroupTarget(null)
     if (!selectedIds.includes(id)) setSelectedIds([id])
     const surface = editorRef.current?.getBoundingClientRect()
     setContextMenu({ x: event.clientX - (surface?.left ?? 0), y: event.clientY - (surface?.top ?? 0) })
   }
 
   function handleBoxClick(id: string, event: React.MouseEvent<SVGGElement>) {
+    setSelectedGroupTarget(null)
     if (tool === 'connect') {
       if (!connectFrom) {
         setConnectFrom(id)
@@ -451,6 +521,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function handleAnchorClick(event: React.MouseEvent<SVGCircleElement>, id: string, anchor: Exclude<CanvasAnchor, 'auto'>) {
     event.preventDefault()
     event.stopPropagation()
+    setSelectedGroupTarget(null)
     const live = currentScene()
     if (!connectFrom) {
       setConnectFrom(id)
@@ -486,6 +557,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function startMove(event: React.PointerEvent<SVGGElement>, item: CanvasNode | CanvasNote) {
     if (tool !== 'select' || spacePanning) return
     event.stopPropagation()
+    setSelectedGroupTarget(null)
     setContextMenu(null)
     editorRef.current?.focus({ preventScroll: true })
     const live = currentScene()
@@ -756,16 +828,69 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <option value="event-driven">事件驱动</option>
             <option value="cache-aside">Cache Aside</option>
           </select>
+          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => setLayersOpen((value) => !value)}>层级</button>
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
         </div>
 
+        {layersOpen ? (
+          <aside className="freeform-layer-panel" aria-label="画布层级与搜索">
+            <div className="freeform-layer-head">
+              <strong>层级</strong>
+              <button type="button" onClick={() => setLayersOpen(false)}>关闭</button>
+            </div>
+            <input value={layerQuery} onChange={(event) => setLayerQuery(event.target.value)} placeholder="搜索节点、标签、源码" aria-label="搜索画布节点" />
+            {(scene.groups ?? []).length ? (
+              <section>
+                <span>边界</span>
+                {(scene.groups ?? [])
+                  .filter((group) => !layerNeedle || [group.id, group.label, group.description, group.c4Type].some((value) => value?.toLocaleLowerCase().includes(layerNeedle)))
+                  .map((group) => (
+                    <button key={group.id} type="button" className={selectedGroupId === group.id ? 'is-active' : ''} style={{ paddingLeft: 8 + groupDepth(group.id, scene.groups ?? []) * 12 }} onClick={() => selectGroup(group.id)}>
+                      <span>{group.collapsed ? '▸' : '▾'}</span>
+                      <strong>{group.label || group.id}</strong>
+                      <small>{group.c4Type ? c4Label(group.c4Type) : group.kind === 'boundary' ? 'Boundary' : 'Group'}</small>
+                    </button>
+                  ))}
+              </section>
+            ) : null}
+            {(scene.lanes ?? []).length ? (
+              <section>
+                <span>泳道</span>
+                {(scene.lanes ?? []).filter((lane) => !layerNeedle || lane.label.toLocaleLowerCase().includes(layerNeedle)).map((lane) => (
+                  <button key={lane.id} type="button" onClick={() => {
+                    const ids = boxes.filter((item) => item.laneId === lane.id).map((item) => item.id)
+                    setSelectedGroupTarget(null)
+                    setSelectedIds(ids)
+                    focusBoxes(ids)
+                  }}>
+                    <strong>{lane.label}</strong><small>{lane.axis === 'horizontal' ? 'Horizontal' : 'Vertical'}</small>
+                  </button>
+                ))}
+              </section>
+            ) : null}
+            <section>
+              <span>节点 · {layerBoxes.length}</span>
+              {layerBoxes.slice(0, 120).map((item) => (
+                <button key={item.id} type="button" className={selectedIds.includes(item.id) ? 'is-active' : ''} onClick={() => revealAndFocus([item.id])}>
+                  <strong>{item.text}</strong>
+                  <small>{item.c4Type ? c4Label(item.c4Type) : item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : item.type}</small>
+                </button>
+              ))}
+              {layerBoxes.length > 120 ? <em>只显示前 120 个结果，请继续缩小搜索范围。</em> : null}
+            </section>
+          </aside>
+        ) : null}
+
         {selected.length > 0 ? (
-          <div className="freeform-inspector" aria-label="选中元素属性">
+          <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
               <strong>{selected.length === 1 ? elementLabel(selected[0]) : `${selected.length} 个元素`}</strong>
-              <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
+              <div>
+                {selectedBox || selectedGroup ? <button type="button" aria-pressed={detailsExpanded} onClick={() => setDetailsExpanded((value) => !value)}>{detailsExpanded ? '收起' : '详情'}</button> : null}
+                <button type="button" title="删除" aria-label="删除选中元素" onClick={deleteSelected}>删除</button>
+              </div>
             </div>
             {selectedSingle?.type === 'arrow' ? (
               <>
@@ -808,6 +933,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
                 </div>
                 <label>
+                  <span>C4 语义</span>
+                  <select aria-label="C4 语义" disabled={selectedBox.locked} value={selectedBox.c4Type ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, c4Type: (event.target.value || undefined) as CanvasC4Type | undefined }))}>
+                    <option value="">未指定</option>
+                    <option value="person">Person</option>
+                    <option value="software-system">Software System</option>
+                    <option value="container">Container</option>
+                    <option value="component">Component</option>
+                  </select>
+                </label>
+                <label>
                   <span>节点角色</span>
                   <select aria-label="节点角色图标" disabled={selectedBox.locked} value={selectedBox.icon ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, icon: (event.target.value || undefined) as CanvasIcon | undefined }))}>
                     <option value="">无</option>
@@ -841,72 +976,76 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <option value="minio">MinIO / S3</option>
                   </select>
                 </label>
-                <label>
-                  <span>副标题</span>
-                  <input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} />
-                </label>
-                <label>
-                  <span>说明</span>
-                  <textarea aria-label="节点说明" disabled={selectedBox.locked} value={selectedBox.description ?? ''} placeholder="职责、边界、风险或实现备注" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, description: event.target.value || undefined })} />
-                </label>
-                <label>
-                  <span>标签</span>
-                  <input aria-label="节点标签" disabled={selectedBox.locked} value={selectedBox.tags?.join(', ') ?? ''} placeholder="核心, 外部, 异步" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, tags: splitTags(event.target.value) })} />
-                </label>
-                {scene.lanes?.length ? (
-                  <label>
-                    <span>泳道</span>
-                    <select aria-label="节点泳道" disabled={selectedBox.locked} value={selectedBox.laneId ?? ''} onChange={(event) => assignSelectionLane(event.target.value || undefined)}>
-                      <option value="">未分配</option>
-                      {scene.lanes.map((lane) => <option key={lane.id} value={lane.id}>{lane.label}</option>)}
-                    </select>
-                  </label>
-                ) : null}
-                {selectedLane ? (
-                  <div className="freeform-lane-inspector">
-                    <div className="freeform-section-caption">当前泳道</div>
-                    <label><span>名称</span><input value={selectedLane.label} onChange={(event) => commit(updateCanvasLane(currentScene(), selectedLane.id, { label: event.target.value || selectedLane.label }))} /></label>
-                    <label><span>色调</span><select value={selectedLane.tone ?? 'muted'} onChange={(event) => commit(updateCanvasLane(currentScene(), selectedLane.id, { tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
-                  </div>
-                ) : null}
-                <label>
-                  <span>关联源码</span>
-                  <div className="freeform-source-picker">
-                    <input
-                      aria-label="搜索关联源码"
-                      disabled={selectedBox.locked}
-                      value={sourceLinkQuery}
-                      placeholder="搜索当前工作区源码"
-                      onChange={(event) => setSourceLinkQuery(event.target.value)}
-                    />
-                    {sourceLinkLoading || sourceLinkOptions.length ? (
-                      <div className="freeform-source-options">
-                        {sourceLinkLoading ? <span>搜索中…</span> : null}
-                        {!sourceLinkLoading ? sourceLinkOptions.map((path) => (
-                          <button
-                            type="button"
-                            key={path}
-                            title={path}
-                            onClick={() => {
-                              updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, sourcePaths: [...new Set([...(item.sourcePaths ?? []), path])] })
-                              setSourceLinkQuery('')
-                              setSourceLinkOptions([])
-                            }}
-                          >{shortSourcePath(path)}</button>
-                        )) : null}
+                {detailsExpanded ? (
+                  <>
+                    <label>
+                      <span>副标题</span>
+                      <input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} />
+                    </label>
+                    <label>
+                      <span>说明</span>
+                      <textarea aria-label="节点说明" disabled={selectedBox.locked} value={selectedBox.description ?? ''} placeholder="职责、边界、风险或实现备注" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, description: event.target.value || undefined })} />
+                    </label>
+                    <label>
+                      <span>标签</span>
+                      <input aria-label="节点标签" disabled={selectedBox.locked} value={selectedBox.tags?.join(', ') ?? ''} placeholder="核心, 外部, 异步" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, tags: splitTags(event.target.value) })} />
+                    </label>
+                    {scene.lanes?.length ? (
+                      <label>
+                        <span>泳道</span>
+                        <select aria-label="节点泳道" disabled={selectedBox.locked} value={selectedBox.laneId ?? ''} onChange={(event) => assignSelectionLane(event.target.value || undefined)}>
+                          <option value="">未分配</option>
+                          {scene.lanes.map((lane) => <option key={lane.id} value={lane.id}>{lane.label}</option>)}
+                        </select>
+                      </label>
+                    ) : null}
+                    {selectedLane ? (
+                      <div className="freeform-lane-inspector">
+                        <div className="freeform-section-caption">当前泳道</div>
+                        <label><span>名称</span><input value={selectedLane.label} onChange={(event) => commit(updateCanvasLane(currentScene(), selectedLane.id, { label: event.target.value || selectedLane.label }))} /></label>
+                        <label><span>色调</span><select value={selectedLane.tone ?? 'muted'} onChange={(event) => commit(updateCanvasLane(currentScene(), selectedLane.id, { tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
                       </div>
                     ) : null}
-                  </div>
-                </label>
-                {selectedBox.sourcePaths?.length ? (
-                  <div className="freeform-source-links">
-                    {selectedBox.sourcePaths.map((path) => (
-                      <span key={path} className="freeform-source-link">
-                        <button type="button" title={path} onClick={() => onOpenSource?.(path)}>{shortSourcePath(path)}</button>
-                        {!selectedBox.locked ? <button type="button" aria-label={`移除 ${path}`} onClick={() => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, sourcePaths: item.sourcePaths?.filter((candidate) => candidate !== path) })}>×</button> : null}
-                      </span>
-                    ))}
-                  </div>
+                    <label>
+                      <span>关联源码</span>
+                      <div className="freeform-source-picker">
+                        <input
+                          aria-label="搜索关联源码"
+                          disabled={selectedBox.locked}
+                          value={sourceLinkQuery}
+                          placeholder="搜索当前工作区源码"
+                          onChange={(event) => setSourceLinkQuery(event.target.value)}
+                        />
+                        {sourceLinkLoading || sourceLinkOptions.length ? (
+                          <div className="freeform-source-options">
+                            {sourceLinkLoading ? <span>搜索中…</span> : null}
+                            {!sourceLinkLoading ? sourceLinkOptions.map((path) => (
+                              <button
+                                type="button"
+                                key={path}
+                                title={path}
+                                onClick={() => {
+                                  updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, sourcePaths: [...new Set([...(item.sourcePaths ?? []), path])] })
+                                  setSourceLinkQuery('')
+                                  setSourceLinkOptions([])
+                                }}
+                              >{shortSourcePath(path)}</button>
+                            )) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </label>
+                    {selectedBox.sourcePaths?.length ? (
+                      <div className="freeform-source-links">
+                        {selectedBox.sourcePaths.map((path) => (
+                          <span key={path} className="freeform-source-link">
+                            <button type="button" title={path} onClick={() => onOpenSource?.(path)}>{shortSourcePath(path)}</button>
+                            {!selectedBox.locked ? <button type="button" aria-label={`移除 ${path}`} onClick={() => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, sourcePaths: item.sourcePaths?.filter((candidate) => candidate !== path) })}>×</button> : null}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
                 <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedBox.locked ? '解锁元素' : '锁定元素'}</button>
               </>
@@ -936,6 +1075,34 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <option value="boundary">系统边界</option>
                   </select>
                 </label>
+                <label>
+                  <span>C4 层级</span>
+                  <select aria-label="容器 C4 层级" value={selectedGroup.c4Type ?? ''} onChange={(event) => updateSelectedGroup({ c4Type: (event.target.value || undefined) as 'software-system' | 'container' | undefined })}>
+                    <option value="">未指定</option>
+                    <option value="software-system">Software System</option>
+                    <option value="container">Container</option>
+                  </select>
+                </label>
+                <label>
+                  <span>父边界</span>
+                  <select aria-label="父边界" value={selectedGroup.parentId ?? ''} onChange={(event) => {
+                    if (!selectedGroupId) return
+                    commit(setCanvasGroupParent(currentScene(), selectedGroupId, event.target.value || undefined))
+                  }}>
+                    <option value="">顶层</option>
+                    {(scene.groups ?? []).filter((group) => group.id !== selectedGroup.id).map((group) => <option key={group.id} value={group.id}>{group.label || group.id}</option>)}
+                  </select>
+                </label>
+                {detailsExpanded ? (
+                  <label>
+                    <span>边界说明</span>
+                    <textarea aria-label="边界说明" value={selectedGroup.description ?? ''} placeholder="系统职责、边界约束或部署范围" onChange={(event) => updateSelectedGroup({ description: event.target.value || undefined })} />
+                  </label>
+                ) : null}
+                <div className="freeform-align-row">
+                  <button type="button" onClick={() => applyLocalLayout('horizontal')}>局部横向</button>
+                  <button type="button" onClick={() => applyLocalLayout('vertical')}>局部纵向</button>
+                </div>
                 <button type="button" className="freeform-lock-button" onClick={toggleSelectedGroupCollapsed}>{selectedGroup.collapsed ? '展开容器' : '折叠容器'}</button>
               </div>
             ) : null}
@@ -952,6 +1119,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 <div className="freeform-align-row">
                   <button type="button" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
                   <button type="button" disabled={selectedGroupIds.length === 0} onClick={ungroupSelection}>取消组合</button>
+                </div>
+                <div className="freeform-align-row">
+                  <button type="button" onClick={() => applyLocalLayout('horizontal')}>局部横向</button>
+                  <button type="button" onClick={() => applyLocalLayout('vertical')}>局部纵向</button>
                 </div>
                 <button type="button" className="freeform-lock-button" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length && selectedBoxes.length > 0 ? '解锁选中' : '锁定选中'}</button>
               </>
@@ -999,15 +1170,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
-          {groupBounds.map((group) => (
+          {groupBounds.filter((group) => !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => (
             <g
               key={group.id}
-              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupIds.includes(group.id) ? ' is-selected' : ''}`}
+              className={`freeform-group-frame kind-${group.kind ?? 'group'}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}`}
               pointerEvents={group.collapsed ? 'all' : 'none'}
-              onClick={group.collapsed ? (event) => { event.stopPropagation(); commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false })) } : undefined}
+              onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
+              onDoubleClick={group.collapsed ? (event) => { event.stopPropagation(); commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false })); setSelectedGroupTarget(group.id) } : undefined}
             >
-              <rect x={group.x} y={group.y} width={group.collapsed ? Math.min(260, group.width) : group.width} height={group.collapsed ? 54 : group.height} rx="20" />
-              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 34)}{group.collapsed ? ' · 展开' : ''}</text> : null}
+              {group.description ? <title>{group.description}</title> : null}
+              <rect x={group.x} y={group.y} width={group.width} height={group.height} rx="20" />
+              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? ' · 双击展开' : ''}</text> : null}
             </g>
           ))}
           {renderArrows.map((arrow) => {
@@ -1021,7 +1194,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const path = canvasArrowPath(start, end, arrow)
             const labelPoint = pathLabelPoint(start, end, arrow.points)
             return (
-              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${arrow.lineStyle === 'dashed' ? ' is-dashed' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path d={path} markerEnd="url(#canvas-arrow)" />
                 {arrow.label ? <text x={labelPoint.x} y={labelPoint.y - 10} textAnchor="middle">{truncate(arrow.label, 28)}</text> : null}
                 {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
@@ -1044,6 +1217,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
+          {collapsedConnections.map((connection) => {
+            const fromCenter = center(connection.fromBox)
+            const toCenter = center(connection.toBox)
+            const start = anchorPoint(connection.fromBox, connection.fromAnchor, toCenter)
+            const end = anchorPoint(connection.toBox, connection.toAnchor, fromCenter)
+            const path = canvasArrowPath(start, end, connection)
+            const label = connection.labels.slice(0, 2).join(' · ')
+            return (
+              <g key={connection.id} className={`freeform-arrow is-collapsed-summary${connection.lineStyle === 'dashed' ? ' is-dashed' : ''}`} pointerEvents="none">
+                <path d={path} markerEnd="url(#canvas-arrow)" />
+                {label || connection.count > 1 ? <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 10} textAnchor="middle">{truncate(`${label}${connection.count > 1 ? ` ×${connection.count}` : ''}`, 36)}</text> : null}
+              </g>
+            )
+          })}
           {renderBoxes.map((item) => (
             <g
               key={item.id}
@@ -1054,6 +1241,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
               onDoubleClick={(event) => {
                 event.stopPropagation()
+                setSelectedGroupTarget(null)
                 setSelectedIds([item.id])
                 if (!item.locked) window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
               }}
@@ -1064,11 +1252,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               {item.description ? <title>{item.description}</title> : null}
               <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
               {item.stencil || item.icon ? <text className="freeform-node-icon" x="13" y="19">{item.stencil ? canvasStencilLabel(item.stencil) : canvasIconLabel(item.icon!)}</text> : null}
+              {item.c4Type ? <text className="freeform-c4-badge" x={item.width - 10} y={19} textAnchor="end">{c4Label(item.c4Type)}</text> : null}
               <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">
                 {truncate(item.text, 28)}
               </text>
               {item.subtitle ? <text className="freeform-node-subtitle" x={item.width / 2} y={item.height - 12} textAnchor="middle">{truncate(item.subtitle, 32)}</text> : null}
-              {item.sourcePaths?.length ? <text className="freeform-source-badge" x={item.width - 10} y={18} textAnchor="end">⌘ {item.sourcePaths.length}</text> : null}
+              {item.sourcePaths?.length ? <text className="freeform-source-badge" x={item.width - 10} y={item.c4Type ? 34 : 18} textAnchor="end">⌘ {item.sourcePaths.length}</text> : null}
               {(tool === 'connect' || selectedIds.includes(item.id)) ? (
                 <g className="freeform-anchor-points">
                   <circle cx={item.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
@@ -1126,6 +1315,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         </div>
         <svg className="freeform-minimap" aria-label="画布缩略图" viewBox={`0 0 ${scene.width} ${scene.height}`} onPointerDown={recenterFromMinimap}>
           <rect width={scene.width} height={scene.height} className="freeform-minimap-bg" />
+          {groupBounds.filter((group) => group.collapsed && !groupHiddenByCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
           {renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
           <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
         </svg>
@@ -1138,8 +1328,35 @@ function ToolButton({ active, title, onClick, children }: { active: boolean; tit
   return <button type="button" className={active ? 'is-active' : ''} title={title} aria-label={title} onClick={onClick}>{children}</button>
 }
 
-function center(item: CanvasNode | CanvasNote) {
+function center(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
+}
+
+function groupDepth(groupId: string, groups: CanvasGroup[]): number {
+  const byId = new Map(groups.map((group) => [group.id, group]))
+  let depth = 0
+  let current = byId.get(groupId)?.parentId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    depth += 1
+    current = byId.get(current)?.parentId
+  }
+  return Math.min(depth, 6)
+}
+
+function groupHiddenByCollapsedAncestor(groupId: string, groups: CanvasGroup[]): boolean {
+  const byId = new Map(groups.map((group) => [group.id, group]))
+  let current = byId.get(groupId)?.parentId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    const group = byId.get(current)
+    if (!group) return false
+    if (group.collapsed) return true
+    current = group.parentId
+  }
+  return false
 }
 
 function pathLabelPoint(start: CanvasPoint, end: CanvasPoint, points?: CanvasPoint[]) {

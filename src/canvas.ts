@@ -8,6 +8,7 @@ export type CanvasIcon = 'user' | 'web' | 'api' | 'service' | 'database' | 'cach
 export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'minio'
 export type CanvasGroupKind = 'group' | 'boundary'
 export type CanvasLaneAxis = 'horizontal' | 'vertical'
+export type CanvasC4Type = 'person' | 'software-system' | 'container' | 'component'
 export interface CanvasPoint { x: number; y: number }
 
 export interface CanvasGroup {
@@ -16,6 +17,9 @@ export interface CanvasGroup {
   tone?: CanvasTone
   kind?: CanvasGroupKind
   collapsed?: boolean
+  parentId?: string
+  c4Type?: 'software-system' | 'container'
+  description?: string
 }
 
 export interface CanvasLane {
@@ -57,6 +61,7 @@ export interface CanvasNode {
   description?: string
   tags?: string[]
   laneId?: string
+  c4Type?: CanvasC4Type
 }
 
 export interface CanvasNote {
@@ -78,6 +83,7 @@ export interface CanvasNote {
   description?: string
   tags?: string[]
   laneId?: string
+  c4Type?: CanvasC4Type
 }
 
 export interface CanvasArrow {
@@ -91,6 +97,28 @@ export interface CanvasArrow {
   fromAnchor?: CanvasAnchor
   toAnchor?: CanvasAnchor
   points?: CanvasPoint[]
+}
+
+export interface CanvasGroupFrame extends CanvasGroup {
+  x: number
+  y: number
+  width: number
+  height: number
+  memberIds: string[]
+}
+
+export interface CanvasCollapsedConnection {
+  id: string
+  fromKey: string
+  toKey: string
+  fromBox: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>
+  toBox: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>
+  count: number
+  labels: string[]
+  lineStyle?: CanvasLineStyle
+  routing?: CanvasRouting
+  fromAnchor?: CanvasAnchor
+  toAnchor?: CanvasAnchor
 }
 
 export function createCanvasSource(title: string): string {
@@ -143,8 +171,9 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const border = colors?.border || '#8a8a8a'
   const note = colors?.note || '#fff7cc'
   const allNodes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
-  const collapsedGroups = new Set((scene.groups ?? []).filter((group) => group.collapsed).map((group) => group.id))
-  const nodes = new Map([...allNodes.values()].filter((item) => !item.groupId || !collapsedGroups.has(item.groupId)).map((item) => [item.id, item]))
+  const groupFrames = canvasGroupFrames(scene)
+  const collapsedOwners = canvasCollapsedOwners(scene)
+  const nodes = new Map([...allNodes.values()].filter((item) => !collapsedOwners.has(item.id)).map((item) => [item.id, item]))
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
     const from = nodes.get(arrow.from)
     const to = nodes.get(arrow.to)
@@ -161,27 +190,33 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const geometry = canvasArrowPath(start, end, arrow)
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2"${dash} marker-end="url(#arrow)"/>${arrow.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="14" fill="${escapeXml(text)}">${escapeXml(arrow.label)}</text>` : ''}</g>`
   }).join('')
+  const collapsedConnections = canvasCollapsedConnections(scene, groupFrames).map((connection) => {
+    const fromCenter = centerOfCanvasBox(connection.fromBox)
+    const toCenter = centerOfCanvasBox(connection.toBox)
+    const start = anchorPoint(connection.fromBox, connection.fromAnchor, toCenter)
+    const end = anchorPoint(connection.toBox, connection.toAnchor, fromCenter)
+    const geometry = canvasArrowPath(start, end, connection)
+    const dash = connection.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
+    const label = connection.labels.length ? connection.labels.slice(0, 2).join(' · ') : ''
+    const suffix = connection.count > 1 ? ` ×${connection.count}` : ''
+    return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2.2"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
+  }).join('')
   const shapes = [...nodes.values()].map((item) => {
     const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const lines = item.text.split('\n').slice(0, 6)
     const texts = lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
     const iconLabel = item.stencil ? canvasStencilLabel(item.stencil) : item.icon ? canvasIconLabel(item.icon) : ''
     const icon = iconLabel ? `<text x="${item.x + 14}" y="${item.y + 20}" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${escapeXml(palette.stroke)}">${escapeXml(iconLabel)}</text>` : ''
+    const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = item.subtitle ? `<text x="${item.x + item.width / 2}" y="${item.y + item.height - 16}" text-anchor="middle" font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(item.subtitle)}</text>` : ''
-    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${texts}${subtitle}</g>`
+    return `<g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.5"/>${icon}${c4}${texts}${subtitle}</g>`
   }).join('')
-  const groups = (scene.groups ?? []).map((group) => {
-    const members = [...allNodes.values()].filter((item) => item.groupId === group.id)
-    if (members.length < 2) return ''
-    const minX = Math.min(...members.map((item) => item.x)) - 24
-    const minY = Math.min(...members.map((item) => item.y)) - 42
-    const maxX = Math.max(...members.map((item) => item.x + item.width)) + 24
-    const maxY = Math.max(...members.map((item) => item.y + item.height)) + 24
+  const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
     const dash = group.kind === 'boundary' ? '12 6' : '8 6'
-    const width = group.collapsed ? Math.min(260, maxX - minX) : maxX - minX
-    const height = group.collapsed ? 54 : maxY - minY
-    return `<g><rect x="${minX}" y="${minY}" width="${width}" height="${height}" rx="18" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="${dash}"/>${group.label ? `<text x="${minX + 14}" y="${minY + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(group.label)}${group.collapsed ? ' · collapsed' : ''}</text>` : ''}</g>`
+    const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
+    const collapsed = group.collapsed ? ' · collapsed' : ''
+    return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="18" fill="${group.collapsed ? escapeXml(palette.fill) : 'none'}" fill-opacity="${group.collapsed ? '0.5' : '1'}" stroke="${escapeXml(palette.stroke)}" stroke-width="1.4" stroke-dasharray="${dash}"/>${group.label ? `<text x="${group.x + 14}" y="${group.y + 22}" font-size="13" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(`${group.label}${c4}${collapsed}`)}</text>` : ''}</g>`
   }).join('')
   const lanes = (scene.lanes ?? []).map((lane) => {
     const palette = canvasTonePalette(lane.tone ?? 'muted', { panel, text, border, note }, 'node')
@@ -191,14 +226,125 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const height = lane.axis === 'horizontal' ? lane.size : scene.height
     return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.fill)}" fill-opacity="0.2" stroke="${escapeXml(palette.stroke)}" stroke-width="1" stroke-dasharray="4 6"/><text x="${x + 12}" y="${y + 20}" font-size="12" font-weight="600" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${arrows}${shapes}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${lanes}${groups}${arrows}${collapsedConnections}${shapes}</svg>`
 }
 
-function centerOfCanvasBox(item: CanvasNode | CanvasNote) {
+export function canvasGroupFrames(scene: CanvasScene): CanvasGroupFrame[] {
+  const groups = scene.groups ?? []
+  const groupById = new Map(groups.map((group) => [group.id, group]))
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  return groups.flatMap((group) => {
+    const members = boxes.filter((item) => item.groupId && groupContains(group.id, item.groupId, groupById))
+    if (!members.length) return []
+    const minX = Math.min(...members.map((item) => item.x)) - 24
+    const minY = Math.min(...members.map((item) => item.y)) - 42
+    const maxX = Math.max(...members.map((item) => item.x + item.width)) + 24
+    const maxY = Math.max(...members.map((item) => item.y + item.height)) + 24
+    return [{
+      ...group,
+      x: minX,
+      y: minY,
+      width: group.collapsed ? Math.min(280, Math.max(180, maxX - minX)) : maxX - minX,
+      height: group.collapsed ? 58 : maxY - minY,
+      memberIds: members.map((item) => item.id),
+    }]
+  })
+}
+
+export function canvasCollapsedOwners(scene: CanvasScene): Map<string, string> {
+  const groups = new Map((scene.groups ?? []).map((group) => [group.id, group]))
+  const result = new Map<string, string>()
+  scene.elements.forEach((item) => {
+    if (item.type === 'arrow' || !item.groupId) return
+    let groupId: string | undefined = item.groupId
+    let owner: string | undefined
+    const seen = new Set<string>()
+    while (groupId && !seen.has(groupId)) {
+      seen.add(groupId)
+      const group = groups.get(groupId)
+      if (!group) break
+      if (group.collapsed) owner = group.id
+      groupId = group.parentId
+    }
+    if (owner) result.set(item.id, owner)
+  })
+  return result
+}
+
+export function canvasCollapsedConnections(scene: CanvasScene, frames = canvasGroupFrames(scene)): CanvasCollapsedConnection[] {
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const owners = canvasCollapsedOwners(scene)
+  const frameById = new Map(frames.map((frame) => [frame.id, frame]))
+  const aggregate = new Map<string, CanvasCollapsedConnection>()
+  scene.elements.forEach((item) => {
+    if (item.type !== 'arrow') return
+    const fromNode = boxes.get(item.from)
+    const toNode = boxes.get(item.to)
+    if (!fromNode || !toNode) return
+    const fromOwner = owners.get(item.from)
+    const toOwner = owners.get(item.to)
+    if (!fromOwner && !toOwner) return
+    const fromFrame = fromOwner ? frameById.get(fromOwner) : undefined
+    const toFrame = toOwner ? frameById.get(toOwner) : undefined
+    if (fromOwner && !fromFrame || toOwner && !toFrame) return
+    const fromKey = fromOwner ? `group:${fromOwner}` : `node:${item.from}`
+    const toKey = toOwner ? `group:${toOwner}` : `node:${item.to}`
+    if (fromKey === toKey) return
+    const key = `${fromKey}->${toKey}`
+    const existing = aggregate.get(key)
+    if (existing) {
+      existing.count += 1
+      if (item.label && !existing.labels.includes(item.label)) existing.labels.push(item.label)
+      if (existing.lineStyle !== item.lineStyle) existing.lineStyle = 'solid'
+      return
+    }
+    aggregate.set(key, {
+      id: `collapsed:${key}`,
+      fromKey,
+      toKey,
+      fromBox: fromFrame ?? fromNode,
+      toBox: toFrame ?? toNode,
+      count: 1,
+      labels: item.label ? [item.label] : [],
+      lineStyle: item.lineStyle,
+      routing: 'orthogonal',
+      fromAnchor: item.fromAnchor,
+      toAnchor: item.toAnchor,
+    })
+  })
+  return [...aggregate.values()]
+}
+
+function groupContains(targetId: string, candidateId: string, groups: Map<string, CanvasGroup>): boolean {
+  let current: string | undefined = candidateId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    if (current === targetId) return true
+    seen.add(current)
+    current = groups.get(current)?.parentId
+  }
+  return false
+}
+
+function isInsideCollapsedAncestor(groupId: string, groups: CanvasGroup[]): boolean {
+  const groupById = new Map(groups.map((group) => [group.id, group]))
+  let current = groupById.get(groupId)?.parentId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    const group = groupById.get(current)
+    if (!group) return false
+    if (group.collapsed) return true
+    current = group.parentId
+  }
+  return false
+}
+
+function centerOfCanvasBox(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
 }
 
-function edgePoint(item: CanvasNode | CanvasNote, toward: CanvasPoint) {
+function edgePoint(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>, toward: CanvasPoint) {
   const origin = centerOfCanvasBox(item)
   const dx = toward.x - origin.x
   const dy = toward.y - origin.y
@@ -207,7 +353,7 @@ function edgePoint(item: CanvasNode | CanvasNote, toward: CanvasPoint) {
   return { x: origin.x + dx * scale, y: origin.y + dy * scale }
 }
 
-export function anchorPoint(item: CanvasNode | CanvasNote, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
+export function anchorPoint(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
   const center = centerOfCanvasBox(item)
   switch (anchor) {
     case 'top': return { x: center.x, y: item.y }
@@ -298,6 +444,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
   const icons: CanvasIcon[] = ['user', 'web', 'api', 'service', 'database', 'cache', 'queue', 'cloud', 'file', 'external']
   const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'minio']
+  const c4Types: CanvasC4Type[] = ['person', 'software-system', 'container', 'component']
   return {
     id: item.id,
     type: item.type,
@@ -317,6 +464,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim().slice(0, 1000) } : {}),
     ...(Array.isArray(item.tags) ? { tags: item.tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()).slice(0, 12) } : {}),
     ...(typeof item.laneId === 'string' && item.laneId.trim() ? { laneId: item.laneId.trim() } : {}),
+    ...(item.c4Type && c4Types.includes(item.c4Type) ? { c4Type: item.c4Type } : {}),
   }
 }
 
@@ -335,6 +483,9 @@ function normalizeCanvasGroups(value: unknown[]): CanvasGroup[] {
       ...(typeof item.tone === 'string' && tones.includes(item.tone as CanvasTone) ? { tone: item.tone as CanvasTone } : {}),
       ...(item.kind === 'group' || item.kind === 'boundary' ? { kind: item.kind as CanvasGroupKind } : {}),
       ...(item.collapsed === true ? { collapsed: true } : {}),
+      ...(typeof item.parentId === 'string' && item.parentId.trim() && item.parentId.trim() !== id ? { parentId: item.parentId.trim() } : {}),
+      ...(item.c4Type === 'software-system' || item.c4Type === 'container' ? { c4Type: item.c4Type } : {}),
+      ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim().slice(0, 1000) } : {}),
     }]
   })
 }
@@ -370,6 +521,10 @@ export function canvasStencilLabel(stencil: CanvasStencil): string {
 
 export function canvasIconLabel(icon: CanvasIcon): string {
   return ({ user: 'USR', web: 'WEB', api: 'API', service: 'SVC', database: 'DB', cache: 'CACHE', queue: 'MQ', cloud: 'CLOUD', file: 'FILE', external: 'EXT' })[icon]
+}
+
+export function c4Label(type: CanvasC4Type | 'software-system' | 'container'): string {
+  return ({ person: 'Person', 'software-system': 'System', container: 'Container', component: 'Component' })[type]
 }
 
 function escapeXml(value: string): string {
