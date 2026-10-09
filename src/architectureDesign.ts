@@ -14,6 +14,7 @@ import type {
   CanvasStencil,
   CanvasTone,
 } from './canvas.js'
+import { anchorPoint, canvasArrowRoutePoints } from './canvas.js'
 
 export type ArchitectureTheme = CanvasArchitectureTheme
 
@@ -320,6 +321,49 @@ export function applyArchitectureEmphasis(
 }
 
 export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
+  return routeArchitectureEdgeSubset(scene)
+}
+
+export function routeArchitectureArrowIds(scene: CanvasScene, arrowIds: Iterable<string>): CanvasScene {
+  const only = new Set(arrowIds)
+  if (!only.size) return scene
+  const arrowCount = scene.elements.filter((item) => item.type === 'arrow').length
+  if (only.size > Math.max(48, arrowCount * 0.45)) return routeArchitectureEdgeSubset(scene)
+  return routeArchitectureEdgeSubset(scene, only)
+}
+
+export function routeArchitectureEdgesIncremental(scene: CanvasScene, changedNodeIds: Iterable<string>): CanvasScene {
+  const changed = new Set(changedNodeIds)
+  if (!changed.size) return scene
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const changedRects = [...changed].flatMap((id) => {
+    const box = boxes.get(id)
+    return box ? [expandRect(box, 22)] : []
+  })
+  const affected = new Set<string>()
+
+  for (const arrow of arrows) {
+    if (changed.has(arrow.from) || changed.has(arrow.to)) {
+      affected.add(arrow.id)
+      continue
+    }
+    if (!changedRects.length) continue
+    const route = currentArrowRoute(arrow, boxes)
+    if (route && route.slice(0, -1).some((point, index) => {
+      const segment = { a: point, b: route[index + 1] }
+      return changedRects.some((rect) => segmentIntersectsRect(segment, rect))
+    })) affected.add(arrow.id)
+  }
+
+  if (!affected.size) return scene
+  // When a structural move invalidates a large fraction of the relationship
+  // graph, a full pass is both simpler and more stable than many local passes.
+  if (affected.size > Math.max(48, arrows.length * 0.45)) return routeArchitectureEdgeSubset(scene)
+  return routeArchitectureEdgeSubset(scene, affected)
+}
+
+function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): CanvasScene {
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const routed = new Map<string, CanvasArrow>()
@@ -327,7 +371,16 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
   const fanout = countArrowEndpoints(arrows, 'from')
   const fanin = countArrowEndpoints(arrows, 'to')
 
+  if (only) {
+    for (const arrow of arrows) {
+      if (only.has(arrow.id)) continue
+      const route = currentArrowRoute(arrow, boxes)
+      if (route) addOccupiedSegments(route, occupied, arrow.bundleKey)
+    }
+  }
+
   for (const arrow of arrows) {
+    if (only && !only.has(arrow.id)) continue
     const from = boxes.get(arrow.from)
     const to = boxes.get(arrow.to)
     if (!from || !to) continue
@@ -381,6 +434,17 @@ export function routeArchitectureEdges(scene: CanvasScene): CanvasScene {
     ...scene,
     elements: scene.elements.map((item) => item.type === 'arrow' ? routed.get(item.id) ?? item : item),
   }
+}
+
+function currentArrowRoute(arrow: CanvasArrow, boxes: Map<string, CanvasNode | CanvasNote>): CanvasPoint[] | undefined {
+  const from = boxes.get(arrow.from)
+  const to = boxes.get(arrow.to)
+  if (!from || !to) return undefined
+  const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+  const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
+  const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+  const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+  return canvasArrowRoutePoints(start, end, arrow)
 }
 
 type RouteRect = { x: number; y: number; width: number; height: number }
@@ -502,7 +566,26 @@ function segmentIntersectsRect(segment: RouteSegment, rect: RouteRect): boolean 
     const x = segment.a.x
     return x > rect.x && x < rect.x + rect.width && maxY > rect.y && minY < rect.y + rect.height
   }
-  return false
+  const inside = (point: CanvasPoint) => point.x > rect.x && point.x < rect.x + rect.width && point.y > rect.y && point.y < rect.y + rect.height
+  if (inside(segment.a) || inside(segment.b)) return true
+  const topLeft = { x: rect.x, y: rect.y }
+  const topRight = { x: rect.x + rect.width, y: rect.y }
+  const bottomLeft = { x: rect.x, y: rect.y + rect.height }
+  const bottomRight = { x: rect.x + rect.width, y: rect.y + rect.height }
+  return lineSegmentsIntersect(segment.a, segment.b, topLeft, topRight)
+    || lineSegmentsIntersect(segment.a, segment.b, topRight, bottomRight)
+    || lineSegmentsIntersect(segment.a, segment.b, bottomRight, bottomLeft)
+    || lineSegmentsIntersect(segment.a, segment.b, bottomLeft, topLeft)
+}
+
+function lineSegmentsIntersect(a: CanvasPoint, b: CanvasPoint, c: CanvasPoint, d: CanvasPoint): boolean {
+  const cross = (p: CanvasPoint, q: CanvasPoint, r: CanvasPoint) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+  const abC = cross(a, b, c)
+  const abD = cross(a, b, d)
+  const cdA = cross(c, d, a)
+  const cdB = cross(c, d, b)
+  return ((abC > 0 && abD < 0) || (abC < 0 && abD > 0))
+    && ((cdA > 0 && cdB < 0) || (cdA < 0 && cdB > 0))
 }
 
 function segmentOverlap(left: RouteSegment, right: RouteSegment): number {
@@ -545,7 +628,12 @@ function simplifyRoute(points: CanvasPoint[]): CanvasPoint[] {
 }
 
 function addOccupiedSegments(route: CanvasPoint[], occupied: RouteSegment[], bundleKey?: string) {
-  for (let index = 0; index < route.length - 1; index += 1) occupied.push({ a: route[index], b: route[index + 1], bundleKey })
+  for (let index = 0; index < route.length - 1; index += 1) {
+    const a = route[index]
+    const b = route[index + 1]
+    if (a.x !== b.x && a.y !== b.y) continue
+    occupied.push({ a, b, bundleKey })
+  }
 }
 
 function uniqueNumbers(values: number[]): number[] {

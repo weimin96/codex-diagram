@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { beautifyArchitectureScene } from '../src/architectureDesign.js'
+import { beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
 import { anchorPoint, canvasBundleTrunks, type CanvasScene } from '../src/canvas.js'
 
 function sampleScene(): CanvasScene {
@@ -171,6 +171,106 @@ test('routes architecture relationships around blocking nodes', () => {
   for (let index = 0; index < route.length - 1; index += 1) {
     assert.equal(segmentCutsBox(route[index], route[index + 1], boxes.get('blocker')!), false)
   }
+})
+
+test('incremental routing preserves unrelated relationship geometry', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Incremental routing',
+    width: 1600,
+    height: 900,
+    elements: [
+      { id: 'a', type: 'node', x: 80, y: 120, width: 180, height: 90, text: 'A' },
+      { id: 'b', type: 'node', x: 620, y: 120, width: 180, height: 90, text: 'B' },
+      { id: 'c', type: 'node', x: 80, y: 520, width: 180, height: 90, text: 'C' },
+      { id: 'd', type: 'node', x: 620, y: 520, width: 180, height: 90, text: 'D' },
+      { id: 'ab', type: 'arrow', from: 'a', to: 'b', routing: 'orthogonal', fromAnchor: 'right', toAnchor: 'left', points: [{ x: 420, y: 165 }] },
+      { id: 'cd', type: 'arrow', from: 'c', to: 'd', routing: 'orthogonal', fromAnchor: 'right', toAnchor: 'left', points: [{ x: 420, y: 565 }] },
+    ],
+  }
+  const moved: CanvasScene = {
+    ...scene,
+    elements: scene.elements.map((item) => item.id === 'b' && item.type === 'node' ? { ...item, y: 260 } : item),
+  }
+  const result = routeArchitectureEdgesIncremental(moved, ['b'])
+  const unrelated = result.elements.find((item) => item.id === 'cd')
+  const affected = result.elements.find((item) => item.id === 'ab')
+  assert.ok(unrelated?.type === 'arrow' && affected?.type === 'arrow')
+  assert.deepEqual(unrelated.points, [{ x: 420, y: 565 }])
+  assert.notDeepEqual(affected.points, [{ x: 420, y: 165 }])
+})
+
+test('routes only explicitly requested relationship ids', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Arrow subset',
+    width: 1200,
+    height: 700,
+    elements: [
+      { id: 'a', type: 'node', x: 80, y: 120, width: 180, height: 90, text: 'A' },
+      { id: 'b', type: 'node', x: 760, y: 120, width: 180, height: 90, text: 'B' },
+      { id: 'c', type: 'node', x: 80, y: 420, width: 180, height: 90, text: 'C' },
+      { id: 'd', type: 'node', x: 760, y: 420, width: 180, height: 90, text: 'D' },
+      { id: 'ab', type: 'arrow', from: 'a', to: 'b' },
+      { id: 'cd', type: 'arrow', from: 'c', to: 'd', routing: 'orthogonal', points: [{ x: 520, y: 465 }] },
+    ],
+  }
+  const result = routeArchitectureArrowIds(scene, ['ab'])
+  const ab = result.elements.find((item) => item.id === 'ab')
+  const cd = result.elements.find((item) => item.id === 'cd')
+  assert.ok(ab?.type === 'arrow' && cd?.type === 'arrow')
+  assert.equal(ab.routing, 'orthogonal')
+  assert.deepEqual(cd.points, [{ x: 520, y: 465 }])
+})
+
+test('incremental routing reroutes a relationship that a moved node now blocks', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Incremental obstacle',
+    width: 1400,
+    height: 800,
+    elements: [
+      { id: 'from', type: 'node', x: 80, y: 180, width: 180, height: 90, text: 'From' },
+      { id: 'to', type: 'node', x: 980, y: 180, width: 180, height: 90, text: 'To' },
+      { id: 'blocker', type: 'node', x: 450, y: 520, width: 220, height: 120, text: 'Blocker' },
+      { id: 'edge', type: 'arrow', from: 'from', to: 'to', routing: 'orthogonal', fromAnchor: 'right', toAnchor: 'left', points: [{ x: 520, y: 225 }] },
+    ],
+  }
+  const moved: CanvasScene = {
+    ...scene,
+    elements: scene.elements.map((item) => item.id === 'blocker' && item.type === 'node' ? { ...item, y: 165 } : item),
+  }
+  const result = routeArchitectureEdgesIncremental(moved, ['blocker'])
+  const edge = result.elements.find((item) => item.id === 'edge')
+  assert.ok(edge?.type === 'arrow')
+  assert.notDeepEqual(edge.points, [{ x: 520, y: 225 }])
+})
+
+test('incremental routing detects a moved obstacle crossing an existing straight relationship', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Straight obstacle',
+    width: 1200,
+    height: 700,
+    elements: [
+      { id: 'from', type: 'node', x: 80, y: 80, width: 160, height: 80, text: 'From' },
+      { id: 'to', type: 'node', x: 880, y: 480, width: 160, height: 80, text: 'To' },
+      { id: 'blocker', type: 'node', x: 420, y: 520, width: 180, height: 100, text: 'Blocker' },
+      { id: 'edge', type: 'arrow', from: 'from', to: 'to', routing: 'straight' },
+    ],
+  }
+  const moved: CanvasScene = {
+    ...scene,
+    elements: scene.elements.map((item) => item.id === 'blocker' && item.type === 'node' ? { ...item, x: 480, y: 280 } : item),
+  }
+  const result = routeArchitectureEdgesIncremental(moved, ['blocker'])
+  const edge = result.elements.find((item) => item.id === 'edge')
+  assert.ok(edge?.type === 'arrow')
+  assert.equal(edge.routing, 'orthogonal')
 })
 
 test('recognizes architecture-specific roles beyond generic service and database', () => {

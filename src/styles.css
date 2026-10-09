@@ -748,7 +748,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-minimap.is-scoped { border-color: color-mix(in srgb, var(--accent) 46%, var(--border)); box-shadow: 0 6px 22px rgba(0,0,0,.08), 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent); }
 .freeform-minimap-bg { fill: var(--surface-panel); }
 .freeform-minimap-group { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: color-mix(in srgb, var(--accent) 55%, transparent); stroke-width: 7; stroke-dasharray: 20 12; }
-.freeform-minimap-node { fill: color-mix(in srgb, var(--text-secondary) 24%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 45%, transparent); stroke-width: 5; }
+.freeform-minimap-node,
+.freeform-minimap-node-cloud { fill: color-mix(in srgb, var(--text-secondary) 24%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 45%, transparent); stroke-width: 5; }
 .freeform-minimap-node.is-selected { fill: color-mix(in srgb, var(--accent) 25%, transparent); stroke: var(--accent); }
 .freeform-minimap-viewport { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: var(--accent); stroke-width: 7; vector-effect: non-scaling-stroke; }
 .canvas-invalid { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 24px; color: var(--text-secondary); text-align: center; }

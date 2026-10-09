@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { beautifyArchitectureScene, routeArchitectureEdges, type ArchitectureTheme } from './architectureDesign.js'
+import { beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -988,6 +988,24 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     return seeds.length ? traceCanvasGraph(parsed.scene, seeds, traceDirection, traceDepth) : null
   }, [parsed.scene, selectedIds, traceDepth, traceDirection])
 
+  const playbackActive = Boolean(playback?.active)
+  const staticArchitectureProjection = useMemo(() => {
+    if (!parsed.scene) return null
+    return playbackActive
+      ? { scene: parsed.scene, view: parsed.scene.architecture?.view ?? 'detail' as const, density: 'comfortable' as const, hiddenNodes: 0, hiddenArrows: 0 }
+      : canvasArchitectureProjection(parsed.scene)
+  }, [parsed.scene, playbackActive])
+  const staticScopeProjection = useMemo(() => {
+    if (!parsed.scene || playbackActive || !architectureScope) return null
+    return canvasArchitectureScopeProjection(parsed.scene, architectureScope)
+  }, [architectureScope, parsed.scene, playbackActive])
+  const staticGroupBounds = useMemo(() => parsed.scene ? canvasGroupFrames(parsed.scene) : [], [parsed.scene])
+  const staticProjectedGroupBounds = useMemo(() => {
+    const projected = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
+    return projected ? canvasGroupFrames(projected) : []
+  }, [staticArchitectureProjection, staticScopeProjection])
+  const staticArchitectureHeader = useMemo(() => parsed.scene ? canvasArchitectureHeader(parsed.scene) : undefined, [parsed.scene])
+
   useEffect(() => {
     if (!parsed.scene || selectedIds.length === 0) {
       onSelectionChange?.(null)
@@ -1007,12 +1025,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const scene = parsed.scene
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const baseArchitectureProjection = playback?.active
-    ? { scene, view: scene.architecture?.view ?? 'detail' as const, density: 'comfortable' as const, hiddenNodes: 0, hiddenArrows: 0 }
-    : canvasArchitectureProjection(scene)
-  const scopedArchitectureProjection = !playback?.active && architectureScope
-    ? canvasArchitectureScopeProjection(scene, architectureScope)
-    : null
+  const baseArchitectureProjection = staticArchitectureProjection!
+  const scopedArchitectureProjection = staticScopeProjection
   const architectureProjection = scopedArchitectureProjection
     ? {
         ...baseArchitectureProjection,
@@ -1057,8 +1071,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const selectedLocked = selectedBoxes.filter((item) => item.locked)
   const selectedGroupIds = [...new Set(selectedBoxes.map((item) => item.groupId).filter((value): value is string => Boolean(value)))]
-  const groupBounds = canvasGroupFrames(scene)
-  const projectedGroupBounds = canvasGroupFrames(renderScene)
+  const groupBounds = staticGroupBounds
+  const hasGeometryDraft = Boolean(gesturePositionOverrides || resizeDraft || arrowPointDraft)
+  const projectedGroupBounds = hasGeometryDraft ? canvasGroupFrames(renderScene) : staticProjectedGroupBounds
   const displayGroupBounds = projectedGroupBounds.map((group) => playback?.groupFrameOverrides?.[group.id] ?? group)
   // Only an explicitly selected boundary owns the boundary inspector. Nodes that
   // happen to share a group remain a node/multi-selection instead of silently
@@ -1079,6 +1094,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (renderBoxes.some((other) => other.id !== item.id && !movingIds.has(other.id) && rectanglesOverlapWithPadding(item, other, 8))) dragCollisionIds.add(item.id)
     }
   }
+  const gestureAutoReflowCount = gesturePositionOverrides
+    ? Object.keys(gesturePositionOverrides).filter((id) => !selectedIds.includes(id)).length
+    : 0
   const selectedHasOverlap = selectedBoxes.some((item) => boxes.some((other) => other.id !== item.id && rectanglesOverlapWithPadding(item, other, 8)))
   const minimapViewBounds = (() => {
     if (!architectureScope) return { x: 0, y: 0, width: scene.width, height: scene.height }
@@ -1097,9 +1115,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const largeSceneViewportCulling = Boolean(
     !playback?.active
     && !architectureScope
-    && scene.architecture
-    && architectureProjection.view === 'detail'
-    && renderBoxes.length > 100,
+    && (
+      scene.architecture
+        ? architectureProjection.view === 'detail' && renderBoxes.length > 100
+        : renderBoxes.length > 180
+    ),
   )
   const viewportMargin = 220 / Math.max(0.45, viewport.zoom)
   const viewportBounds = {
@@ -1108,21 +1128,32 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     width: scene.width / viewport.zoom + viewportMargin * 2,
     height: scene.height / viewport.zoom + viewportMargin * 2,
   }
+  const selectedArrowEndpointIds = new Set(renderArrows
+    .filter((arrow) => selectedIds.includes(arrow.id))
+    .flatMap((arrow) => [arrow.from, arrow.to]))
   const viewportRenderBoxes = largeSceneViewportCulling
-    ? renderBoxes.filter((item) => selectedIds.includes(item.id) || intersects(viewportBounds, item))
+    ? renderBoxes.filter((item) => selectedIds.includes(item.id) || selectedArrowEndpointIds.has(item.id) || intersects(viewportBounds, item))
     : renderBoxes
   const viewportNodeIds = new Set(viewportRenderBoxes.map((item) => item.id))
   const viewportRenderArrows = largeSceneViewportCulling
     ? renderArrows.filter((arrow) => selectedIds.includes(arrow.id) || viewportNodeIds.has(arrow.from) || viewportNodeIds.has(arrow.to))
     : renderArrows
+  const viewportGroupBounds = largeSceneViewportCulling
+    ? displayGroupBounds.filter((group) => selectedGroupId === group.id || selectedGroupIds.includes(group.id) || intersects(viewportBounds, group))
+    : displayGroupBounds
   const playbackVisibleIds = playback?.active ? new Set(playback.visibleIds) : null
   const playbackVisibleGroupIds = playback?.active ? new Set(playback.visibleGroupIds ?? []) : null
   const visibleRenderBoxes = playbackVisibleIds ? viewportRenderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderBoxes
   const visibleRenderArrows = playbackVisibleIds ? viewportRenderArrows.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderArrows
   const collapsedConnections = playback?.active ? [] : canvasCollapsedConnections(renderScene, projectedGroupBounds)
-  const relationBundleTrunks = playback?.active ? [] : canvasBundleTrunks(renderScene)
-  const relationLabelLayouts = canvasArrowLabelLayouts(renderScene)
-  const architectureHeader = canvasArchitectureHeader(scene)
+  const relationshipRenderScene = largeSceneViewportCulling
+    ? { ...renderScene, elements: [...viewportRenderBoxes, ...viewportRenderArrows] }
+    : renderScene
+  const relationBundleTrunks = playback?.active || Boolean(gesturePositionOverrides) && renderArrows.length > 120
+    ? []
+    : canvasBundleTrunks(relationshipRenderScene)
+  const relationLabelLayouts = canvasArrowLabelLayouts(relationshipRenderScene)
+  const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
     ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)
     : 0
@@ -1138,6 +1169,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackGhostBoxes = playbackGhostElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...projectedBoxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
+  const compactMinimap = renderBoxes.length > 420
+  const selectedIdSet = new Set(selectedIds)
+  const minimapNodeCloudPath = compactMinimap
+    ? renderBoxes.filter((item) => !selectedIdSet.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
+    : ''
   const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
   const connectSourceBox = connectFrom ? boxes.find((item) => item.id === connectFrom) : undefined
   const connectPreviewStart = connectSourceBox && connectPreviewPoint
@@ -1216,16 +1252,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     })
   }
 
-  function commitGeometry(next: CanvasScene, record = true) {
-    commit(next.architecture ? routeArchitectureEdges(next) : next, record)
+  function commitGeometry(next: CanvasScene, record = true, changedNodeIds?: Iterable<string>) {
+    commit(next.architecture
+      ? changedNodeIds ? routeArchitectureEdgesIncremental(next, changedNodeIds) : routeArchitectureEdges(next)
+      : next, record)
   }
 
   function routeArrowIds(scene: CanvasScene, ids: string[]): CanvasScene {
-    const chosen = new Set(ids)
-    if (!chosen.size) return scene
-    const routed = routeArchitectureEdges(scene)
-    const byId = new Map(routed.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && chosen.has(item.id)).map((item) => [item.id, item]))
-    return { ...scene, elements: scene.elements.map((item) => item.type === 'arrow' && chosen.has(item.id) ? byId.get(item.id) ?? item : item) }
+    return routeArchitectureArrowIds(scene, ids)
   }
 
   function beautifyArchitecture() {
@@ -1353,15 +1387,24 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function alignSelection(axis: 'x' | 'y') {
-    commitGeometry(alignCanvasSelection(currentScene(), selectedIds, axis, GRID))
+    commitGeometry(alignCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds)
   }
 
   function distributeSelection(axis: 'x' | 'y') {
-    commitGeometry(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID))
+    commitGeometry(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds)
   }
 
   function separateSelection() {
-    commitGeometry(separateCanvasSelection(currentScene(), selectedIds, 24, GRID))
+    commitGeometry(separateCanvasSelection(currentScene(), selectedIds, 24, GRID), true, selectedIds)
+  }
+
+  function smartLocalLayout() {
+    const seeds = selectedBoxes.map((item) => item.id)
+    if (!seeds.length) return
+    const live = currentScene()
+    const result = layoutCanvasNeighborhood(live, seeds, 1, live.elements.length > 800 ? 28 : 42, GRID)
+    if (!result.movedIds.length) return
+    commitGeometry(result.scene, true, result.movedIds)
   }
 
   function reverseSelectedArrow(arrowId: string) {
@@ -1456,7 +1499,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       ? groupBounds.find((group) => group.id === selectedGroupId)?.memberIds ?? selectedIds
       : selectedIds
     if (ids.length < 2) return
-    commitGeometry(layoutCanvasSelection(currentScene(), ids, mode, GRID))
+    commitGeometry(layoutCanvasSelection(currentScene(), ids, mode, GRID), true, ids)
     focusBoxes(ids)
   }
 
@@ -1798,6 +1841,24 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         y: clamp(origin.y + dy, 0, live.height - candidate.height),
       }
     }
+    if (!event.altKey && !insertCandidate && boxes.length <= 260) {
+      const previewScene: CanvasScene = {
+        ...live,
+        elements: live.elements.map((candidate) => {
+          if (candidate.type === 'arrow') return candidate
+          const position = overrides[candidate.id]
+          return position ? { ...candidate, x: position.x, y: position.y } : candidate
+        }),
+      }
+      const reflow = reflowCanvasNeighborhood(previewScene, movingIds, 24, GRID, 32)
+      if (reflow.movedIds.length) {
+        const reflowById = new Map(reflow.scene.elements.filter((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow').map((candidate) => [candidate.id, candidate]))
+        reflow.movedIds.forEach((id) => {
+          const candidate = reflowById.get(id)
+          if (candidate) overrides[id] = { x: candidate.x, y: candidate.y }
+        })
+      }
+    }
     gesturePositionOverridesRef.current = overrides
     insertTargetRef.current = insertCandidate
     scheduleGestureVisual({ positions: overrides, guides, insertTarget: insertCandidate })
@@ -1808,7 +1869,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!active || active.pointerId !== event.pointerId) return
     if (active.kind === 'move') {
       let next = currentScene()
+      const changedNodeIds = new Set<string>(active.positions.keys())
       const overrides = gesturePositionOverridesRef.current
+      if (overrides) Object.keys(overrides).forEach((id) => changedNodeIds.add(id))
       if (overrides) {
         next = {
           ...next,
@@ -1824,8 +1887,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         const nodeId = active.positions.keys().next().value as string | undefined
         if (nodeId) next = insertCanvasNodeOnArrow(next, nodeId, dropTarget.arrowId).scene
       }
-      if (next.architecture) next = routeArchitectureEdges(next)
-      if (overrides || dropTarget || next.architecture) commit(next, false)
+      const geometryChanged = Boolean(overrides || dropTarget)
+      if (!event.altKey && overrides) {
+        const reflow = reflowCanvasNeighborhood(next, changedNodeIds, 24, GRID, next.elements.length > 800 ? 24 : 48)
+        next = reflow.scene
+        reflow.movedIds.forEach((id) => changedNodeIds.add(id))
+      }
+      if (geometryChanged && next.architecture) next = routeArchitectureEdgesIncremental(next, changedNodeIds)
+      if (geometryChanged) commit(next, false)
       recordGesture(active.before)
       clearGestureVisual()
     } else if (active.kind === 'resize') {
@@ -1835,7 +1904,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           ...currentScene(),
           elements: currentScene().elements.map((item) => item.type !== 'arrow' && item.id === draft.id ? { ...item, width: draft.width, height: draft.height } : item),
         }
-        if (next.architecture) next = routeArchitectureEdges(next)
+        if (next.architecture) next = routeArchitectureEdgesIncremental(next, [draft.id])
         commit(next, false)
         recordGesture(active.before)
       }
@@ -2372,6 +2441,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <button type="button" title="更多操作" aria-label="更多操作" aria-expanded={inspectorMenuOpen} onClick={() => setInspectorMenuOpen((value) => !value)}>⋯</button>
                   {inspectorMenuOpen ? (
                     <div className="freeform-inspector-more-menu" role="menu">
+                      {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { smartLocalLayout(); setInspectorMenuOpen(false) }}>智能整理邻域</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setInspectorMenuOpen(false) }}>复制一份</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { toggleSelectionLock(); setInspectorMenuOpen(false) }}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { reorderSelection('front'); setInspectorMenuOpen(false) }}>移到最前</button> : null}
@@ -2695,7 +2765,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
-          {displayGroupBounds.filter((group) => (
+          {viewportGroupBounds.filter((group) => (
             !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
             && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
           )).map((group) => (
@@ -3010,6 +3080,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
         {multiSelectionToolbarPosition && !playback?.active ? (
           <div className="freeform-selection-toolbar" style={multiSelectionToolbarPosition} aria-label="多选快捷操作">
+            <button type="button" title="保持当前位置，只整理选区及一跳邻域" aria-label="智能整理邻域" onClick={smartLocalLayout}>整理</button>
             <button type="button" title="垂直对齐" aria-label="垂直对齐" onClick={() => alignSelection('x')}>│</button>
             <button type="button" title="水平对齐" aria-label="水平对齐" onClick={() => alignSelection('y')}>─</button>
             <button type="button" title="水平等距分布" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>↔</button>
@@ -3080,6 +3151,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             : arrowEndpointPreview?.targetId ? <span className="is-action">释放后重挂到 {truncate(boxes.find((item) => item.id === arrowEndpointPreview.targetId)?.text ?? arrowEndpointPreview.targetId, 18)}</span>
               : arrowEndpointPreview ? <span className="is-action">拖到节点锚点以重挂端点</span>
                 : connectFrom ? <span className="is-action">连接中 · 点击节点，或点击空白创建新节点</span>
+                  : gestureAutoReflowCount > 0 ? <span className="is-action">智能腾位 {gestureAutoReflowCount} 节点 · Alt 关闭</span>
+                    : dragCollisionIds.size > 0 ? <span className="is-action">释放后自动腾位 · Alt 保留重叠</span>
                   : selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span>Space 拖动画布 · ⇧ 多选</span>}
         </div>
         <div className="freeform-zoom-controls" aria-label="画布缩放">
@@ -3096,7 +3169,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             && !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
             && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
           )).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
-          {renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIds.includes(item.id) ? ' is-selected' : ''}`} />)}
+          {compactMinimap ? <>
+            {minimapNodeCloudPath ? <path d={minimapNodeCloudPath} className="freeform-minimap-node-cloud" /> : null}
+            {renderBoxes.filter((item) => selectedIdSet.has(item.id)).map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className="freeform-minimap-node is-selected" />)}
+          </> : renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIdSet.has(item.id) ? ' is-selected' : ''}`} />)}
           <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
         </svg>
       </div>
@@ -3619,7 +3695,7 @@ function normalizeRect(value: SelectionRect) {
   return { x, y, width: Math.abs(value.x2 - value.x1), height: Math.abs(value.y2 - value.y1) }
 }
 
-function intersects(rect: { x: number; y: number; width: number; height: number }, item: CanvasNode | CanvasNote) {
+function intersects(rect: { x: number; y: number; width: number; height: number }, item: { x: number; y: number; width: number; height: number }) {
   return item.x < rect.x + rect.width && item.x + item.width > rect.x && item.y < rect.y + rect.height && item.y + item.height > rect.y
 }
 

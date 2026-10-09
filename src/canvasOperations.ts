@@ -254,6 +254,244 @@ export function separateCanvasSelection(scene: CanvasScene, ids: string[], paddi
   }
 }
 
+export interface CanvasNeighborhoodReflowResult {
+  scene: CanvasScene
+  movedIds: string[]
+}
+
+export interface CanvasNeighborhoodLayoutResult {
+  scene: CanvasScene
+  movedIds: string[]
+  scopeIds: string[]
+  mode: Exclude<CanvasLayoutMode, 'grid'>
+}
+
+export function layoutCanvasNeighborhood(
+  scene: CanvasScene,
+  seedIds: Iterable<string>,
+  depth = 1,
+  maxNodes = 42,
+  grid = 16,
+): CanvasNeighborhoodLayoutResult {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const boxById = new Map(boxes.map((item) => [item.id, item]))
+  const seeds = [...new Set(seedIds)].filter((id) => boxById.has(id))
+  const adjacency = new Map(boxes.map((item) => [item.id, new Set<string>()]))
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  arrows.forEach((arrow) => {
+    adjacency.get(arrow.from)?.add(arrow.to)
+    adjacency.get(arrow.to)?.add(arrow.from)
+  })
+
+  const scope = new Set(seeds)
+  let frontier = [...seeds]
+  const safeDepth = Math.max(0, Math.min(3, Math.floor(depth)))
+  for (let level = 0; level < safeDepth && scope.size < maxNodes; level += 1) {
+    const next: string[] = []
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) ?? []) {
+        if (scope.has(neighbor)) continue
+        scope.add(neighbor)
+        next.push(neighbor)
+        if (scope.size >= maxNodes) break
+      }
+      if (scope.size >= maxNodes) break
+    }
+    frontier = next
+  }
+  const scopeIds = [...scope]
+  if (scopeIds.length < 2) return { scene, movedIds: [], scopeIds, mode: 'horizontal' }
+
+  const scopedBoxes = scopeIds.map((id) => boxById.get(id)!).filter(Boolean)
+  const spreadX = Math.max(...scopedBoxes.map((item) => item.x + item.width / 2)) - Math.min(...scopedBoxes.map((item) => item.x + item.width / 2))
+  const spreadY = Math.max(...scopedBoxes.map((item) => item.y + item.height / 2)) - Math.min(...scopedBoxes.map((item) => item.y + item.height / 2))
+  let horizontalVotes = 0
+  let verticalVotes = 0
+  arrows.forEach((arrow) => {
+    if (!scope.has(arrow.from) || !scope.has(arrow.to)) return
+    const from = boxById.get(arrow.from)
+    const to = boxById.get(arrow.to)
+    if (!from || !to) return
+    const dx = Math.abs((to.x + to.width / 2) - (from.x + from.width / 2))
+    const dy = Math.abs((to.y + to.height / 2) - (from.y + from.height / 2))
+    if (dx >= dy) horizontalVotes += 1
+    else verticalVotes += 1
+  })
+  const mode: 'horizontal' | 'vertical' = horizontalVotes === verticalVotes
+    ? spreadX >= spreadY ? 'horizontal' : 'vertical'
+    : horizontalVotes > verticalVotes ? 'horizontal' : 'vertical'
+
+  const seedBoxes = seeds.map((id) => boxById.get(id)!).filter(Boolean)
+  const beforeCenter = centerOfBoxes(seedBoxes)
+  let arranged = layoutCanvasSelection(scene, scopeIds, mode, grid)
+  const arrangedById = new Map(arranged.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const afterCenter = centerOfBoxes(seeds.map((id) => arrangedById.get(id)!).filter(Boolean))
+  if (beforeCenter && afterCenter) {
+    const dx = beforeCenter.x - afterCenter.x
+    const dy = beforeCenter.y - afterCenter.y
+    arranged = {
+      ...arranged,
+      elements: arranged.elements.map((item) => {
+        if (item.type === 'arrow' || !scope.has(item.id) || item.locked) return item
+        return {
+          ...item,
+          x: clamp(snap(item.x + dx, grid), 0, arranged.width - item.width),
+          y: clamp(snap(item.y + dy, grid), 0, arranged.height - item.height),
+        }
+      }),
+    }
+  }
+  const reflow = reflowCanvasNeighborhood(arranged, scopeIds, 24, grid, Math.min(32, maxNodes))
+  arranged = reflow.scene
+  const beforeById = new Map(boxes.map((item) => [item.id, item]))
+  const movedIds = arranged.elements.flatMap((item) => {
+    if (item.type === 'arrow') return []
+    const before = beforeById.get(item.id)
+    return before && (before.x !== item.x || before.y !== item.y) ? [item.id] : []
+  })
+  return { scene: arranged, movedIds, scopeIds, mode }
+}
+
+export function reflowCanvasNeighborhood(
+  scene: CanvasScene,
+  anchorIds: Iterable<string>,
+  padding = 24,
+  grid = 16,
+  maxAffected = 48,
+): CanvasNeighborhoodReflowResult {
+  const anchors = new Set(anchorIds)
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const byId = new Map(boxes.map((item) => [item.id, item]))
+  const positions = new Map(boxes.map((item) => [item.id, { x: item.x, y: item.y }]))
+  const active = [...anchors].filter((id) => byId.has(id))
+  const activeSet = new Set(active)
+  const moved = new Set<string>()
+  const laneById = new Map((scene.lanes ?? []).map((lane) => [lane.id, lane]))
+
+  for (let cursor = 0; cursor < active.length && moved.size < maxAffected; cursor += 1) {
+    const sourceId = active[cursor]
+    const source = byId.get(sourceId)
+    const sourcePosition = positions.get(sourceId)
+    if (!source || !sourcePosition) continue
+    let sourceRect = { ...source, ...sourcePosition }
+
+    for (const other of boxes) {
+      if (other.id === sourceId) continue
+      const otherPosition = positions.get(other.id)!
+      let otherRect = { ...other, ...otherPosition }
+      if (!boxOverlapWithPadding(sourceRect, otherRect, padding)) continue
+
+      const sourcePinned = anchors.has(sourceId) || Boolean(source.locked)
+      const otherPinned = anchors.has(other.id) || Boolean(other.locked)
+      if (sourcePinned && otherPinned) continue
+
+      const mover = sourcePinned ? other : otherPinned ? source : other
+      const stationary = mover.id === source.id ? otherRect : sourceRect
+      const moverPosition = positions.get(mover.id)!
+      const next = nearestNonOverlappingPosition(scene, mover, moverPosition, stationary, padding, grid, laneById)
+      if (!next || (next.x === moverPosition.x && next.y === moverPosition.y)) continue
+      positions.set(mover.id, next)
+      if (!anchors.has(mover.id)) moved.add(mover.id)
+      if (!activeSet.has(mover.id) && active.length < anchors.size + maxAffected) {
+        active.push(mover.id)
+        activeSet.add(mover.id)
+      }
+      if (mover.id === source.id) sourceRect = { ...source, ...next }
+      else otherRect = { ...other, ...next }
+      if (moved.size >= maxAffected) break
+    }
+  }
+
+  if (!moved.size) return { scene, movedIds: [] }
+  return {
+    scene: {
+      ...scene,
+      elements: scene.elements.map((item) => {
+        if (item.type === 'arrow' || !moved.has(item.id)) return item
+        const position = positions.get(item.id)
+        return position ? { ...item, x: position.x, y: position.y } : item
+      }),
+    },
+    movedIds: [...moved],
+  }
+}
+
+function nearestNonOverlappingPosition(
+  scene: CanvasScene,
+  mover: CanvasNode | CanvasNote,
+  current: { x: number; y: number },
+  stationary: Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>,
+  padding: number,
+  grid: number,
+  laneById: Map<string, CanvasLane>,
+): { x: number; y: number } | null {
+  const rawCandidates = [
+    { x: stationary.x - padding - mover.width, y: current.y },
+    { x: stationary.x + stationary.width + padding, y: current.y },
+    { x: current.x, y: stationary.y - padding - mover.height },
+    { x: current.x, y: stationary.y + stationary.height + padding },
+  ]
+  const rank = (positions: Array<{ x: number; y: number }>) => positions
+    .filter((position, index, all) => all.findIndex((item) => item.x === position.x && item.y === position.y) === index)
+    .sort((left, right) => (
+      Math.abs(left.x - current.x) + Math.abs(left.y - current.y)
+      - Math.abs(right.x - current.x) - Math.abs(right.y - current.y)
+    ))
+  const snapped = rank(rawCandidates.map((position) => constrainCanvasPosition(scene, mover, position, grid, laneById)))
+  const snappedFit = snapped.find((position) => !boxOverlapWithPadding({ ...mover, ...position }, stationary, padding))
+  if (snappedFit) return snappedFit
+  // A nearest-grid rounding can move a node a few pixels back into the safety
+  // gap. Prefer the exact collision-free boundary over violating padding.
+  const exact = rank(rawCandidates.map((position) => constrainCanvasPosition(scene, mover, position, 1, laneById)))
+  return exact.find((position) => !boxOverlapWithPadding({ ...mover, ...position }, stationary, padding)) ?? null
+}
+
+function constrainCanvasPosition(
+  scene: CanvasScene,
+  item: CanvasNode | CanvasNote,
+  position: { x: number; y: number },
+  grid: number,
+  laneById: Map<string, CanvasLane>,
+) {
+  let minX = 0
+  let minY = 0
+  let maxX = Math.max(0, scene.width - item.width)
+  let maxY = Math.max(0, scene.height - item.height)
+  const lane = item.laneId ? laneById.get(item.laneId) : undefined
+  if (lane?.axis === 'vertical') {
+    minX = Math.max(minX, lane.start + 8)
+    maxX = Math.min(maxX, lane.start + lane.size - item.width - 8)
+  } else if (lane?.axis === 'horizontal') {
+    minY = Math.max(minY, lane.start + 8)
+    maxY = Math.min(maxY, lane.start + lane.size - item.height - 8)
+  }
+  if (maxX < minX) { minX = 0; maxX = Math.max(0, scene.width - item.width) }
+  if (maxY < minY) { minY = 0; maxY = Math.max(0, scene.height - item.height) }
+  return {
+    x: clamp(snap(position.x, grid), minX, maxX),
+    y: clamp(snap(position.y, grid), minY, maxY),
+  }
+}
+
+function boxOverlapWithPadding(
+  left: Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>,
+  right: Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>,
+  padding: number,
+) {
+  return left.x < right.x + right.width + padding
+    && left.x + left.width + padding > right.x
+    && left.y < right.y + right.height + padding
+    && left.y + left.height + padding > right.y
+}
+
+function centerOfBoxes(boxes: Array<CanvasNode | CanvasNote>): { x: number; y: number } | null {
+  if (!boxes.length) return null
+  return {
+    x: boxes.reduce((sum, item) => sum + item.x + item.width / 2, 0) / boxes.length,
+    y: boxes.reduce((sum, item) => sum + item.y + item.height / 2, 0) / boxes.length,
+  }
+}
+
 export function reorderCanvasSelection(scene: CanvasScene, ids: string[], direction: 'front' | 'back'): CanvasScene {
   const selected = new Set(ids)
   const arrows = scene.elements.filter((item) => item.type === 'arrow')

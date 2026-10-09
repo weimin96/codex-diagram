@@ -690,20 +690,47 @@ export function canvasGroupFrames(scene: CanvasScene): CanvasGroupFrame[] {
   const groups = scene.groups ?? []
   const groupById = new Map(groups.map((group) => [group.id, group]))
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const extents = new Map<string, { minX: number; minY: number; maxX: number; maxY: number; memberIds: string[] }>()
+  for (const item of boxes) {
+    let groupId = item.groupId
+    const seen = new Set<string>()
+    while (groupId && !seen.has(groupId)) {
+      seen.add(groupId)
+      const group = groupById.get(groupId)
+      if (!group) break
+      const current = extents.get(groupId)
+      if (current) {
+        current.minX = Math.min(current.minX, item.x)
+        current.minY = Math.min(current.minY, item.y)
+        current.maxX = Math.max(current.maxX, item.x + item.width)
+        current.maxY = Math.max(current.maxY, item.y + item.height)
+        current.memberIds.push(item.id)
+      } else {
+        extents.set(groupId, {
+          minX: item.x,
+          minY: item.y,
+          maxX: item.x + item.width,
+          maxY: item.y + item.height,
+          memberIds: [item.id],
+        })
+      }
+      groupId = group.parentId
+    }
+  }
   return groups.flatMap((group) => {
-    const members = boxes.filter((item) => item.groupId && groupContains(group.id, item.groupId, groupById))
-    if (!members.length) return []
-    const minX = Math.min(...members.map((item) => item.x)) - 24
-    const minY = Math.min(...members.map((item) => item.y)) - 42
-    const maxX = Math.max(...members.map((item) => item.x + item.width)) + 24
-    const maxY = Math.max(...members.map((item) => item.y + item.height)) + 24
+    const extent = extents.get(group.id)
+    if (!extent) return []
+    const minX = extent.minX - 24
+    const minY = extent.minY - 42
+    const maxX = extent.maxX + 24
+    const maxY = extent.maxY + 24
     return [{
       ...group,
       x: minX,
       y: minY,
       width: group.collapsed ? Math.min(280, Math.max(180, maxX - minX)) : maxX - minX,
       height: group.collapsed ? 58 : maxY - minY,
-      memberIds: members.map((item) => item.id),
+      memberIds: extent.memberIds,
     }]
   })
 }
