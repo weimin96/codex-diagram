@@ -197,6 +197,12 @@ function captureDom(chrome, url) {
 }
 
 function decodeHtml(value) { return value.replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&amp;','&') }
-function safeName(value) { return value.replace(/[^a-z0-9._-]+/gi, '__') }
+function safeName(value) {
+  const normalized = value.normalize('NFKC')
+    .replace(/[\\/:*?"<>|%]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'diagram'
+}
 function escapeHtml(value) { return value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;') }
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }

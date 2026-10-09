@@ -29,7 +29,8 @@ test('beautifies architecture into semantic partitions with technology roles', (
   const scene = result.scene
   const nodes = new Map(scene.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
 
-  assert.ok((scene.lanes?.length ?? 0) >= 4)
+  assert.equal(scene.lanes?.length ?? 0, 0)
+  assert.ok((scene.groups?.filter((group) => group.id.startsWith('arch-')).length ?? 0) >= 4)
   assert.equal(nodes.get('web')?.stencil, 'react')
   assert.equal(nodes.get('web')?.icon, 'web')
   assert.equal(nodes.get('service')?.stencil, 'spring')
@@ -38,7 +39,7 @@ test('beautifies architecture into semantic partitions with technology roles', (
   assert.equal(nodes.get('queue')?.icon, 'queue')
   assert.equal(nodes.get('db')?.stencil, 'postgres')
   assert.equal(nodes.get('db')?.icon, 'database')
-  assert.notEqual(nodes.get('web')?.laneId, nodes.get('db')?.laneId)
+  assert.notEqual(nodes.get('web')?.groupId, nodes.get('db')?.groupId)
   assert.ok(result.summary.partitions >= 4)
 })
 
@@ -115,7 +116,36 @@ test('bundles fan-out relationships through a shared source trunk when the corri
   assert.ok(canvasBundleTrunks(result).some((trunk) => trunk.count >= 2))
 })
 
-test('adds a software-system boundary while keeping external providers outside it', () => {
+test('routes downward fan-out into one architecture group through a shared data bus', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Shared data bus',
+    width: 1200,
+    height: 760,
+    groups: [{ id: 'data', label: 'Data', kind: 'boundary' }],
+    elements: [
+      { id: 'service', type: 'node', x: 480, y: 100, width: 180, height: 80, text: 'Core', icon: 'service' },
+      { id: 'redis', type: 'node', x: 240, y: 520, width: 160, height: 72, text: 'Redis', icon: 'cache', groupId: 'data' },
+      { id: 'search', type: 'node', x: 500, y: 520, width: 160, height: 72, text: 'Search', icon: 'search', groupId: 'data' },
+      { id: 'db', type: 'node', x: 760, y: 520, width: 160, height: 72, text: 'Database', icon: 'database', groupId: 'data' },
+      { id: 'to-redis', type: 'arrow', from: 'service', to: 'redis' },
+      { id: 'to-search', type: 'arrow', from: 'service', to: 'search' },
+      { id: 'to-db', type: 'arrow', from: 'service', to: 'db' },
+    ],
+  }
+
+  const result = beautifyArchitectureScene(scene, { repartition: false, relayout: false }).scene
+  const arrows = result.elements.filter((item) => item.type === 'arrow')
+  assert.equal(arrows.length, 3)
+  assert.ok(arrows.every((arrow) => arrow.bundleKey === 'from:service'))
+  assert.ok(arrows.every((arrow) => arrow.fromAnchor === 'bottom' && arrow.toAnchor === 'top'))
+  const firstBends = arrows.map((arrow) => arrow.points?.[0]).filter(Boolean)
+  assert.equal(firstBends.length, 3)
+  assert.ok(firstBends.every((point) => point?.x === firstBends[0]?.x && point?.y === firstBends[0]?.y))
+})
+
+test('uses tight local architecture boundaries by default while keeping external providers separate', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',
     version: 1,
@@ -135,13 +165,26 @@ test('adds a software-system boundary while keeping external providers outside i
 
   const result = beautifyArchitectureScene(scene).scene
   const system = result.groups?.find((group) => group.c4Type === 'software-system')
-  assert.ok(system)
+  assert.equal(system, undefined)
   const nodes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
   assert.equal(nodes.get('oidc')?.icon, 'auth')
-  assert.notEqual(nodes.get('oidc')?.groupId, system.id)
-  assert.equal(nodes.get('web')?.groupId, system.id)
-  assert.equal(nodes.get('api')?.groupId, system.id)
-  assert.equal(nodes.get('db')?.groupId, system.id)
+  assert.equal(nodes.get('oidc')?.groupId, 'arch-external')
+  assert.equal(nodes.get('web')?.groupId, 'arch-experience')
+  assert.equal(nodes.get('api')?.groupId, 'arch-application')
+  assert.equal(nodes.get('db')?.groupId, 'arch-data')
+  assert.ok(result.groups?.filter((group) => group.id.startsWith('arch-')).every((group) => !group.parentId))
+})
+
+test('preserves an explicit software-system boundary around generated local architecture groups', () => {
+  const scene = sampleScene()
+  scene.groups = [{ id: 'platform', label: 'Platform', kind: 'boundary', c4Type: 'software-system' }]
+
+  const result = beautifyArchitectureScene(scene).scene
+  const system = result.groups?.find((group) => group.id === 'platform')
+  assert.ok(system)
+  const internalGroups = result.groups?.filter((group) => group.id.startsWith('arch-') && group.id !== 'arch-external') ?? []
+  assert.ok(internalGroups.length >= 3)
+  assert.ok(internalGroups.every((group) => group.parentId === 'platform'))
 })
 
 test('routes architecture relationships around blocking nodes', () => {
@@ -170,6 +213,51 @@ test('routes architecture relationships around blocking nodes', () => {
   assert.ok(route.length >= 4)
   for (let index = 0; index < route.length - 1; index += 1) {
     assert.equal(segmentCutsBox(route[index], route[index + 1], boxes.get('blocker')!), false)
+  }
+})
+
+test('routes through two corridors when an intermediate node and stacked target column block simple doglegs', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Stacked target routing',
+    width: 1900,
+    height: 800,
+    elements: [
+      { id: 'core', type: 'node', x: 800, y: 260, width: 220, height: 94, text: 'Core', icon: 'service' },
+      { id: 'blocker', type: 'node', x: 1190, y: 260, width: 236, height: 94, text: 'Worker', icon: 'worker' },
+      { id: 'above', type: 'node', x: 1580, y: 110, width: 220, height: 94, text: 'Redis', icon: 'cache' },
+      { id: 'target', type: 'node', x: 1580, y: 260, width: 220, height: 94, text: 'OpenSearch', icon: 'search' },
+      { id: 'below', type: 'node', x: 1580, y: 410, width: 220, height: 94, text: 'Qdrant', icon: 'vector' },
+      { id: 'edge', type: 'arrow', from: 'core', to: 'target', label: '同步检索' },
+    ],
+  }
+
+  const result = routeArchitectureEdgesIncremental(scene, ['core'])
+  const edge = result.elements.find((item) => item.id === 'edge')
+  assert.ok(edge?.type === 'arrow')
+  assert.equal(edge.routing, 'orthogonal')
+  assert.ok((edge.points?.length ?? 0) >= 2)
+
+  const boxes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
+  const start = anchorPoint(boxes.get('core')!, edge.fromAnchor, boxes.get('target')!)
+  const end = anchorPoint(boxes.get('target')!, edge.toAnchor, boxes.get('core')!)
+  const route = [start, ...(edge.points ?? []), end]
+  const first = route[1]
+  const beforeEnd = route[route.length - 2]
+  if (edge.fromAnchor === 'right') assert.ok(first.x >= start.x)
+  if (edge.fromAnchor === 'left') assert.ok(first.x <= start.x)
+  if (edge.fromAnchor === 'bottom') assert.ok(first.y >= start.y)
+  if (edge.fromAnchor === 'top') assert.ok(first.y <= start.y)
+  if (edge.toAnchor === 'right') assert.ok(beforeEnd.x >= end.x)
+  if (edge.toAnchor === 'left') assert.ok(beforeEnd.x <= end.x)
+  if (edge.toAnchor === 'bottom') assert.ok(beforeEnd.y >= end.y)
+  if (edge.toAnchor === 'top') assert.ok(beforeEnd.y <= end.y)
+  for (const obstacleId of ['blocker', 'above', 'below']) {
+    const obstacle = boxes.get(obstacleId)!
+    for (let index = 0; index < route.length - 1; index += 1) {
+      assert.equal(segmentCutsBox(route[index], route[index + 1], obstacle), false, `${obstacleId} should not be crossed`)
+    }
   }
 })
 
@@ -297,14 +385,15 @@ test('recognizes architecture-specific roles beyond generic service and database
   assert.equal(nodes.get('auth')?.icon, 'auth')
 })
 
-test('persists presentation architecture appearance and reserves header space', () => {
+test('persists presentation architecture appearance without dashboard chrome', () => {
   const result = beautifyArchitectureScene(sampleScene(), { theme: 'presentation' }).scene
   const nodes = result.elements.filter((item) => item.type !== 'arrow')
 
   assert.deepEqual(result.architecture, { theme: 'presentation', presentation: true, view: 'detail', density: 'auto' })
-  assert.ok(result.width >= 1440)
-  assert.ok(result.height >= 900)
-  assert.ok(nodes.every((item) => item.locked || item.y >= 132))
+  assert.ok(result.width >= 960)
+  assert.ok(result.height >= 620)
+  assert.ok(result.width < 1440)
+  assert.ok(nodes.every((item) => item.locked || item.y >= 50))
 })
 
 test('switching away from presentation removes presentation chrome without changing canvas version', () => {
@@ -338,8 +427,8 @@ test('auto density compacts large architecture layouts without changing canvas p
   const nodes = result.scene.elements.filter((item) => item.type !== 'arrow')
   assert.equal(result.scene.version, 1)
   assert.equal(result.scene.architecture?.density, 'auto')
-  assert.ok(nodes.every((item) => item.width <= 188))
-  assert.ok(nodes.every((item) => item.height <= 84))
+  assert.ok(nodes.every((item) => item.width <= 150))
+  assert.ok(nodes.every((item) => item.height <= 68))
 })
 
 function segmentCutsBox(a: { x: number; y: number }, b: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }): boolean {

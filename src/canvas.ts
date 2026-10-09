@@ -1,3 +1,22 @@
+import {
+  siApachekafka,
+  siDocker,
+  siElasticsearch,
+  siKubernetes,
+  siMinio,
+  siMongodb,
+  siMysql,
+  siNginx,
+  siOpensearch,
+  siPostgresql,
+  siQdrant,
+  siRabbitmq,
+  siReact,
+  siRedis,
+  siSpringboot,
+  siVuedotjs,
+} from 'simple-icons'
+
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
 export type CanvasShape = 'rounded' | 'square' | 'pill'
@@ -251,6 +270,7 @@ export function serializeCanvasScene(scene: CanvasScene): string {
 
 export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: string; panel?: string; text?: string; border?: string; note?: string }): string {
   const sourceScene = scene
+  const architectureMode = Boolean(sourceScene.architecture)
   const projection = canvasArchitectureProjection(scene)
   scene = projection.scene
   const background = colors?.background || '#ffffff'
@@ -258,6 +278,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const text = colors?.text || '#171717'
   const border = colors?.border || '#8a8a8a'
   const note = colors?.note || '#fff7cc'
+  const architectureBorder = architectureMode && hexLuminance(background) < 0.18 ? '#71717a' : border
   const allNodes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
   const groupFrames = canvasGroupFrames(scene)
   const collapsedOwners = canvasCollapsedOwners(scene)
@@ -265,9 +286,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const labelLayouts = canvasArrowLabelLayouts(scene)
   const architectureHeader = canvasArchitectureHeader(sourceScene)
   const bundleTrunks = canvasBundleTrunks(scene).map((bundle) => {
-    const opacity = bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
-    const width = bundle.emphasis === 'primary' ? 7 : 5.5
-    return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
+    const opacity = architectureMode
+      ? bundle.emphasis === 'primary' ? '0.16' : bundle.emphasis === 'muted' ? '0.07' : '0.10'
+      : bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
+    const width = architectureMode ? bundle.emphasis === 'primary' ? 4 : 3 : bundle.emphasis === 'primary' ? 7 : 5.5
+    return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
   }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
     const from = nodes.get(arrow.from)
@@ -279,13 +302,20 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
     const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
-    const strokeWidth = arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
-    const opacity = arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
-    const label = arrow.label ? labelLayouts.get(arrow.id) : undefined
-    const labelMarkup = arrow.label && label
-      ? `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(arrow.label, 30))}</text></g>`
+    const strokeWidth = architectureMode
+      ? arrow.emphasis === 'primary' ? 1.9 : arrow.emphasis === 'muted' ? 0.9 : 1.25
+      : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
+    const opacity = architectureMode
+      ? arrow.emphasis === 'muted' ? '0.42' : arrow.emphasis === 'secondary' ? '0.66' : '0.92'
+      : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
+    const visibleLabel = architectureMode && arrow.label && !shouldRenderArchitectureRelationLabel(arrow) ? undefined : arrow.label
+    const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
+    const labelMarkup = visibleLabel && label
+      ? architectureMode
+        ? `<text x="${label.x}" y="${label.y + 3}" text-anchor="middle" font-size="10.5" font-weight="550" fill="${escapeXml(text)}" stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${escapeXml(truncateCanvasText(visibleLabel, 26))}</text>`
+        : `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(visibleLabel, 30))}</text></g>`
       : ''
-    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${labelMarkup}</g>`
+    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${labelMarkup}</g>`
   }).join('')
   const collapsedConnections = canvasCollapsedConnections(scene, groupFrames).map((connection) => {
     const fromCenter = centerOfCanvasBox(connection.fromBox)
@@ -299,8 +329,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2.2"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
-    const palette = canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
+    const palette = architectureMode
+      ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
+      : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const architectureCard = item.type === 'node' && Boolean(item.icon || item.stencil || item.c4Type)
+    if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density)
     const cardTemplate = canvasArchitectureCardTemplate(item)
     const showSubtitle = Boolean(item.subtitle && (!architectureCard || projection.density !== 'dense'))
     const cardTitleLimit = projection.density === 'dense' ? 22 : projection.density === 'compact' ? 26 : 30
@@ -322,15 +355,24 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<g opacity="${opacity}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
-    const palette = canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
+    const palette = architectureMode
+      ? canvasArchitectureTonePalette(group.tone, { panel, text, border, note }, 'node')
+      : canvasTonePalette(group.tone, { panel, text, border, note }, 'node')
     const softwareSystem = group.c4Type === 'software-system'
     const container = group.c4Type === 'container'
-    const dash = softwareSystem ? '' : container ? '10 6' : group.kind === 'boundary' ? '12 6' : '8 6'
-    const strokeWidth = softwareSystem ? 2.4 : container ? 1.7 : 1.4
-    const fillOpacity = group.collapsed ? '0.5' : softwareSystem ? '0.10' : container ? '0.05' : '0'
-    const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
+    const dash = architectureMode
+      ? softwareSystem ? '10 7' : container ? '8 6' : group.kind === 'boundary' ? '6 5' : '5 5'
+      : softwareSystem ? '' : container ? '10 6' : group.kind === 'boundary' ? '12 6' : '8 6'
+    const strokeWidth = architectureMode ? softwareSystem ? 1.35 : container ? 1.15 : 1 : softwareSystem ? 2.4 : container ? 1.7 : 1.4
+    const fillOpacity = architectureMode
+      ? group.collapsed ? '0.34' : softwareSystem ? '0.025' : container ? '0.018' : '0'
+      : group.collapsed ? '0.5' : softwareSystem ? '0.10' : container ? '0.05' : '0'
     const collapsed = group.collapsed ? ' · collapsed' : ''
     const fill = group.collapsed || softwareSystem || container ? escapeXml(palette.fill) : 'none'
+    if (architectureMode) {
+      return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="8" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(softwareSystem ? architectureBorder : palette.stroke)}" stroke-opacity="${softwareSystem ? '0.68' : '0.54'}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${group.label ? `<text x="${group.x + 10}" y="${group.y + 18}" font-size="${softwareSystem ? 11.5 : 10.5}" font-weight="${softwareSystem ? 650 : 600}" fill="${escapeXml(text)}" opacity="${softwareSystem ? '0.82' : '0.72'}">${escapeXml(`${group.label}${collapsed}`)}</text>` : ''}</g>`
+    }
+    const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
     const header = group.label && softwareSystem
       ? `<rect x="${group.x}" y="${group.y}" width="${group.width}" height="34" rx="18" fill="${escapeXml(palette.fill)}" fill-opacity="0.62"/>`
       : ''
@@ -345,7 +387,10 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.42" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="4 6"/><rect x="${x}" y="${y}" width="${width}" height="34" rx="14" fill="${escapeXml(palette.fill)}" fill-opacity="0.86"/><text x="${x + 14}" y="${y + 22}" font-size="12" font-weight="700" fill="${escapeXml(palette.text)}">${escapeXml(lane.label)}</text></g>`
   }).join('')
   const header = architectureHeader ? architectureHeaderToSvg(scene, architectureHeader, { background, text, border }) : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker></defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${header}${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
+  const marker = architectureMode
+    ? `<marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="${escapeXml(architectureBorder)}"/></marker>`
+    : `<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs>${marker}</defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${header}${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
 }
 
 export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
@@ -761,28 +806,12 @@ export function canvasArchitectureCardTemplate(item: CanvasNode | CanvasNote): C
 }
 
 export function canvasArchitectureHeader(scene: CanvasScene): CanvasArchitectureHeader | undefined {
-  if (!scene.architecture?.presentation) return undefined
-  const nodes = scene.elements.filter((item) => item.type !== 'arrow').length
-  const arrows = scene.elements.filter((item) => item.type === 'arrow')
-  const projection = canvasArchitectureProjection(scene)
-  const visibleNodes = projection.scene.elements.filter((item) => item.type !== 'arrow').length
-  const visibleArrows = projection.scene.elements.filter((item) => item.type === 'arrow').length
-  const scope = projection.view === 'overview'
-    ? projection.hiddenNodes > 0
-      ? `${visibleNodes}/${nodes} 个节点 · ${visibleArrows}/${arrows.length} 条关系 · 总览`
-      : `${nodes} 个节点 · ${arrows.length} 条关系 · 总览`
-    : `${nodes} 个节点 · ${arrows.length} 条关系 · 详情`
-  return {
-    height: 88,
-    eyebrow: 'SYSTEM ARCHITECTURE',
-    title: scene.title || 'Architecture',
-    subtitle: `${scope} · ${architectureDensityLabel(projection.density)}`,
-    legend: [
-      { kind: 'primary', label: '主链路' },
-      { kind: 'secondary', label: '关联' },
-      ...(arrows.some((item) => item.lineStyle === 'dashed') ? [{ kind: 'async' as const, label: '异步' }] : []),
-    ],
-  }
+  // Architecture diagrams use the canvas itself as the composition surface.
+  // A report-style banner consumed too much vertical space and made the result
+  // look like a dashboard instead of a technical architecture drawing. Keep
+  // the title on the tight Software System boundary instead.
+  void scene
+  return undefined
 }
 
 export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasArrowLabelLayout> {
@@ -1065,6 +1094,115 @@ function shapeRadius(shape: CanvasShape | undefined, height: number): number {
   return 12
 }
 
+function renderArchitectureCanvasNode(
+  item: CanvasNode,
+  palette: { fill: string; text: string; stroke: string },
+  density: Exclude<CanvasArchitectureDensity, 'auto'>,
+): string {
+  const compact = density === 'dense'
+  const iconSize = item.stencil ? compact ? 32 : 40 : compact ? 28 : 34
+  const iconX = item.x + (compact ? 10 : 12)
+  const iconY = item.y + (item.height - iconSize) / 2
+  const textX = iconX + iconSize + (compact ? 9 : 11)
+  const titleY = item.y + item.height / 2 + (item.subtitle ? -4 : 4)
+  const subtitleY = titleY + 17
+  const titleSize = compact ? 12 : density === 'compact' ? 12.5 : 13
+  const subtitleSize = compact ? 9 : 9.5
+  const opacity = item.emphasis === 'muted' ? '0.68' : '1'
+  const mark = item.stencil
+    ? architectureStencilMark(item.stencil, iconX, iconY, iconSize, palette.stroke, hexLuminance(palette.text) > 0.62)
+    : item.icon
+      ? architectureRoleMark(item.icon, iconX, iconY, iconSize, palette.stroke)
+      : ''
+  const subtitle = item.subtitle
+    ? `<text x="${textX}" y="${subtitleY}" font-size="${subtitleSize}" fill="${escapeXml(palette.text)}" opacity="0.58">${escapeXml(truncateCanvasText(item.subtitle, compact ? 20 : 26))}</text>`
+    : ''
+  if (item.stencil || isArchitectureTechnicalRole(item.icon)) {
+    return `<g opacity="${opacity}">${mark}<text x="${textX}" y="${titleY}" font-size="${titleSize}" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(item.text.replace(/\n/g, ' '), compact ? 20 : 26))}</text>${subtitle}</g>`
+  }
+  const borderDash = item.icon === 'external' || item.c4Type === 'software-system' ? ' stroke-dasharray="5 4"' : ''
+  const fillOpacity = item.emphasis === 'primary' ? '0.54' : '0.32'
+  const strokeOpacity = item.emphasis === 'primary' ? '0.50' : '0.30'
+  return `<g opacity="${opacity}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="7" fill="${escapeXml(palette.fill)}" fill-opacity="${fillOpacity}" stroke="${escapeXml(palette.stroke)}" stroke-opacity="${strokeOpacity}" stroke-width="${item.emphasis === 'primary' ? 1.25 : 0.9}"${borderDash}/>${mark}<text x="${textX}" y="${titleY}" font-size="${titleSize}" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(item.text.replace(/\n/g, ' '), compact ? 20 : 26))}</text>${subtitle}</g>`
+}
+
+function isArchitectureTechnicalRole(icon: CanvasIcon | undefined): boolean {
+  return Boolean(icon && icon !== 'user' && icon !== 'external')
+}
+
+function shouldRenderArchitectureRelationLabel(arrow: CanvasArrow): boolean {
+  if (!arrow.label) return false
+  if (arrow.emphasis === 'primary' && Array.from(arrow.label).length <= 10) return true
+  return /\b(?:https?|rest|sse|grpc|websocket|oidc|oauth|sql|mcp|tcp|udp)\b|异步|事件|消息/i.test(arrow.label)
+}
+
+function architectureRoleMark(icon: CanvasIcon, x: number, y: number, size: number, color: string): string {
+  const paths = canvasIconPaths(icon)
+  const scale = size / 24
+  return `<g transform="translate(${x} ${y})"><rect width="${size}" height="${size}" rx="${Math.max(5, size * 0.22)}" fill="${escapeXml(color)}" fill-opacity="0.08" stroke="${escapeXml(color)}" stroke-opacity="0.18"/><g transform="scale(${scale})" fill="none" stroke="${escapeXml(color)}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths.map((d) => `<path d="${d}"/>`).join('')}</g></g>`
+}
+
+function architectureStencilMark(stencil: CanvasStencil, x: number, y: number, size: number, fallback: string, darkSurface: boolean): string {
+  const simpleIcon = architectureSimpleIcon(stencil)
+  if (simpleIcon) {
+    const original = `#${simpleIcon.hex}`
+    const brand = darkSurface && hexLuminance(original) < 0.07 ? '#d1d5db' : original
+    return `<g transform="translate(${x} ${y}) scale(${size / 24})"><path d="${simpleIcon.path}" fill="${brand}"/></g>`
+  }
+  const brand = architectureStencilColor(stencil, fallback)
+  const cx = x + size / 2
+  const cy = y + size / 2
+  const abbreviation = architectureStencilAbbreviation(stencil)
+  if (stencil === 'react') {
+    return `<g fill="none" stroke="${brand}" stroke-width="1.35"><ellipse cx="${cx}" cy="${cy}" rx="${size * 0.42}" ry="${size * 0.17}"/><ellipse cx="${cx}" cy="${cy}" rx="${size * 0.42}" ry="${size * 0.17}" transform="rotate(60 ${cx} ${cy})"/><ellipse cx="${cx}" cy="${cy}" rx="${size * 0.42}" ry="${size * 0.17}" transform="rotate(120 ${cx} ${cy})"/><circle cx="${cx}" cy="${cy}" r="${Math.max(2, size * 0.07)}" fill="${brand}"/></g>`
+  }
+  if (stencil === 'redis') {
+    const top = y + size * 0.27
+    return `<g fill="${brand}" fill-opacity="0.92"><path d="M ${x + size * 0.12} ${top} L ${cx} ${y + size * 0.08} L ${x + size * 0.88} ${top} L ${cx} ${y + size * 0.46} Z"/><path d="M ${x + size * 0.12} ${y + size * 0.48} L ${cx} ${y + size * 0.30} L ${x + size * 0.88} ${y + size * 0.48} L ${cx} ${y + size * 0.67} Z" opacity="0.78"/><path d="M ${x + size * 0.12} ${y + size * 0.69} L ${cx} ${y + size * 0.52} L ${x + size * 0.88} ${y + size * 0.69} L ${cx} ${y + size * 0.88} Z" opacity="0.58"/></g>`
+  }
+  if (stencil === 'kafka') {
+    return `<g fill="none" stroke="${brand}" stroke-width="1.7"><circle cx="${cx}" cy="${cy}" r="${size * 0.10}" fill="${brand}"/><circle cx="${x + size * 0.25}" cy="${y + size * 0.24}" r="${size * 0.07}"/><circle cx="${x + size * 0.76}" cy="${y + size * 0.25}" r="${size * 0.07}"/><circle cx="${x + size * 0.28}" cy="${y + size * 0.76}" r="${size * 0.07}"/><circle cx="${x + size * 0.75}" cy="${y + size * 0.74}" r="${size * 0.07}"/><path d="M ${cx} ${cy} L ${x + size * 0.25} ${y + size * 0.24} M ${cx} ${cy} L ${x + size * 0.76} ${y + size * 0.25} M ${cx} ${cy} L ${x + size * 0.28} ${y + size * 0.76} M ${cx} ${cy} L ${x + size * 0.75} ${y + size * 0.74}"/></g>`
+  }
+  if (['postgres', 'mysql', 'mongodb', 'qdrant', 'opensearch', 'elasticsearch', 'minio'].includes(stencil)) {
+    return `<g><rect x="${x}" y="${y}" width="${size}" height="${size}" rx="${Math.max(5, size * 0.22)}" fill="${brand}" fill-opacity="0.10"/><text x="${cx}" y="${cy + size * 0.14}" text-anchor="middle" font-size="${Math.max(8, size * 0.30)}" font-weight="750" fill="${brand}">${escapeXml(abbreviation)}</text></g>`
+  }
+  return `<g><rect x="${x}" y="${y}" width="${size}" height="${size}" rx="${Math.max(5, size * 0.22)}" fill="${brand}" fill-opacity="0.10" stroke="${brand}" stroke-opacity="0.18"/><text x="${cx}" y="${cy + size * 0.13}" text-anchor="middle" font-size="${Math.max(7, size * 0.27)}" font-weight="750" fill="${brand}">${escapeXml(abbreviation)}</text></g>`
+}
+
+function architectureSimpleIcon(stencil: CanvasStencil): { path: string; hex: string } | undefined {
+  const icons: Partial<Record<CanvasStencil, { path: string; hex: string }>> = {
+    spring: siSpringboot,
+    react: siReact,
+    vue: siVuedotjs,
+    postgres: siPostgresql,
+    mysql: siMysql,
+    redis: siRedis,
+    kafka: siApachekafka,
+    rabbitmq: siRabbitmq,
+    docker: siDocker,
+    kubernetes: siKubernetes,
+    qdrant: siQdrant,
+    opensearch: siOpensearch,
+    elasticsearch: siElasticsearch,
+    mongodb: siMongodb,
+    minio: siMinio,
+    nginx: siNginx,
+  }
+  return icons[stencil]
+}
+
+function architectureStencilAbbreviation(stencil: CanvasStencil): string {
+  return ({
+    spring: 'S', react: 'R', vue: 'V', postgres: 'PG', mysql: 'MY', redis: 'R', kafka: 'K', rabbitmq: 'MQ', docker: 'D', kubernetes: 'K8S', qdrant: 'Q', opensearch: 'OS', elasticsearch: 'ES', mongodb: 'M', minio: 'S3', nginx: 'N', grpc: 'gR', oidc: 'ID', openai: 'AI', mcp: 'MCP',
+  })[stencil]
+}
+
+function architectureStencilColor(stencil: CanvasStencil, fallback: string): string {
+  return ({
+    spring: '#6DB33F', react: '#36A9C8', vue: '#42B883', postgres: '#336791', mysql: '#4479A1', redis: '#D82C20', kafka: '#555555', rabbitmq: '#FF6600', docker: '#2496ED', kubernetes: '#326CE5', qdrant: '#DC244C', opensearch: '#1769AA', elasticsearch: '#1BA9A0', mongodb: '#47A248', minio: '#C72C48', nginx: '#009639', grpc: '#5B6B7A', oidc: '#59636E', openai: '#10A37F', mcp: '#6D5CE7',
+  })[stencil] ?? fallback
+}
+
 function canvasTonePalette(
   tone: CanvasTone | undefined,
   colors: { panel: string; text: string; border: string; note: string },
@@ -1079,6 +1217,34 @@ function canvasTonePalette(
     muted: { fill: '#f5f5f5', text: '#525252', stroke: '#a3a3a3' },
   }
   return palettes[tone]
+}
+
+function canvasArchitectureTonePalette(
+  tone: CanvasTone | undefined,
+  colors: { panel: string; text: string; border: string; note: string },
+  kind: 'node' | 'note',
+) {
+  if (!tone || tone === 'default') return { fill: kind === 'note' ? colors.note : colors.panel, text: colors.text, stroke: colors.border }
+  const darkSurface = hexLuminance(colors.text) > 0.62
+  if (darkSurface) {
+    const palettes: Record<Exclude<CanvasTone, 'default'>, { fill: string; text: string; stroke: string }> = {
+      accent: { fill: '#171d2f', text: '#e6e9ff', stroke: '#7886ff' },
+      success: { fill: '#12241f', text: '#ddf9ed', stroke: '#42c99a' },
+      warning: { fill: '#2a2113', text: '#fff0ce', stroke: '#dcae49' },
+      danger: { fill: '#2b171a', text: '#ffe4e6', stroke: '#de6d79' },
+      muted: { fill: '#1d1f22', text: '#e5e7eb', stroke: '#7d828a' },
+    }
+    return palettes[tone]
+  }
+  return canvasTonePalette(tone, colors, kind)
+}
+
+function hexLuminance(value: string): number {
+  const match = value.trim().match(/^#([0-9a-f]{6})$/i)
+  if (!match) return 0.5
+  const rgb = [0, 2, 4].map((offset) => parseInt(match[1].slice(offset, offset + 2), 16) / 255)
+    .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+  return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
 }
 
 function positive(value: unknown, fallback: number): number {

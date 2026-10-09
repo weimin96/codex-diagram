@@ -83,7 +83,7 @@ test('round-trips and honors a manually positioned relationship label', () => {
   assert.deepEqual({ x: layout.x, y: layout.y }, { x: 510, y: 140 })
 })
 
-test('renders presentation title, legend and architecture card metadata in SVG export', () => {
+test('renders compact presentation architecture without dashboard metadata in SVG export', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',
     version: 1,
@@ -99,11 +99,12 @@ test('renders presentation title, legend and architecture card metadata in SVG e
   }
 
   const svg = canvasSceneToSvg(scene)
-  assert.match(svg, /SYSTEM ARCHITECTURE/)
-  assert.match(svg, /主链路/)
-  assert.match(svg, /Unified Knowledge Platform/)
+  assert.doesNotMatch(svg, /SYSTEM ARCHITECTURE/)
+  assert.doesNotMatch(svg, /主链路/)
+  assert.doesNotMatch(svg, />Container</)
   assert.match(svg, />gRPC</)
-  assert.match(svg, />PG</)
+  assert.match(svg, /fill="#4169E1"/)
+  assert.doesNotMatch(svg, />PG</)
 })
 
 test('overview projection keeps source data intact while reducing low-priority architecture detail', () => {
@@ -176,7 +177,7 @@ test('SVG export honors architecture overview projection', () => {
   assert.match(svg, />API</)
   assert.match(svg, />DB</)
   assert.doesNotMatch(svg, />Muted 19</)
-  assert.match(svg, /总览/)
+  assert.doesNotMatch(svg, /SYSTEM ARCHITECTURE/)
 })
 
 test('architecture group drill-down collapses immediate child boundaries and keeps boundary dependencies', () => {

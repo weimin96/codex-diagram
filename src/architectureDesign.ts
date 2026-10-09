@@ -5,8 +5,8 @@ import type {
   CanvasArchitectureView,
   CanvasElement,
   CanvasEmphasis,
+  CanvasGroup,
   CanvasIcon,
-  CanvasLane,
   CanvasNode,
   CanvasNote,
   CanvasPoint,
@@ -91,43 +91,45 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   const partitionById = new Map(semanticBoxes.map((item) => [item.id, classifyArchitectureBox(item)]))
   const activePartitions = partitionOrder.filter((partition) => semanticBoxes.some((item) => partitionById.get(item.id) === partition))
   const resolvedDensity = resolveArchitectureLayoutDensity(density, semanticBoxes.length)
-  const lanes = repartition ? buildArchitectureLanes(semanticBoxes, partitionById, activePartitions, theme, resolvedDensity) : scene.lanes
-  const laneByPartition = new Map<ArchitecturePartition, CanvasLane>()
-  if (repartition) activePartitions.forEach((partition, index) => laneByPartition.set(partition, lanes?.[index] as CanvasLane))
+  const partitionGroups = repartition ? buildArchitectureGroups(scene, activePartitions, theme) : scene.groups
 
   let enrichedNodes = 0
   let elements: CanvasElement[] = scene.elements.map((item) => {
     if (item.type === 'arrow') return item
     const semantic = semanticBoxes.find((candidate) => candidate.id === item.id) ?? item
     const partition = partitionById.get(item.id) ?? 'application'
-    const lane = laneByPartition.get(partition)
     const tone = themeTones[theme][partition]
-    const changed = semantic.icon !== item.icon || semantic.stencil !== item.stencil || item.tone !== tone || (repartition && lane?.id !== item.laneId)
+    const autoGroupId = `arch-${partition}`
+    const shouldAssignAutoGroup = repartition && (!item.groupId || item.groupId === 'arch-system' || item.groupId.startsWith('arch-'))
+    const changed = semantic.icon !== item.icon
+      || semantic.stencil !== item.stencil
+      || item.tone !== tone
+      || (shouldAssignAutoGroup && item.groupId !== autoGroupId)
+      || (repartition && Boolean(item.laneId?.startsWith('arch-')))
     if (changed) enrichedNodes += 1
     return {
       ...semantic,
       tone,
       shape: semantic.shape ?? 'rounded',
-      ...(repartition && lane ? { laneId: lane.id } : {}),
+      ...(shouldAssignAutoGroup ? { groupId: autoGroupId } : {}),
+      ...(repartition && item.laneId?.startsWith('arch-') ? { laneId: undefined } : {}),
     }
   })
 
   let width = scene.width
   let height = scene.height
-  if (repartition && lanes?.length) {
-    const presentation = theme === 'presentation'
-    const metrics = architectureLayoutMetrics(theme, resolvedDensity)
-    width = Math.max(presentation ? 1440 : 1280, Math.ceil(lanes[lanes.length - 1].start + lanes[lanes.length - 1].size + metrics.canvasTail))
-    const maxRows = Math.max(1, ...activePartitions.map((partition) => Math.ceil((semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length || 1) / partitionColumns(semanticBoxes.filter((item) => partitionById.get(item.id) === partition).length))))
-    height = Math.max(presentation ? 900 : 820, metrics.canvasTop + maxRows * metrics.rowStep)
-  }
 
   let next: CanvasScene = {
     ...scene,
     width,
     height,
     elements,
-    ...(repartition ? { lanes } : {}),
+    ...(repartition ? {
+      groups: partitionGroups,
+      ...(scene.lanes?.some((lane) => !lane.id.startsWith('arch-'))
+        ? { lanes: scene.lanes.filter((lane) => !lane.id.startsWith('arch-')) }
+        : { lanes: undefined }),
+    } : {}),
     architecture: {
       theme,
       ...(theme === 'presentation' ? { presentation: true } : {}),
@@ -136,8 +138,7 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
     },
   }
 
-  if (relayout && repartition && lanes?.length) next = layoutArchitecturePartitions(next, partitionById, laneByPartition, theme, resolvedDensity)
-  if (repartition) next = ensureArchitectureSystemBoundary(next, partitionById)
+  if (relayout && repartition) next = layoutArchitectureTopology(next, partitionById, theme, resolvedDensity)
   next = applyArchitectureTheme(next, theme, partitionById)
   next = applyArchitectureEmphasis(next, partitionById)
   if (reroute) next = routeArchitectureEdges(next)
@@ -168,48 +169,6 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
       density,
       resolvedDensity,
     },
-  }
-}
-
-function ensureArchitectureSystemBoundary(scene: CanvasScene, partitions: Map<string, ArchitecturePartition>): CanvasScene {
-  const groups = scene.groups ?? []
-  if (groups.some((group) => group.c4Type === 'software-system')) return scene
-  const internalNodes = scene.elements.filter((item): item is CanvasNode | CanvasNote => (
-    item.type !== 'arrow' && partitions.get(item.id) !== 'external'
-  ))
-  if (internalNodes.length < 3) return scene
-  const usedIds = new Set(groups.map((group) => group.id))
-  let systemId = 'arch-system'
-  for (let index = 2; usedIds.has(systemId); index += 1) systemId = `arch-system-${index}`
-  const directlyGrouped = new Map<string, Array<CanvasNode | CanvasNote>>()
-  internalNodes.forEach((item) => {
-    if (!item.groupId) return
-    directlyGrouped.set(item.groupId, [...(directlyGrouped.get(item.groupId) ?? []), item])
-  })
-  const nextGroups = groups.map((group) => {
-    if (group.parentId || group.c4Type === 'software-system') return group
-    const members = directlyGrouped.get(group.id) ?? []
-    if (!members.length || members.some((item) => partitions.get(item.id) === 'external')) return group
-    return { ...group, parentId: systemId }
-  })
-  nextGroups.push({
-    id: systemId,
-    label: scene.title || 'Software System',
-    kind: 'boundary',
-    c4Type: 'software-system',
-    tone: 'accent',
-    description: 'Architecture system boundary',
-  })
-  const childGroups = new Set(nextGroups.filter((group) => group.parentId === systemId).map((group) => group.id))
-  return {
-    ...scene,
-    groups: nextGroups,
-    elements: scene.elements.map((item) => {
-      if (item.type === 'arrow' || partitions.get(item.id) === 'external') return item
-      if (!item.groupId) return { ...item, groupId: systemId }
-      if (childGroups.has(item.groupId)) return item
-      return item
-    }),
   }
 }
 
@@ -370,6 +329,7 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
   const occupied: RouteSegment[] = []
   const fanout = countArrowEndpoints(arrows, 'from')
   const fanin = countArrowEndpoints(arrows, 'to')
+  const groupedFanoutIds = only ? new Set<string>() : collectDownwardGroupFanoutArrowIds(arrows, boxes)
 
   if (only) {
     for (const arrow of arrows) {
@@ -379,8 +339,12 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
     }
   }
 
-  for (const arrow of arrows) {
-    if (only && !only.has(arrow.id)) continue
+  const routeOrder = arrows
+    .filter((arrow) => (!only || only.has(arrow.id)) && !groupedFanoutIds.has(arrow.id))
+    .slice()
+    .sort((left, right) => architectureArrowRoutingPriority(left) - architectureArrowRoutingPriority(right))
+
+  for (const arrow of routeOrder) {
     const from = boxes.get(arrow.from)
     const to = boxes.get(arrow.to)
     if (!from || !to) continue
@@ -404,7 +368,7 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
     for (const [fromAnchor, toAnchor] of pairs) {
       const start = fixedAnchorPoint(from, fromAnchor)
       const end = fixedAnchorPoint(to, toAnchor)
-      const route = findOrthogonalRoute(start, end, obstacles, occupied, bundleKey)
+      const route = findOrthogonalRoute(start, end, obstacles, occupied, bundleKey, fromAnchor, toAnchor)
       const score = scoreRoute(route, obstacles, occupied, bundleKey)
         + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
       if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
@@ -430,10 +394,156 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
     })
   }
 
+  if (!only && groupedFanoutIds.size) {
+    const bundled = routeDownwardGroupFanouts(arrows.filter((arrow) => groupedFanoutIds.has(arrow.id)), boxes, occupied)
+    for (const [id, arrow] of bundled) routed.set(id, arrow)
+  }
+
   return {
     ...scene,
     elements: scene.elements.map((item) => item.type === 'arrow' ? routed.get(item.id) ?? item : item),
   }
+}
+
+function collectDownwardGroupFanoutArrowIds(
+  arrows: CanvasArrow[],
+  boxes: Map<string, CanvasNode | CanvasNote>,
+): Set<string> {
+  const grouped = new Map<string, CanvasArrow[]>()
+  for (const arrow of arrows) {
+    const source = boxes.get(arrow.from)
+    const target = boxes.get(arrow.to)
+    if (!source || !target?.groupId || target.y <= source.y + source.height) continue
+    const key = `${arrow.from}\u0000${target.groupId}`
+    grouped.set(key, [...(grouped.get(key) ?? []), arrow])
+  }
+  const result = new Set<string>()
+  for (const members of grouped.values()) {
+    if (members.length < 3) continue
+    members.forEach((arrow) => result.add(arrow.id))
+  }
+  return result
+}
+
+function routeDownwardGroupFanouts(
+  arrows: CanvasArrow[],
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  occupied: RouteSegment[],
+): Map<string, CanvasArrow> {
+  const grouped = new Map<string, CanvasArrow[]>()
+  for (const arrow of arrows) {
+    const from = boxes.get(arrow.from)
+    const to = boxes.get(arrow.to)
+    if (!from || !to?.groupId || from.id === to.id) continue
+    const key = `${arrow.from}\u0000${to.groupId}`
+    grouped.set(key, [...(grouped.get(key) ?? []), arrow])
+  }
+
+  const result = new Map<string, CanvasArrow>()
+  for (const members of grouped.values()) {
+    if (members.length < 3) continue
+    const source = boxes.get(members[0].from)
+    const targets = members.flatMap((arrow) => {
+      const target = boxes.get(arrow.to)
+      return target ? [target] : []
+    })
+    if (!source || targets.length !== members.length) continue
+    const sourceBottom = source.y + source.height
+    const targetTop = Math.min(...targets.map((target) => target.y))
+    if (targetTop - sourceBottom < 96 || targets.some((target) => target.y <= sourceBottom)) continue
+
+    const start = fixedAnchorPoint(source, 'bottom')
+    const branchY = targetTop - 28
+    const targetIds = new Set(targets.map((target) => target.id))
+    const obstacles = [...boxes.values()]
+      .filter((item) => item.id !== source.id && !targetIds.has(item.id))
+      .map((item) => expandRect(item, 18))
+    const intermediate = obstacles.filter((item) => item.y < branchY && item.y + item.height > sourceBottom)
+    const corridorCandidates = uniqueNumbers([
+      start.x,
+      ...intermediate.flatMap((item) => [item.x - 24, item.x + item.width + 24]),
+    ])
+
+    let best: { score: number; routes: Map<string, CanvasPoint[]> } | undefined
+    for (const corridorX of corridorCandidates) {
+      const routes = new Map<string, CanvasPoint[]>()
+      let score = 0
+      let valid = true
+      for (const arrow of members) {
+        const target = boxes.get(arrow.to)!
+        const end = fixedAnchorPoint(target, 'top')
+        const exitY = Math.min(branchY, start.y + 42)
+        const route = simplifyRoute(corridorX === start.x
+          ? [start, { x: start.x, y: branchY }, { x: end.x, y: branchY }, end]
+          : [start, { x: start.x, y: exitY }, { x: corridorX, y: exitY }, { x: corridorX, y: branchY }, { x: end.x, y: branchY }, end])
+        const collisions = countRouteObstacleCollisions(route, obstacles)
+        if (collisions > 0) {
+          valid = false
+          break
+        }
+        routes.set(arrow.id, route)
+        score += routeLength(route)
+          + Math.max(0, route.length - 2) * 18
+          + countRouteCrossings(route, occupied) * 1800
+      }
+      if (valid && (!best || score < best.score)) best = { score, routes }
+    }
+    if (!best) continue
+
+    const bundleKey = `from:${source.id}`
+    for (const arrow of members) {
+      const route = best.routes.get(arrow.id)
+      const target = boxes.get(arrow.to)
+      if (!route || !target) continue
+      const asyncEdge = source.icon === 'queue' || target.icon === 'queue'
+        || source.stencil === 'kafka' || target.stencil === 'kafka'
+        || source.stencil === 'rabbitmq' || target.stencil === 'rabbitmq'
+      const routedArrow: CanvasArrow = {
+        ...arrow,
+        routing: 'orthogonal',
+        fromAnchor: 'bottom',
+        toAnchor: 'top',
+        lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
+        points: route.length > 2 ? route.slice(1, -1) : undefined,
+        bundleKey,
+      }
+      result.set(arrow.id, routedArrow)
+      addOccupiedSegments(route, occupied, bundleKey)
+    }
+  }
+  return result
+}
+
+function countRouteObstacleCollisions(route: CanvasPoint[], obstacles: RouteRect[]): number {
+  let collisions = 0
+  for (let index = 0; index < route.length - 1; index += 1) {
+    const segment = { a: route[index], b: route[index + 1] }
+    for (const obstacle of obstacles) if (segmentIntersectsRect(segment, obstacle)) collisions += 1
+  }
+  return collisions
+}
+
+function routeLength(route: CanvasPoint[]): number {
+  let length = 0
+  for (let index = 0; index < route.length - 1; index += 1) {
+    length += Math.abs(route[index + 1].x - route[index].x) + Math.abs(route[index + 1].y - route[index].y)
+  }
+  return length
+}
+
+function countRouteCrossings(route: CanvasPoint[], occupied: RouteSegment[]): number {
+  let crossings = 0
+  for (let index = 0; index < route.length - 1; index += 1) {
+    const segment = { a: route[index], b: route[index + 1] }
+    for (const used of occupied) if (segmentsCross(segment, used)) crossings += 1
+  }
+  return crossings
+}
+
+function architectureArrowRoutingPriority(arrow: CanvasArrow): number {
+  if (arrow.emphasis === 'primary') return 0
+  if (arrow.emphasis === 'muted') return 2
+  return 1
 }
 
 function currentArrowRoute(arrow: CanvasArrow, boxes: Map<string, CanvasNode | CanvasNote>): CanvasPoint[] | undefined {
@@ -501,7 +611,15 @@ function expandRect(box: RouteRect, margin: number): RouteRect {
   return { x: box.x - margin, y: box.y - margin, width: box.width + margin * 2, height: box.height + margin * 2 }
 }
 
-function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: RouteRect[], occupied: RouteSegment[], bundleKey?: string): CanvasPoint[] {
+function findOrthogonalRoute(
+  start: CanvasPoint,
+  end: CanvasPoint,
+  obstacles: RouteRect[],
+  occupied: RouteSegment[],
+  bundleKey: string | undefined,
+  fromAnchor: 'top' | 'right' | 'bottom' | 'left',
+  toAnchor: 'top' | 'right' | 'bottom' | 'left',
+): CanvasPoint[] {
   const margin = 24
   const xCandidates = uniqueNumbers([
     (start.x + end.x) / 2,
@@ -516,23 +634,123 @@ function findOrthogonalRoute(start: CanvasPoint, end: CanvasPoint, obstacles: Ro
     ...obstacles.flatMap((item) => [item.y - margin, item.y + item.height + margin]),
   ]).sort((a, b) => Math.abs(a - (start.y + end.y) / 2) - Math.abs(b - (start.y + end.y) / 2)).slice(0, 28)
 
+  // A single shared X or Y corridor is not enough when an intermediate node
+  // blocks the direct path and the destination column is itself stacked with
+  // neighboring nodes. Add a bounded two-corridor search so the route can go
+  // above/below the blocker, advance through a clear vertical channel, then
+  // enter the destination from the side. Keep the cross-product deliberately
+  // small because this runs once per relationship.
+  const doglegXs = boundedCorridorCandidates(xCandidates, 10)
+  const doglegYs = boundedCorridorCandidates(yCandidates, 10)
+  const doglegs: CanvasPoint[][] = []
+  for (const x of doglegXs) {
+    for (const y of doglegYs) {
+      doglegs.push(
+        [start, { x: start.x, y }, { x, y }, { x, y: end.y }, end],
+        [start, { x, y: start.y }, { x, y }, { x: end.x, y }, end],
+      )
+    }
+  }
+
   const candidates: CanvasPoint[][] = [
     [start, { x: end.x, y: start.y }, end],
     [start, { x: start.x, y: end.y }, end],
     ...xCandidates.map((x) => [start, { x, y: start.y }, { x, y: end.y }, end]),
     ...yCandidates.map((y) => [start, { x: start.x, y }, { x: end.x, y }, end]),
+    ...doglegs,
   ]
   let best = candidates[0]
   let bestScore = Number.POSITIVE_INFINITY
   for (const candidate of candidates) {
     const simplified = simplifyRoute(candidate)
+    if (!routeRespectsAnchors(simplified, fromAnchor, toAnchor)) continue
     const score = scoreRoute(simplified, obstacles, occupied, bundleKey)
     if (score < bestScore) {
       best = simplified
       bestScore = score
     }
   }
+
+  // If every cheap candidate still cuts an obstacle, the topology needs two
+  // independent corridors (for example: exit a vertically stacked source
+  // column, pass above a middle blocker, then enter a stacked target column).
+  // Search this deeper shape only on collision fallback so normal routing stays
+  // inexpensive.
+  if (bestScore >= 100_000 || routeCrossesOccupied(best, occupied, bundleKey)) {
+    for (const firstX of doglegXs) {
+      for (const secondX of doglegXs) {
+        if (firstX === secondX) continue
+        for (const y of doglegYs) {
+          const candidate = simplifyRoute([
+            start,
+            { x: firstX, y: start.y },
+            { x: firstX, y },
+            { x: secondX, y },
+            { x: secondX, y: end.y },
+            end,
+          ])
+          if (!routeRespectsAnchors(candidate, fromAnchor, toAnchor)) continue
+          const score = scoreRoute(candidate, obstacles, occupied, bundleKey)
+          if (score < bestScore) {
+            best = candidate
+            bestScore = score
+          }
+        }
+      }
+    }
+    for (const firstY of doglegYs) {
+      for (const secondY of doglegYs) {
+        if (firstY === secondY) continue
+        for (const x of doglegXs) {
+          const candidate = simplifyRoute([
+            start,
+            { x: start.x, y: firstY },
+            { x, y: firstY },
+            { x, y: secondY },
+            { x: end.x, y: secondY },
+            end,
+          ])
+          if (!routeRespectsAnchors(candidate, fromAnchor, toAnchor)) continue
+          const score = scoreRoute(candidate, obstacles, occupied, bundleKey)
+          if (score < bestScore) {
+            best = candidate
+            bestScore = score
+          }
+        }
+      }
+    }
+  }
   return best
+}
+
+function routeRespectsAnchors(
+  route: CanvasPoint[],
+  fromAnchor: 'top' | 'right' | 'bottom' | 'left',
+  toAnchor: 'top' | 'right' | 'bottom' | 'left',
+): boolean {
+  if (route.length < 2) return true
+  const start = route[0]
+  const first = route[1]
+  const beforeEnd = route[route.length - 2]
+  const end = route[route.length - 1]
+  const leavesSource = fromAnchor === 'right' ? first.x >= start.x
+    : fromAnchor === 'left' ? first.x <= start.x
+      : fromAnchor === 'bottom' ? first.y >= start.y
+        : first.y <= start.y
+  const approachesTarget = toAnchor === 'right' ? beforeEnd.x >= end.x
+    : toAnchor === 'left' ? beforeEnd.x <= end.x
+      : toAnchor === 'bottom' ? beforeEnd.y >= end.y
+        : beforeEnd.y <= end.y
+  return leavesSource && approachesTarget
+}
+
+function boundedCorridorCandidates(values: number[], preferredCount: number): number[] {
+  if (!values.length) return []
+  return uniqueNumbers([
+    ...values.slice(0, preferredCount),
+    Math.min(...values),
+    Math.max(...values),
+  ])
 }
 
 function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: RouteSegment[], bundleKey?: string): number {
@@ -547,10 +765,18 @@ function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: Rout
     for (const used of occupied) {
       const overlap = segmentOverlap(segment, used)
       overlapPenalty += overlap * (bundleKey && used.bundleKey === bundleKey ? 0.08 : 4)
-      if (segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey)) crossingPenalty += 110
+      if (segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey)) crossingPenalty += 960
     }
   }
   return length + Math.max(0, route.length - 2) * 22 + collisions * 100_000 + overlapPenalty + crossingPenalty
+}
+
+function routeCrossesOccupied(route: CanvasPoint[], occupied: RouteSegment[], bundleKey?: string): boolean {
+  for (let index = 0; index < route.length - 1; index += 1) {
+    const segment = { a: route[index], b: route[index + 1] }
+    if (occupied.some((used) => segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey))) return true
+  }
+  return false
 }
 
 function segmentIntersectsRect(segment: RouteSegment, rect: RouteRect): boolean {
@@ -640,61 +866,113 @@ function uniqueNumbers(values: number[]): number[] {
   return [...new Set(values.filter(Number.isFinite).map((value) => Math.round(value)))]
 }
 
-function buildArchitectureLanes(
-  boxes: Array<CanvasNode | CanvasNote>,
-  partitions: Map<string, ArchitecturePartition>,
+function buildArchitectureGroups(
+  scene: CanvasScene,
   active: ArchitecturePartition[],
   theme: ArchitectureTheme,
-  density: Exclude<CanvasArchitectureDensity, 'auto'>,
-): CanvasLane[] {
-  const metrics = architectureLayoutMetrics(theme, density)
-  let start = metrics.laneStart
-  return active.map((partition) => {
-    const count = boxes.filter((item) => partitions.get(item.id) === partition).length
-    const columns = partitionColumns(count)
-    const size = metrics.lanePadding + columns * metrics.columnStep
-    const lane: CanvasLane = {
-      id: `arch-${partition}`,
-      label: partitionMeta[partition].label,
-      axis: 'vertical',
-      start,
-      size,
-      tone: themeTones[theme][partition],
-    }
-    start += size + metrics.laneGap
-    return lane
+): CanvasGroup[] {
+  const retained = (scene.groups ?? []).filter((group) => {
+    if (!group.id.startsWith('arch-')) return true
+    return group.id === 'arch-system' && group.description !== 'Architecture system boundary'
   })
+  const existingSystem = retained.find((group) => group.c4Type === 'software-system')
+  const groups = [...retained]
+  for (const partition of active) {
+    const id = `arch-${partition}`
+    groups.push({
+      id,
+      label: partitionMeta[partition].label,
+      kind: 'boundary',
+      tone: themeTones[theme][partition],
+      ...(partition !== 'external' && existingSystem ? { parentId: existingSystem.id } : {}),
+    })
+  }
+  return groups
 }
 
-function layoutArchitecturePartitions(
+function layoutArchitectureTopology(
   scene: CanvasScene,
   partitions: Map<string, ArchitecturePartition>,
-  laneByPartition: Map<ArchitecturePartition, CanvasLane>,
   theme: ArchitectureTheme,
   density: Exclude<CanvasArchitectureDensity, 'auto'>,
 ): CanvasScene {
-  const metrics = architectureLayoutMetrics(theme, density)
+  const metrics = architectureTopologyMetrics(theme, density)
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-  const positionById = new Map<string, { x: number; y: number }>()
+  const members = new Map<ArchitecturePartition, Array<CanvasNode | CanvasNote>>()
   for (const partition of partitionOrder) {
-    const lane = laneByPartition.get(partition)
-    if (!lane) continue
-    const members = boxes.filter((item) => partitions.get(item.id) === partition && !item.locked)
-    const columns = partitionColumns(members.length)
-    const rows = Math.max(1, Math.ceil(members.length / columns))
-    members
-      .sort((a, b) => architectureSortKey(a) - architectureSortKey(b) || a.y - b.y || a.x - b.x)
-      .forEach((item, index) => {
-        const col = Math.floor(index / rows)
-        const row = index % rows
-        positionById.set(item.id, {
-          x: lane.start + metrics.nodeInset + col * metrics.columnStep,
-          y: metrics.nodeTop + row * metrics.rowStep,
-        })
-      })
+    members.set(partition, boxes
+      .filter((item) => partitions.get(item.id) === partition && !item.locked)
+      .sort((a, b) => architectureSortKey(a) - architectureSortKey(b) || a.y - b.y || a.x - b.x))
   }
+
+  const layouts = new Map<ArchitecturePartition, ArchitectureClusterLayout>()
+  for (const partition of partitionOrder) {
+    const items = members.get(partition) ?? []
+    if (!items.length) continue
+    layouts.set(partition, measureArchitectureCluster(partition, items.length, metrics))
+  }
+
+  const topPartitions = (['external', 'experience', 'application'] as ArchitecturePartition[]).filter((partition) => layouts.has(partition))
+  const topWidth = architectureRowWidth(topPartitions, layouts, metrics.clusterGap)
+  const processingWidth = layouts.get('processing')?.width ?? 0
+  const dataWidth = layouts.get('data')?.width ?? 0
+  const rowWidth = Math.max(topWidth, processingWidth, dataWidth)
+  const topHeight = Math.max(0, ...topPartitions.map((partition) => layouts.get(partition)?.height ?? 0))
+  const processingHeight = layouts.get('processing')?.height ?? 0
+  const dataHeight = layouts.get('data')?.height ?? 0
+  const positionById = new Map<string, { x: number; y: number }>()
+
+  const placePartition = (partition: ArchitecturePartition, x: number, y: number) => {
+    const layout = layouts.get(partition)
+    const items = members.get(partition) ?? []
+    if (!layout) return
+    items.forEach((item, index) => {
+      const col = index % layout.columns
+      const row = Math.floor(index / layout.columns)
+      const rowStart = row * layout.columns
+      const rowCount = Math.min(layout.columns, items.length - rowStart)
+      const rowOffset = Math.max(0, (layout.columns - rowCount) * metrics.columnStep / 2)
+      positionById.set(item.id, {
+        x: metrics.canvasMargin + x + metrics.groupPaddingX + rowOffset + col * metrics.columnStep,
+        y: y + metrics.groupHeader + row * metrics.rowStep,
+      })
+    })
+  }
+
+  let cursorX = Math.max(0, (rowWidth - topWidth) / 2)
+  let applicationCenter = rowWidth / 2
+  for (const partition of topPartitions) {
+    const layout = layouts.get(partition)
+    if (!layout) continue
+    placePartition(partition, cursorX, metrics.canvasMargin)
+    if (partition === 'application') applicationCenter = cursorX + layout.width / 2
+    cursorX += layout.width + metrics.clusterGap
+  }
+
+  let nextRowY = metrics.canvasMargin + topHeight
+  if (processingWidth > 0) {
+    nextRowY += metrics.rowGap
+    const start = Math.max(0, Math.min(rowWidth - processingWidth, applicationCenter - processingWidth / 2))
+    placePartition('processing', start, nextRowY)
+    nextRowY += processingHeight
+  }
+  if (dataWidth > 0) {
+    nextRowY += metrics.rowGap
+    const start = Math.max(0, Math.min(rowWidth - dataWidth, applicationCenter - dataWidth / 2))
+    placePartition('data', start, nextRowY)
+    nextRowY += dataHeight
+  }
+
+  const unlockedWidth = rowWidth + metrics.canvasMargin * 2
+  const unlockedHeight = Math.max(metrics.canvasMargin + topHeight, nextRowY) + metrics.canvasMargin
+  const locked = boxes.filter((item) => item.locked)
+  const lockedRight = Math.max(0, ...locked.map((item) => item.x + item.width + metrics.canvasMargin))
+  const lockedBottom = Math.max(0, ...locked.map((item) => item.y + item.height + metrics.canvasMargin))
+
   return {
     ...scene,
+    width: Math.max(960, unlockedWidth, lockedRight),
+    height: Math.max(620, unlockedHeight, lockedBottom),
     elements: scene.elements.map((item) => {
       if (item.type === 'arrow' || item.locked) return item
       const position = positionById.get(item.id)
@@ -710,6 +988,42 @@ function layoutArchitecturePartitions(
   }
 }
 
+interface ArchitectureClusterLayout {
+  columns: number
+  rows: number
+  width: number
+  height: number
+}
+
+function measureArchitectureCluster(
+  partition: ArchitecturePartition,
+  count: number,
+  metrics: ReturnType<typeof architectureTopologyMetrics>,
+): ArchitectureClusterLayout {
+  const maxColumns = partition === 'external' ? 1
+    : partition === 'experience' ? 2
+      : partition === 'application' ? 3
+        : partition === 'processing' ? 3
+          : 4
+  const columns = Math.max(1, Math.min(maxColumns, count))
+  const rows = Math.max(1, Math.ceil(count / columns))
+  return {
+    columns,
+    rows,
+    width: metrics.groupPaddingX * 2 + metrics.nodeMaxWidth + Math.max(0, columns - 1) * metrics.columnStep,
+    height: metrics.groupHeader + metrics.groupPaddingBottom + metrics.nodeMaxHeight + Math.max(0, rows - 1) * metrics.rowStep,
+  }
+}
+
+function architectureRowWidth(
+  partitions: ArchitecturePartition[],
+  layouts: Map<ArchitecturePartition, ArchitectureClusterLayout>,
+  gap: number,
+): number {
+  return partitions.reduce((total, partition) => total + (layouts.get(partition)?.width ?? 0), 0)
+    + Math.max(0, partitions.length - 1) * gap
+}
+
 function resolveArchitectureLayoutDensity(
   density: CanvasArchitectureDensity,
   nodeCount: number,
@@ -720,59 +1034,56 @@ function resolveArchitectureLayoutDensity(
   return 'comfortable'
 }
 
-function architectureLayoutMetrics(
+function architectureTopologyMetrics(
   theme: ArchitectureTheme,
   density: Exclude<CanvasArchitectureDensity, 'auto'>,
 ) {
   const presentation = theme === 'presentation'
   if (density === 'dense') {
     return {
-      laneStart: presentation ? 38 : 30,
-      lanePadding: presentation ? 62 : 54,
-      laneGap: presentation ? 20 : 16,
-      columnStep: presentation ? 214 : 204,
-      rowStep: presentation ? 112 : 104,
-      nodeInset: presentation ? 28 : 24,
-      nodeTop: presentation ? 122 : 86,
-      nodeMinWidth: 168,
-      nodeMaxWidth: presentation ? 194 : 188,
-      nodeMinHeight: 74,
-      nodeMaxHeight: presentation ? 88 : 84,
-      canvasTop: presentation ? 204 : 142,
-      canvasTail: presentation ? 44 : 38,
+      canvasMargin: 42,
+      clusterGap: presentation ? 44 : 38,
+      rowGap: presentation ? 48 : 42,
+      groupPaddingX: 24,
+      groupHeader: 48,
+      groupPaddingBottom: 22,
+      columnStep: 166,
+      rowStep: 88,
+      nodeMinWidth: 132,
+      nodeMaxWidth: 150,
+      nodeMinHeight: 58,
+      nodeMaxHeight: 68,
     }
   }
   if (density === 'compact') {
     return {
-      laneStart: presentation ? 42 : 34,
-      lanePadding: presentation ? 74 : 64,
-      laneGap: presentation ? 24 : 20,
-      columnStep: presentation ? 240 : 228,
-      rowStep: presentation ? 132 : 120,
-      nodeInset: presentation ? 34 : 28,
-      nodeTop: presentation ? 128 : 90,
-      nodeMinWidth: 184,
-      nodeMaxWidth: presentation ? 212 : 204,
-      nodeMinHeight: 82,
-      nodeMaxHeight: presentation ? 98 : 92,
-      canvasTop: presentation ? 218 : 150,
-      canvasTail: presentation ? 52 : 44,
+      canvasMargin: 50,
+      clusterGap: presentation ? 54 : 48,
+      rowGap: presentation ? 56 : 50,
+      groupPaddingX: 28,
+      groupHeader: 52,
+      groupPaddingBottom: 26,
+      columnStep: 188,
+      rowStep: 98,
+      nodeMinWidth: 146,
+      nodeMaxWidth: 170,
+      nodeMinHeight: 62,
+      nodeMaxHeight: 74,
     }
   }
   return {
-    laneStart: presentation ? 44 : 36,
-    lanePadding: presentation ? 88 : 72,
-    laneGap: presentation ? 30 : 24,
-    columnStep: presentation ? 276 : 252,
-    rowStep: presentation ? 150 : 132,
-    nodeInset: presentation ? 42 : 34,
-    nodeTop: presentation ? 132 : 92,
-    nodeMinWidth: presentation ? 204 : 190,
-    nodeMaxWidth: presentation ? 236 : 232,
-    nodeMinHeight: presentation ? 94 : 86,
-    nodeMaxHeight: presentation ? 108 : 104,
-    canvasTop: presentation ? 230 : 160,
-    canvasTail: presentation ? 60 : 48,
+    canvasMargin: 58,
+    clusterGap: presentation ? 64 : 56,
+    rowGap: presentation ? 64 : 58,
+    groupPaddingX: 32,
+    groupHeader: 56,
+    groupPaddingBottom: 30,
+    columnStep: 210,
+    rowStep: 110,
+    nodeMinWidth: 158,
+    nodeMaxWidth: 188,
+    nodeMinHeight: 66,
+    nodeMaxHeight: 80,
   }
 }
 
@@ -934,12 +1245,6 @@ function iconForStencil(stencil?: CanvasStencil): CanvasIcon | undefined {
   if (stencil === 'mcp') return 'mcp'
   if (stencil === 'grpc') return 'api'
   return undefined
-}
-
-function partitionColumns(count: number): number {
-  if (count <= 5) return 1
-  if (count <= 11) return 2
-  return 3
 }
 
 function architectureSortKey(item: CanvasNode | CanvasNote): number {
