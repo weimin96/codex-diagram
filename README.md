@@ -8,6 +8,8 @@ v0.18 增加 Visual Quality Gate 与可重复压力基准。`pnpm visual:benchma
 
 v0.19 增加固定画布的 Pixel Visual Regression。`pnpm visual:regression` 会把同一批复杂样例以 1400×1000、固定 48px 边距和 light/dark 两套主题渲染成 golden view，再同时比较显著像素变化、平均色差与 20px macro-cell 结构差异。少量抗锯齿抖动不会直接失败，但整体间距、配色、节点形态或布局明显变化会阻断回归。基线存放在 `tests/fixtures/visual-baseline/`；只有显式运行 `pnpm visual:regression:update` 才会重建。失败时会把 baseline/current/diff 三张诊断图写到 `test-results/visual-regression/`。`pnpm visual:verify` 会串行执行模板浏览器 smoke、复杂几何 benchmark 与像素 golden regression。
 
+当前 Diagram Skill 进一步采用渐进式设计合同：每一种 Mermaid 类型显式声明适用的构图原型（例如线性主链、决策树、泳道、汇聚、层级树、定量流向等），并把“视觉论证 / 证据来源 / 密度 / 反模式 / 质量回检”分开。模型不应默认生成等权卡片墙；架构 Canvas 额外支持 backbone、fan-out、convergence、hub-spoke、layered/swimlane 等拓扑选择。直接通过 MCP 对话生成复杂图时，可先调用 `diagram.designGuide` 只读取当前类型的规则，避免把 19 种 Skill 一次性塞入上下文。完成生成或大改后调用 `diagram.inspectQuality` 做一次有界质量回检：Canvas 检查节点重叠、连线穿节点、关系交叉、层级过平和超长标签；Mermaid 检查各类型自己的密度与拆图阈值。若 `needsRevision=true`，只针对报告问题修正并最多再回检一次。
+
 开发回归除 `pnpm test` / `pnpm smoke` 外，还可运行 `pnpm visual:smoke`：它使用本机 Chrome/Chromium 在真实浏览器中按 light/dark 两套 Visual Grammar 渲染全部正式 Mermaid 模板，并检查渲染失败与异常超大 SVG，用于捕获 Node 单测难以发现的 Mermaid lexer、DOMPurify 和浏览器渲染兼容问题。
 
 复杂视觉回归运行 `pnpm visual:benchmark`。该命令使用仓库内 `tests/fixtures/visual-stress/` 压力集，并把“样式/几何回归”和“内容本身应该拆图”区分开：前者直接失败，后者输出 split recommendation 而不是鼓励继续压缩字体。
@@ -69,6 +71,8 @@ v0.19 增加固定画布的 Pixel Visual Regression。`pnpm visual:regression` �
 - 内置 Architecture Diagram Skill + 确定性架构美化器：系统架构会优先按“外部与参与方 / 体验与入口 / 核心应用 / 处理与异步 / 数据与检索”自动分区，按真实 role/stencil 补单色 SVG 图标和技术标签，并统一语义配色、节点尺寸、正交路由和并行连线 channel；右侧可直接选择企业架构 / 技术文档 / 汇报展示主题并点“美化”
 - MCP `diagram.beautifyArchitecture` 可对当前 Canvas 直接执行架构美化，不依赖模型手工重写整张 JSON；会自动补 Software System 外边界、保留 Container/Domain 子边界，并从真实拓扑识别入口→核心→数据的主链路，按 `primary / secondary / muted` 控制节点和关系视觉权重；锁定节点位置始终保持不变
 - MCP `diagram.routeArchitectureEdges` 可只整理架构连线，不移动节点/分区：使用轻量 Manhattan obstacle router 避开其他节点，综合路径长度、拐点、线路交叉和通道重叠选择更干净的正交路径
+- MCP `diagram.designGuide` 按需返回单一图表类型的构图原型、视觉层级、证据规则、密度限制、反模式和质量循环；复杂新建/整图重构先取对应 Guide，小修改不额外加载
+- MCP `diagram.inspectQuality` 对当前图或未落盘候选做只读质量检查；Mermaid 返回类型级 density/split 建议，Canvas 返回 overlap / edge-through-node / crossing / flat hierarchy / long-label 等可定位问题
 - 同一节点扇出/汇聚到多个目标时，关系路由会优先形成共享 trunk + 分支的 bundle；画布和 SVG/PNG 导出会额外绘制柔和 bus underlay，让复杂依赖更像专业架构图而不是多条独立折线堆叠
 - Canvas 支持 AI 动态绘制回放：Codex 创建/更新/源码同步画板时，右侧会根据前后 Canvas diff 播放虚拟鼠标移动、工具高亮、节点落点、标题逐字输入、节点拖拽重排、连线逐条拉出与镜头自动跟随；绘制会优先按命名容器/泳道拆成区域，没有结构信息时再按空间自动聚类。新增节点先进入区域内的临时粗排位置，随后由 Cursor 框选并整理到最终布局；新增系统边界会播放“框选成员 → 拖出 Boundary → 自动分组”，已有边界变化会模拟 resize。节点属性变化会弹出临时 Inspector，并通过点击/下拉选择展示语义色、形状、角色、技术栈和 C4 等切换；创建连接时显示真实 from/to 锚点吸附。被 AI 删除的旧节点和连线会以 ghost 保留到 Delete 动作后再淡出。Cursor 旁只显示“添加服务层 / 连接缓存 / 整理位置”等可观察动作。区域完成后镜头会轻微 zoom-out 再进入下一块，最后 Fit 全图、高亮本轮修改并完成收尾轨迹。大图会自动加速播放；底层文件仍保持单次原子写入，不为动画制造额外 revision
 - Mermaid 预览会把 Mermaid 11 返回的 HTML-label / `foreignObject` SVG 先按浏览器语义解析、清理并规范化，再用于右侧预览和 PNG 导出；不会再因为严格 XML 二次解析误报“Mermaid 返回了无效 SVG”
@@ -165,8 +169,10 @@ pnpm plugin:install:desktop
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
 | `diagram.getSubgraph` | 按 element ids 读取受限 Canvas 邻域，并区分 scope、直接关系和只读上下文，供大图增量分析/修改使用 |
+| `diagram.designGuide` | 按图表类型读取渐进式设计 Guide：构图原型、视觉层级、证据规则、密度、反模式与质量循环 |
 | `diagram.beautifyArchitecture` | 对 Canvas 架构图执行自动分区、主题配色、角色/技术图标补全、布局和连线整理 |
 | `diagram.routeArchitectureEdges` | 仅重新计算 Canvas 架构关系的锚点、避障路径和线路通道，不移动节点 |
+| `diagram.inspectQuality` | 对当前图或传入的未落盘候选执行只读质量回检，返回 `needsRevision`、问题列表与度量 |
 | `diagram.proposeUpdate` | 提交不落盘的候选图表更新，供右侧 Diff 审查 |
 | `diagram.proposeSubgraphPatch` | 提交增量 Canvas 子图 patch；只发送 updates/adds/removeIds，服务端计算候选、影响范围与局部路由 |
 | `diagram.proposeSubgraphUpdate` | 兼容旧版完整 Canvas 子图候选修改，不再作为首选 |

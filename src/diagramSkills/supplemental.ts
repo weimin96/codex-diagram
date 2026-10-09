@@ -1,17 +1,29 @@
-import type { DiagramSkill } from './types.js'
-import { commonMermaidModificationRules, commonMermaidVisualRules } from './common.js'
+import type { DiagramCompositionPattern, DiagramSkill } from './types.js'
+import { commonMermaidEvidenceRules, commonMermaidModificationRules, commonMermaidValidationRules, commonMermaidVisualRules } from './common.js'
+
+const supplementalPatterns: Partial<Record<DiagramSkill['type'], DiagramCompositionPattern[]>> = {
+  class: ['schema'],
+  gantt: ['planning'],
+  timeline: ['chronology'],
+  gitgraph: ['version-history'],
+  journey: ['experience-journey'],
+  quadrant: ['positioning'],
+}
 
 function skill(type: DiagramSkill['type'], label: string, compositionRules: string[], densityRules: string[], antiPatterns: string[], generationRules: string[]): DiagramSkill {
   return {
     type,
     label,
     intentHints: [],
+    compositionPatterns: supplementalPatterns[type] ?? ['linear-flow'],
     compositionRules,
     densityRules,
     visualRules: commonMermaidVisualRules,
+    evidenceRules: commonMermaidEvidenceRules,
     antiPatterns,
     generationRules,
     modificationRules: commonMermaidModificationRules,
+    validationRules: commonMermaidValidationRules,
   }
 }
 

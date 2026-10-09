@@ -12,10 +12,13 @@ test('every exposed Mermaid diagram type has a registered skill', () => {
 test('primary diagram skills carry type-specific composition and anti-pattern rules', () => {
   for (const type of ['flowchart', 'sequence', 'er', 'state', 'mindmap'] as const) {
     const skill = diagramSkill(type)
+    assert.ok(skill.compositionPatterns.length >= 1, `${type} should expose composition archetypes`)
     assert.ok(skill.compositionRules.length >= 3, `${type} should have deep composition rules`)
     assert.ok(skill.densityRules.length >= 1, `${type} should have density rules`)
+    assert.ok(skill.evidenceRules.length >= 1, `${type} should have evidence rules`)
     assert.ok(skill.antiPatterns.length >= 3, `${type} should have anti-pattern rules`)
     assert.ok(skill.generationRules.length >= 1, `${type} should have generation rules`)
+    assert.ok(skill.validationRules.some((rule) => rule.includes('diagram.inspectQuality')), `${type} should have a quality loop`)
   }
 })
 
@@ -32,10 +35,21 @@ test('extended analysis and data diagram types have specialized skills', () => {
   for (const type of ['kanban', 'requirement', 'sankey', 'xychart', 'pie', 'radar', 'treemap', 'ishikawa'] as const) {
     const skill = diagramSkill(type)
     assert.equal(skill.type, type)
+    assert.ok(skill.compositionPatterns.length >= 1, `${type} should expose composition archetypes`)
     assert.ok(skill.compositionRules.length >= 2, `${type} should have composition rules`)
     assert.ok(skill.antiPatterns.length >= 2, `${type} should have anti-pattern rules`)
     assert.ok(skill.generationRules.length >= 1, `${type} should have generation rules`)
   }
+})
+
+test('skills encode visual argument, evidence and review instead of card-wall prompting', () => {
+  const flowchart = diagramSkill('flowchart')
+  assert.ok(flowchart.compositionPatterns.includes('decision-tree'))
+  assert.ok(flowchart.compositionPatterns.includes('convergence'))
+  assert.ok(flowchart.visualRules.some((rule) => rule.includes('视觉论证')))
+  assert.ok(flowchart.visualRules.some((rule) => rule.includes('相同大小的卡片')))
+  assert.ok(flowchart.evidenceRules.some((rule) => rule.includes('事实')))
+  assert.ok(flowchart.validationRules.some((rule) => rule.includes('needsRevision')))
 })
 
 test('diagram type selector groups advanced types instead of flattening the menu', () => {

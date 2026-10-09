@@ -7,6 +7,8 @@ export function isArchitectureIntent(value: string): boolean {
 export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise'): string[] {
   return [
     `架构视觉主题：${theme}。`,
+    '先选择构图原型，再放节点：端到端调用优先 backbone/linear，单源多依赖优先 fan-out，多源进入一个核心能力优先 convergence，中心平台连接多系统优先 hub-spoke，跨职责链路优先 layered/swimlane。不要默认把所有组件排成等权卡片矩阵。',
+    '把架构图当作视觉论证：首先让读者看见“系统边界 → 主业务路径 → 关键依赖/结果”，外围配置、管理面和低频依赖降到第二层级；留白用于区分职责和系统边界。',
     '先表达系统边界和职责层次，再表达细节；不要把所有节点平铺成一层。',
     '优先区分外部参与方、体验/入口、核心应用、后台处理/异步、数据/检索等区域；已有明确 C4 boundary 时保留其业务层级。',
     '节点必须尽量填写真实 role(icon) 和已确认的 technology stencil；不要用装饰性图标冒充未知技术。',
@@ -24,7 +26,9 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '40 个节点以上优先建立稳定的 Software System / Container / Domain 边界和 lane，使 Diagram 可以按区域下钻；不要生成 100+ 个无层级平铺节点。',
     'Container/Domain 边界必须对应真实职责、部署或运行边界；节点 Focus 由插件按 1~3 跳邻域完成，不要为了局部视图复制节点。',
     '节点卡片按 Actor / Edge / Runtime / Async / Data / External 等语义模板呈现；真实技术仍由 stencil/subtitle 表达，不要把模板标签当成具体技术。',
+    '证据优先：sourcePaths、stencil、协议/事件标签、C4 类型只填写已经从代码、配置或用户输入确认的事实；未知技术保持中性角色，不为了“专业感”猜具体产品。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
     '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',
+    '完成写回和美化后调用 diagram.inspectQuality 做一次质量回检；若 needsRevision=true，只修复报告出的重叠、穿节点、交叉过多、层级过平或标签过长问题，再回检一次，不做无关重写。',
   ]
 }

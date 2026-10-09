@@ -7,6 +7,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
+import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
+import { assessCanvasVisualQuality } from './canvasQuality.js'
 import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch, type CanvasSubgraphPatchInput } from './canvasPatch.js'
 import { buildCanvasPatchHistoryEntry, CanvasPatchHistoryStore, redoCanvasPatchHistory, undoCanvasPatchHistory, type CanvasPatchHistorySummary } from './canvasHistory.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
@@ -17,8 +19,10 @@ import { readGitChanges } from './gitChanges.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { addProposalBranch, selectProposalBranch, type ProposalBranchSet } from './proposalBranches.js'
 import { buildCanvasPatchGraph, canvasPatchDependentClosure, composeCanvasSubgraphPatches, inferCanvasPatchDependencies } from './patchGraph.js'
-import { diagramIntentRoutingGuide } from './diagramSkills/registry.js'
-import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { diagramIntentRoutingGuide, diagramSkill } from './diagramSkills/registry.js'
+import { skillPromptLines } from './diagramSkills/types.js'
+import { assessMermaidVisualQuality } from './mermaidQuality.js'
+import { diagramTypes, isMermaidDiagramType, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
@@ -57,6 +61,7 @@ const server = new McpServer(
       'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       ...diagramIntentRoutingGuide(),
+      'Before a non-trivial diagram creation or whole-diagram redesign, call diagram.designGuide once for the chosen type. It returns only that type’s composition archetypes, evidence rules, visual grammar and quality loop so the model does not need every diagram skill in context.',
       'All exposed Mermaid diagram types have a type-specific Diagram Skill. Preserve each type’s semantic grammar, density policy and anti-pattern rules instead of treating every diagram as generic nodes and arrows.',
       'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put selected existing ids in elementIds; when the user intent explicitly changes a direct relationship, you may also include the relevant id returned in getSubgraph.directRelationshipIds. Treat getSubgraph.contextElementIds as read-only context unless the user clearly asks to expand the edit scope. Send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
@@ -67,6 +72,7 @@ const server = new McpServer(
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When an architecture Canvas is visually flat, crowded, weakly grouped, or has crossing/overlapping relationships, use diagram.beautifyArchitecture. It deterministically adds architecture partitions, semantic tones, role/technology badges and orthogonal routing; do not try to solve those presentation problems only with prose prompting.',
       'If the node placement is already acceptable and only relationship lines need cleanup, use diagram.routeArchitectureEdges instead of beautifyArchitecture so node positions and partitions stay unchanged.',
+      'After creating or materially redesigning a diagram, call diagram.inspectQuality once. If it reports needsRevision=true, fix only the reported structural or visual issues and inspect once more; do not enter an open-ended beautification loop.',
       'When creating a diagram for the current conversation, omit workspacePath unless the user explicitly names another workspace. diagram.create will then use the current thread workspace and save under docs/diagrams/.',
       'Use type=canvas for freeform drawing boards and architecture diagrams. Read an existing diagram before updating it.',
     ].join(' '),
@@ -128,6 +134,34 @@ const ui = (
 registerWorkspaceResource('codex-diagram-workspace-current', workspaceUiUri, 'workspace')
 registerWorkspaceResource('codex-diagram-thread-current', threadUiUri, 'thread')
 registerWorkspaceResource('codex-diagram-workspace-legacy', legacyUiUri)
+
+server.registerTool('diagram.designGuide', {
+  title: 'Read diagram design guide',
+  description: 'Return the built-in progressive design guidance for one diagram type before a non-trivial creation or whole-diagram redesign. The guide includes composition archetypes, visual hierarchy, evidence rules, density limits, anti-patterns and the bounded quality loop. Do not call for small local edits.',
+  inputSchema: z.object({
+    type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
+    intent: z.string().max(1_000).optional().describe('Short user intent. For canvas this is used to distinguish architecture/C4 from a generic freeform board.'),
+    architectureTheme: z.enum(['enterprise', 'technical', 'presentation']).default('enterprise'),
+  }),
+  annotations: readonly,
+}, async ({ type, intent, architectureTheme }) => {
+  const routing = diagramIntentRoutingGuide()
+  const rules = type === 'canvas'
+    ? (isArchitectureIntent(intent ?? '')
+        ? ['内置 Architecture Diagram Skill：', ...architectureDesignSkill(architectureTheme)]
+        : [
+            '内置 Canvas Design Guide：',
+            '先根据关系选择 linear / fan-out / convergence / hierarchy / swimlane 等构图原型，不要默认生成等权卡片墙。',
+            '主对象与主关系形成第一视觉层级；辅助说明、次要依赖和装饰退到第二层级，并用留白表达分组。',
+            '只把已确认的事实写入节点、关系、sourcePaths、stencil 和 C4 元数据；未知内容保持中性表达。',
+            '完成后调用 diagram.inspectQuality；若 needsRevision=true，只修复报告问题并最多再回检一次。',
+          ])
+    : skillPromptLines(diagramSkill(type), 'generation')
+  return {
+    content: [{ type: 'text', text: [...routing, '', ...rules].join('\n') }],
+    structuredContent: { kind: 'diagram-design-guide', type, architectureTheme: type === 'canvas' ? architectureTheme : undefined, routing, rules },
+  }
+})
 server.registerResource(
   'codex-diagram-workspace-versioned-history',
   new ResourceTemplate(uiTemplate, { list: undefined }),
@@ -823,6 +857,54 @@ server.registerTool('diagram.routeArchitectureEdges', {
   return {
     content: [{ type: 'text', text: `Routed ${routedEdges} architecture relationship(s) in ${diagram.path} without moving nodes.` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram, routedEdges },
+  }
+})
+
+server.registerTool('diagram.inspectQuality', {
+  title: 'Inspect diagram quality',
+  description: 'Run the built-in visual/structural quality gate on the current Mermaid or Canvas diagram, or on an unsaved candidate passed in source. Canvas checks node overlap, edge-through-node, line crossings, flat architecture hierarchy and oversized labels; Mermaid checks type-specific density and split thresholds. Use after creation or a material redesign before considering the diagram finished.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().optional(),
+    source: z.string().min(1).optional().describe('Optional unsaved candidate source. Use this before proposing an update so quality checks run against the candidate instead of the current file.'),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, path: diagramPath, source }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动图表，请先指定图表路径。')
+  const diagram = await store.get(targetPath)
+  markThreadDiagram(extra._meta, diagram.path)
+  const inspectedSource = source ?? diagram.source
+
+  if (diagram.type === 'canvas') {
+    const quality = assessCanvasVisualQuality(parseCanvasScene(inspectedSource))
+    return {
+      content: [{ type: 'text', text: quality.needsRevision
+        ? `Quality review found ${quality.issues.length} Canvas issue(s) in ${diagram.path}. Fix only the reported issues, then inspect once more.`
+        : `Quality review passed for ${diagram.path}.` }],
+      structuredContent: { kind: 'diagram-quality', workspacePath: store.workspacePath, path: diagram.path, type: diagram.type, candidate: Boolean(source), ...quality },
+    }
+  }
+
+  if (!isMermaidDiagramType(diagram.type)) throw new Error(`不支持检查未知图表类型：${diagram.type}`)
+  const quality = assessMermaidVisualQuality(diagram.type, inspectedSource)
+  return {
+    content: [{ type: 'text', text: quality.splitRecommended
+      ? `Quality review recommends revising ${diagram.path}: ${quality.reasons.join('; ')}`
+      : `Quality review passed for ${diagram.path}.` }],
+    structuredContent: {
+      kind: 'diagram-quality',
+      workspacePath: store.workspacePath,
+      path: diagram.path,
+      type: diagram.type,
+      candidate: Boolean(source),
+      needsRevision: quality.splitRecommended,
+      issues: quality.reasons,
+      density: quality.density,
+      metrics: quality.metrics,
+    },
   }
 })
 

@@ -42,7 +42,26 @@ test('injects the matching professional skill for each primary Mermaid type', ()
     const prompt = buildGenerationPrompt('/workspace', { type, title: 'Test', scope: '', instructions: '' })
     assert.match(prompt, skill)
     assert.match(prompt, rule)
+    assert.match(prompt, /构图原型/)
+    assert.match(prompt, /证据：/)
+    assert.match(prompt, /diagram\.inspectQuality/)
   }
+})
+
+test('architecture generation uses topology archetypes and a bounded quality loop', () => {
+  const prompt = buildGenerationPrompt('/workspace', {
+    type: 'canvas',
+    title: 'System Architecture',
+    scope: 'src/',
+    instructions: '展示核心服务、数据层和外部依赖',
+  })
+  assert.match(prompt, /backbone\/linear/)
+  assert.match(prompt, /fan-out/)
+  assert.match(prompt, /hub-spoke/)
+  assert.match(prompt, /视觉论证/)
+  assert.match(prompt, /sourcePaths/)
+  assert.match(prompt, /diagram\.inspectQuality/)
+  assert.match(prompt, /needsRevision=true/)
 })
 
 test('data visualization prompts enforce truthful quantitative semantics', () => {

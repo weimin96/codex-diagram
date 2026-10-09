@@ -1,5 +1,16 @@
-import type { DiagramSkill } from './types.js'
-import { commonMermaidModificationRules, commonMermaidVisualRules } from './common.js'
+import type { DiagramCompositionPattern, DiagramSkill } from './types.js'
+import { commonMermaidEvidenceRules, commonMermaidModificationRules, commonMermaidValidationRules, commonMermaidVisualRules } from './common.js'
+
+const extendedPatterns: Partial<Record<DiagramSkill['type'], DiagramCompositionPattern[]>> = {
+  kanban: ['work-board'],
+  requirement: ['traceability'],
+  sankey: ['quantity-flow'],
+  xychart: ['metrics'],
+  pie: ['composition'],
+  radar: ['multi-axis'],
+  treemap: ['hierarchical-composition'],
+  ishikawa: ['root-cause'],
+}
 
 function extendedSkill(
   type: DiagramSkill['type'],
@@ -15,12 +26,15 @@ function extendedSkill(
     type,
     label,
     intentHints,
+    compositionPatterns: extendedPatterns[type] ?? ['linear-flow'],
     compositionRules,
     densityRules,
     visualRules: [...commonMermaidVisualRules, ...visualRules],
+    evidenceRules: commonMermaidEvidenceRules,
     antiPatterns,
     generationRules,
     modificationRules: commonMermaidModificationRules,
+    validationRules: commonMermaidValidationRules,
   }
 }
 
