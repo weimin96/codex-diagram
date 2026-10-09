@@ -152,6 +152,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [viewport])
 
   useEffect(() => {
+    if (!playback?.active) return
+    setToolbarMenu(null)
+    setLayersOpen(false)
+    setInspectorMenuOpen(false)
+    setContextMenu(null)
+    setSelectedIds([])
+    setSelectedGroupTarget(null)
+    setTraceDirection(null)
+  }, [playback?.active])
+
+  useEffect(() => {
     const closeTransientMenus = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Element)) return
@@ -174,6 +185,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (playback?.active) {
+        if (event.code === 'Space' || event.key === 'Backspace' || event.key === 'Delete' || event.metaKey || event.ctrlKey) event.preventDefault()
+        return
+      }
       const mod = event.metaKey || event.ctrlKey
       if (event.code === 'Space') {
         event.preventDefault()
@@ -980,6 +995,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const collapsedMemberIds = new Set(collapsedOwners.keys())
   const renderBoxes = projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
   const renderArrows = projectedArrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
+  const minimapViewBounds = (() => {
+    if (!architectureScope) return { x: 0, y: 0, width: scene.width, height: scene.height }
+    const rects = [
+      ...renderBoxes.map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height })),
+      ...projectedGroupBounds.filter((group) => group.collapsed).map((group) => ({ x: group.x, y: group.y, width: group.width, height: group.height })),
+    ]
+    if (!rects.length) return { x: 0, y: 0, width: scene.width, height: scene.height }
+    const padding = 90
+    const minX = Math.max(0, Math.min(...rects.map((rect) => rect.x)) - padding)
+    const minY = Math.max(0, Math.min(...rects.map((rect) => rect.y)) - padding)
+    const maxX = Math.min(scene.width, Math.max(...rects.map((rect) => rect.x + rect.width)) + padding)
+    const maxY = Math.min(scene.height, Math.max(...rects.map((rect) => rect.y + rect.height)) + padding)
+    return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }
+  })()
   const largeSceneViewportCulling = Boolean(
     !playback?.active
     && !architectureScope
@@ -1631,13 +1660,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function fit() {
+    if (scene.architecture) {
+      focusArchitectureScene(renderScene)
+      return
+    }
+    if (boxes.length) {
+      focusBoxes(boxes.map((item) => item.id))
+      return
+    }
     setViewport({ x: 0, y: 0, zoom: 1 })
   }
 
   function recenterFromMinimap(event: React.PointerEvent<SVGSVGElement>) {
     const bounds = event.currentTarget.getBoundingClientRect()
-    const targetX = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * scene.width
-    const targetY = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * scene.height
+    const targetX = minimapViewBounds.x + ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * minimapViewBounds.width
+    const targetY = minimapViewBounds.y + ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * minimapViewBounds.height
     setViewport((current) => {
       const width = scene.width / current.zoom
       const height = scene.height / current.zoom
@@ -1671,9 +1708,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density}${architectureScope ? ' has-architecture-scope' : ''}`} tabIndex={0} aria-label="自由画布编辑器">
+    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
+          {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
           <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="节点 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}>节点</ToolButton>
           <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (T)" onClick={() => { setTool('note'); setConnectFrom(null) }}>备注</ToolButton>
@@ -1880,7 +1918,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </aside>
         ) : null}
 
-        {selected.length > 0 ? (
+        {selected.length > 0 && !playback?.active ? (
           <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
               <div className="freeform-inspector-title">
@@ -2240,10 +2278,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx="20" /> : null}
               {!group.collapsed ? (
                 <rect
-                  className="freeform-group-navigation-hit"
+                  className={`freeform-group-navigation-hit${scene.architecture ? ' is-drillable' : ''}`}
                   x={group.x}
                   y={group.y}
-                  width={Math.min(group.width, 260)}
+                  width={group.width}
                   height="34"
                   rx="12"
                   pointerEvents="all"
@@ -2298,7 +2336,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               : relationLabelLayouts.get(arrow.id)
             return (
               <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
-                <path d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
+                <path className="freeform-arrow-hit-path" d={path} />
+                <path className="freeform-arrow-line" d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
                 {displayArrow.label && labelLayout ? (
                   <g className="freeform-arrow-label" pointerEvents="none">
                     <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={labelLayout.height / 2} />
@@ -2322,6 +2361,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     }}
                   />
                 )) : null}
+                {selectedIds.includes(arrow.id) ? <>
+                  <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="6" />
+                  <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="6" />
+                </> : null}
               </g>
             )
           })}
@@ -2539,8 +2582,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <span />
           <button type="button" aria-label="适配画布" onClick={fit}>适配</button>
         </div>
-        <svg className="freeform-minimap" aria-label="画布缩略图" viewBox={`0 0 ${scene.width} ${scene.height}`} onPointerDown={recenterFromMinimap}>
-          <rect width={scene.width} height={scene.height} className="freeform-minimap-bg" />
+        <svg className={`freeform-minimap${architectureScope ? ' is-scoped' : ''}`} aria-label={architectureScope ? '当前架构范围缩略图' : '画布缩略图'} viewBox={`${minimapViewBounds.x} ${minimapViewBounds.y} ${minimapViewBounds.width} ${minimapViewBounds.height}`} onPointerDown={recenterFromMinimap}>
+          <rect x={minimapViewBounds.x} y={minimapViewBounds.y} width={minimapViewBounds.width} height={minimapViewBounds.height} className="freeform-minimap-bg" />
           {displayGroupBounds.filter((group) => (
             group.collapsed
             && !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
