@@ -75,6 +75,14 @@ interface DiagramProposalSummary {
   updatedAt: string
   scopeElementIds?: string[]
   newElementIds?: string[]
+  impactElementIds?: string[]
+  automaticElementIds?: string[]
+  patchSummary?: {
+    updated: number
+    added: number
+    removed: number
+    layout: 'preserve' | 'local'
+  }
 }
 
 interface DiagramProposalSourceResult {
@@ -372,7 +380,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 }
                 setAiProposal({ summary: proposal.proposal, before: proposal.before, after })
                 setProposalReviewOpen(true)
-                setNotice('Codex 提交了一版候选修改，文件尚未写入')
+                setNotice(proposal.proposal.patchSummary
+                  ? `Codex 提交增量候选：${proposal.proposal.patchSummary.updated} 修改 · ${proposal.proposal.patchSummary.added} 新增 · ${proposal.proposal.patchSummary.removed} 删除`
+                  : 'Codex 提交了一版候选修改，文件尚未写入')
               }
             } catch {
               // Proposal sync is best-effort; normal thread following can continue.
@@ -416,9 +426,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             }
             setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt, trace: state.trace } : null)
             if (state.focusElementIds?.length) {
-              setNotice(state.trace
-                ? `已追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳 · ${state.focusElementIds.length} 个节点`
-                : `已定位 ${state.focusElementIds.length} 个源码关联节点`)
+              setNotice(state.proposal?.patchSummary
+                ? `增量候选影响 ${state.focusElementIds.length} 个节点${state.proposal.automaticElementIds?.length ? ` · ${state.proposal.automaticElementIds.length} 个自动变化` : ''}`
+                : state.trace
+                  ? `已追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳 · ${state.focusElementIds.length} 个节点`
+                  : `已定位 ${state.focusElementIds.length} 个源码关联节点`)
             }
             return
           }
@@ -433,9 +445,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             await selectDiagram(nextPath, true)
             setCanvasFocus(state.focusElementIds?.length ? { ids: state.focusElementIds, key: state.updatedAt, trace: state.trace } : null)
             if (!disposed) setNotice(state.focusElementIds?.length
-              ? state.trace
-                ? `已切换并追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳`
-                : `已切换并定位 ${state.focusElementIds.length} 个源码关联节点`
+              ? state.proposal?.patchSummary
+                ? `已切换到增量候选影响范围 · ${state.focusElementIds.length} 个节点`
+                : state.trace
+                  ? `已切换并追踪${state.trace.direction === 'upstream' ? '上游' : state.trace.direction === 'downstream' ? '下游' : '双向邻域'} ${state.trace.depth} 跳`
+                  : `已切换并定位 ${state.focusElementIds.length} 个源码关联节点`
               : '已跟随当前对话中的图表')
           }
         })
@@ -1333,8 +1347,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         {aiProposal ? (
           <div className="proposal-banner" role="status">
             <div>
-              <strong>{aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
-              <span>{aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
+              <strong>{aiProposal.summary.patchSummary ? 'Codex 增量候选修改' : aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
+              <span>{aiProposal.summary.patchSummary
+                ? `${aiProposal.summary.patchSummary.updated} 修改 · ${aiProposal.summary.patchSummary.added} 新增 · ${aiProposal.summary.patchSummary.removed} 删除${aiProposal.summary.automaticElementIds?.length ? ` · ${aiProposal.summary.automaticElementIds.length} 自动影响` : ''}`
+                : aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
             </div>
             <div className="proposal-banner-actions">
               <button type="button" onClick={() => setProposalReviewOpen(true)}>查看</button>
@@ -1549,6 +1565,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             reason={aiProposal.summary.reason}
             scopeElementIds={aiProposal.summary.scopeElementIds}
             newElementIds={aiProposal.summary.newElementIds}
+            impactElementIds={aiProposal.summary.impactElementIds}
+            automaticElementIds={aiProposal.summary.automaticElementIds}
+            patchSummary={aiProposal.summary.patchSummary}
             applying={saving}
             onClose={() => setProposalReviewOpen(false)}
             onAccept={(elementIds) => void acceptAiProposal(elementIds)}
@@ -1696,12 +1715,15 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
   )
 }
 
-function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, applying, onClose, onAccept, onReject }: {
+function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, patchSummary, applying, onClose, onAccept, onReject }: {
   before: DiagramDocument
   after: DiagramDocument
   reason?: string
   scopeElementIds?: string[]
   newElementIds?: string[]
+  impactElementIds?: string[]
+  automaticElementIds?: string[]
+  patchSummary?: DiagramProposalSummary['patchSummary']
   applying: boolean
   onClose: () => void
   onAccept: (elementIds?: string[]) => void
@@ -1711,6 +1733,7 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   const added = diff.filter((line) => line.kind === 'add').length
   const removed = diff.filter((line) => line.kind === 'remove').length
   const canvasChanges = useMemo(() => buildCanvasProposalChanges(before, after), [after, before])
+  const automaticIds = useMemo(() => new Set(automaticElementIds ?? []), [automaticElementIds])
   const [selectedChangeIds, setSelectedChangeIds] = useState<string[]>([])
   useEffect(() => {
     setSelectedChangeIds(canvasChanges?.map((item) => item.id) ?? [])
@@ -1729,7 +1752,20 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
       {scopeElementIds?.length ? (
         <div className="proposal-scope-summary">
           <strong>SUBGRAPH</strong>
-          <span>{scopeElementIds.length} 个现有元素{newElementIds?.length ? ` · ${newElementIds.length} 个新增元素` : ''}</span>
+          <span>
+            {scopeElementIds.length} 个 scope
+            {newElementIds?.length ? ` · ${newElementIds.length} 新增` : ''}
+            {impactElementIds?.length ? ` · ${impactElementIds.length} 影响` : ''}
+            {automaticElementIds?.length ? ` · ${automaticElementIds.length} 自动` : ''}
+          </span>
+        </div>
+      ) : null}
+      {patchSummary ? (
+        <div className="proposal-patch-summary">
+          <span><strong>{patchSummary.updated}</strong> 修改</span>
+          <span><strong>{patchSummary.added}</strong> 新增</span>
+          <span><strong>{patchSummary.removed}</strong> 删除</span>
+          <span>{patchSummary.layout === 'local' ? '局部布局' : '保持布局'}</span>
         </div>
       ) : null}
       {reason ? <div className="proposal-review-reason">{reason}</div> : null}
@@ -1740,13 +1776,14 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
             <span>{selectedChangeIds.length}/{canvasChanges.length} 已选择</span>
           </div>
           {canvasChanges.map((change) => (
-            <label key={change.id} className="proposal-element-row">
+            <label key={change.id} className={`proposal-element-row${automaticIds.has(change.id) ? ' is-automatic' : ''}`}>
               <input
                 type="checkbox"
                 checked={selectedChangeIds.includes(change.id)}
                 onChange={(event) => setSelectedChangeIds((current) => event.target.checked ? [...current, change.id] : current.filter((id) => id !== change.id))}
               />
               <span className={`proposal-change-kind is-${change.kind}`}>{change.kind === 'add' ? '新增' : change.kind === 'remove' ? '删除' : '修改'}</span>
+              <span className="proposal-auto-badge">{automaticIds.has(change.id) ? '自动' : ''}</span>
               <code>{change.label}</code>
             </label>
           ))}

@@ -846,14 +846,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .proposal-scope-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel)); }
 .proposal-scope-summary strong { color: var(--accent); font: 10px var(--font-mono); letter-spacing: .08em; }
 .proposal-scope-summary span { color: var(--text-secondary); font-size: 11px; }
+.proposal-patch-summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 3%, var(--surface-panel)); }
+.proposal-patch-summary span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-tertiary); font-size: 10px; }
+.proposal-patch-summary strong { color: var(--text-primary); font-weight: 700; }
 .proposal-element-changes { flex: 0 0 auto; max-height: 210px; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
 .proposal-element-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 3px 7px; }
 .proposal-element-head strong { font-size: 11px; }
 .proposal-element-head span { color: var(--text-tertiary); font-size: 10px; }
-.proposal-element-row { min-height: 30px; display: grid; grid-template-columns: 18px 42px minmax(0, 1fr); align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; }
+.proposal-element-row { min-height: 30px; display: grid; grid-template-columns: 18px 42px 30px minmax(0, 1fr); align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; }
 .proposal-element-row:hover { background: var(--surface-hover); }
+.proposal-element-row.is-automatic { background: color-mix(in srgb, var(--accent) 3%, transparent); }
 .proposal-element-row input { margin: 0; }
 .proposal-element-row code { overflow: hidden; color: var(--text-secondary); font: 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.proposal-auto-badge { color: var(--accent); font: 9px var(--font-mono); }
 .proposal-change-kind { font-size: 10px; }
 .proposal-change-kind.is-add { color: #1f9d55; }
 .proposal-change-kind.is-remove { color: var(--danger); }

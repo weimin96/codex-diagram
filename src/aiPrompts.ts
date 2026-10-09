@@ -60,12 +60,12 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       `修改要求：${instruction.trim()}`,
       '',
       '执行要求：',
-      '1. 先调用 diagram.get 读取最新的 .diagram.json 内容；需要代码事实时再阅读相关实现。',
+      '1. 如果当前对话/选区已经给出稳定 element ids，先调用 diagram.getSubgraph 读取这些元素和直接邻域，不要为了局部修改加载整张大图；只有还不知道目标 ids 或任务确实涉及整图状态时才调用 diagram.get。需要代码事实时再阅读相关实现。',
       '2. 保留 codex-diagram-canvas version 1 JSON 结构，只操作 node、note、arrow 元素。',
       '3. 保留现有节点的 tone/shape/locked/groupId/laneId/icon/stencil/subtitle/description/tags/sourcePaths/emphasis、scene.groups/scene.lanes 以及连线 lineStyle/routing/anchors/points/labelPosition/emphasis/bundleKey，除非修改要求明确涉及这些属性；不要重排 locked 元素。',
-      '4. 生成完整候选 JSON 后调用 diagram.proposeUpdate，不要直接 diagram.update。节点坐标应避免明显重叠，arrow.from/to 必须引用现有节点或备注；sourcePaths 只填写真实存在的工作区相对源码路径；不要为了整理布局删除 boundary、parentId 层级、lane、C4 c4Type、stencil、collapsed 状态或节点详情。',
+      '4. 如果本次只涉及有限节点/关系，优先调用 diagram.proposeSubgraphPatch：elementIds 只放允许修改的已有 id，updates 只发送真正变化的字段，adds 只发送新增元素，removeIds 只发送删除项。不要把未变化的 x/y/width/height、arrow.points、labelPosition 重复发送。只有修改标题/画布尺寸/Group/Lane 元数据或确实需要整图重构时才调用 diagram.proposeUpdate。',
       '5. 合理使用 C4 person/software-system/container/component 语义，以及 icon 标明运行角色、stencil 标明真实技术栈；不要为了装饰给所有节点重复相同图标或技术标签。',
-      '6. 不要把 Mermaid 语法写进自由画布文件。diagram.proposeUpdate 只提交候选，不会直接覆盖文件；等待用户在右侧 Diagram 接受或拒绝。',
+      '6. diagram.proposeSubgraphPatch 的 layout 默认 preserve；只有用户明确要求整理/重排当前局部结构时才用 local。服务端会保留未声明的人工布局和 Label，并自动计算受影响关系。不要把 Mermaid 语法写进自由画布文件。Proposal 不会直接覆盖文件，等待用户在右侧 Diagram 接受或拒绝。',
     ].join('\n')
   }
   return [
@@ -85,17 +85,18 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
 
 export function buildSubgraphModificationPrompt(workspacePath: string, diagram: DiagramDocument, elementIds: string[], instruction: string): string {
   return [
-    '只修改 Diagram 当前 Canvas 的指定子图，并提交可审查的 Subgraph Proposal。',
+    '只修改 Diagram 当前 Canvas 的指定子图，并提交可审查的增量 Patch Proposal。',
     `工作空间：${workspacePath}`,
     `图表路径：${diagram.path}`,
     `允许修改的现有元素：${JSON.stringify([...new Set(elementIds)])}`,
     `修改要求：${instruction.trim()}`,
     '',
     '执行要求：',
-    '1. 先调用 diagram.get 读取最新完整 Canvas JSON；需要代码事实时再读取相关源码。',
-    '2. 只修改上面列出的现有 element ids，以及为了保持这些元素关系正确而必须修改的直接连接；不要重排或改写范围外节点。',
-    '3. 如果需要新增节点/备注/连线，使用新的稳定 id，并把所有新增 id 明确放进 diagram.proposeSubgraphUpdate 的 newElementIds。',
-    '4. 生成完整候选 Canvas JSON，然后调用 diagram.proposeSubgraphUpdate，elementIds 使用上面的稳定 id。服务端会拒绝任何越界修改。',
-    '5. 不要直接调用 diagram.update。等待用户在右侧 Diagram 审查并接受/拒绝。',
+    '1. 先调用 diagram.getSubgraph，path 使用当前图表路径、elementIds 使用上面的稳定 id、depth 默认 0；只有明确需要更远依赖时才提高到 1～2。不要先读取完整 Canvas。需要代码事实时再读取相关源码。',
+    '2. 调用 diagram.proposeSubgraphPatch，不要生成或传回完整 Canvas JSON。elementIds 使用上面的已有稳定 id。',
+    '3. updates 只写真正发生变化的字段；没有要移动节点时，不要写 x/y/width/height。没有要人工改线路时，不要写 arrow.points/labelPosition/bundleKey。null 只用于明确清除可选字段。',
+    '4. 新增元素放在 adds 中并使用新的稳定 id。新增 node/note 可以省略 x/y，由服务端在当前子图附近寻找位置；新增 arrow 必须提供 from/to。删除已有元素放在 removeIds。',
+    '5. layout 默认 preserve；只有用户明确要求当前子图重新布局/整理时才使用 local。服务端会计算关系重路由、删除节点的连带关系等自动影响，并在 Proposal 中单独显示。',
+    '6. 不要直接调用 diagram.update，也不要优先使用旧的 diagram.proposeSubgraphUpdate。等待用户在右侧 Diagram 审查并接受/拒绝。',
   ].join('\n')
 }

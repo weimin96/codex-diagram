@@ -7,8 +7,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
+import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, mergeCanvasProposalSelection } from './canvasPatch.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
 import { DiagramStore } from './store.js'
 import { readGitChanges } from './gitChanges.js'
@@ -51,8 +52,9 @@ const server = new McpServer(
       'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
       'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
-      'For conversational edits to an existing diagram, prefer diagram.proposeUpdate so the user can review the candidate diff in the side panel before it is written. Use diagram.update directly only when the user explicitly asks to apply immediately.',
-      'For edits constrained to the currently selected Canvas nodes, prefer diagram.proposeSubgraphUpdate and declare any new element ids so changes outside the subgraph are rejected server-side.',
+      'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
+      'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put existing ids in elementIds; send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
+      'Before a finite Canvas patch, prefer diagram.getSubgraph over diagram.get. getSubgraph returns the selected elements, direct relationships, bounded neighbors and only the relevant Group/Lane metadata, avoiding full-document context on large diagrams. Use diagram.get only when the task genuinely needs whole-diagram state.',
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When an architecture Canvas is visually flat, crowded, weakly grouped, or has crossing/overlapping relationships, use diagram.beautifyArchitecture. It deterministically adds architecture partitions, semantic tones, role/technology badges and orthogonal routing; do not try to solve those presentation problems only with prose prompting.',
@@ -81,6 +83,14 @@ interface ThreadDiagramProposal {
   updatedAt: string
   scopeElementIds?: string[]
   newElementIds?: string[]
+  impactElementIds?: string[]
+  automaticElementIds?: string[]
+  patchSummary?: {
+    updated: number
+    added: number
+    removed: number
+    layout: 'preserve' | 'local'
+  }
 }
 const threadProposals = new Map<string, ThreadDiagramProposal>()
 interface ThreadGitImpact {
@@ -207,6 +217,48 @@ server.registerTool('diagram.get', {
   return {
     content: [{ type: 'text', text: `Path: ${diagram.path}\nType: ${diagram.type}\n\n${diagram.source}` }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.getSubgraph', {
+  title: 'Read Canvas subgraph',
+  description: 'Read a bounded Canvas neighborhood around selected element ids without loading the whole diagram. Prefer this before an incremental Canvas patch, especially for large diagrams.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    elementIds: z.array(z.string().min(1)).min(1).max(120),
+    depth: z.number().int().min(0).max(2).default(0),
+    maxNodes: z.number().int().min(12).max(240).default(160),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, path: diagramPath, elementIds, depth, maxNodes }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const diagram = await store.get(diagramPath)
+  if (diagram.type !== 'canvas') throw new Error('Canvas subgraph 仅支持自由 Canvas 图。')
+  const scene = parseCanvasScene(diagram.source)
+  const subgraph = buildCanvasSubgraphContext(scene, elementIds, depth, maxNodes)
+  const payload = {
+    kind: 'diagram-canvas-subgraph',
+    workspacePath: store.workspacePath,
+    path: diagram.path,
+    modifiedAt: diagram.modifiedAt,
+    title: scene.title,
+    width: scene.width,
+    height: scene.height,
+    depth,
+    ...subgraph,
+  }
+  const boxIds = new Set(scene.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+  const arrowById = new Map(scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((item) => [item.id, item]))
+  const scopeFocusIds = [...new Set(elementIds.flatMap((id) => {
+    if (boxIds.has(id)) return [id]
+    const arrow = arrowById.get(id)
+    return arrow ? [arrow.from, arrow.to] : []
+  }))]
+  markThreadDiagram(extra._meta, diagram.path, scopeFocusIds)
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
   }
 })
 
@@ -826,6 +878,82 @@ server.registerTool('diagram.proposeSubgraphUpdate', {
   }
 })
 
+const canvasPatchPropertiesSchema = z.record(z.string(), z.unknown())
+
+server.registerTool('diagram.proposeSubgraphPatch', {
+  title: 'Propose Canvas subgraph patch',
+  description: 'Prepare a reviewable incremental Canvas patch. Send only changed existing elements, new elements and removals; the server preserves unspecified authored geometry, computes automatic relationship impact, and builds the candidate source.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    elementIds: z.array(z.string().min(1)).max(120).default([]).describe('Existing Canvas element ids that this patch is allowed to modify or remove.'),
+    updates: z.array(z.object({
+      id: z.string().min(1),
+      changes: canvasPatchPropertiesSchema.describe('Only fields that actually change. node/note: x,y,width,height,text,tone,shape,locked,groupId,sourcePaths,icon,stencil,subtitle,description,tags,laneId,c4Type,emphasis. arrow: from,to,label,lineStyle,routing,fromAnchor,toAnchor,points,labelPosition,emphasis,bundleKey. Use null only to clear optional fields.'),
+    })).max(120).optional(),
+    adds: z.array(z.object({
+      id: z.string().min(1),
+      type: z.enum(['node', 'note', 'arrow']),
+      properties: canvasPatchPropertiesSchema.describe('Properties for the new element. New node/note text is recommended; x/y may both be omitted for server placement. New arrows require from/to. Do not invent Group/Lane ids.'),
+    })).max(120).optional(),
+    removeIds: z.array(z.string().min(1)).max(120).optional(),
+    layout: z.enum(['preserve', 'local']).default('preserve').describe('preserve keeps authored node geometry; local performs bounded one-hop layout around changed nodes and reports those moves as automatic impact.'),
+    reason: z.string().max(2_000).optional(),
+  }).refine((value) => Boolean(value.updates?.length || value.adds?.length || value.removeIds?.length), {
+    message: 'Canvas patch 至少需要一个 update、add 或 remove。',
+  }),
+  annotations: write,
+}, async ({ workspacePath, path: diagramPath, elementIds, updates = [], adds = [], removeIds = [], layout, reason }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (!threadId) throw new Error('当前调用没有聊天上下文，无法创建 Canvas Patch Proposal。')
+  const store = await resolveStore(workspacePath, threadId)
+  const current = await store.get(diagramPath)
+  if (current.type !== 'canvas') throw new Error('Canvas Patch Proposal 仅支持自由 Canvas 图。')
+  const base = parseCanvasScene(current.source)
+  const result = buildCanvasSubgraphPatch(base, {
+    scopeElementIds: [...new Set(elementIds)],
+    updates,
+    adds,
+    removeIds,
+    layout,
+  })
+  const source = serializeCanvasScene(result.scene)
+  const proposal: ThreadDiagramProposal = {
+    workspacePath: store.workspacePath,
+    path: current.path,
+    source,
+    baseSource: current.source,
+    reason,
+    baseModifiedAt: current.modifiedAt,
+    updatedAt: new Date().toISOString(),
+    scopeElementIds: [...new Set(elementIds)],
+    newElementIds: result.addedElementIds,
+    impactElementIds: result.impactElementIds,
+    automaticElementIds: result.automaticElementIds,
+    patchSummary: {
+      updated: result.changedElementIds.length,
+      added: result.addedElementIds.length,
+      removed: result.removedElementIds.length,
+      layout,
+    },
+  }
+  threadProposals.set(threadId, proposal)
+  const candidateById = new Map(result.scene.elements.map((item) => [item.id, item]))
+  const baseById = new Map(base.elements.map((item) => [item.id, item]))
+  const focusNodeIds = result.impactElementIds.filter((id) => {
+    const item = candidateById.get(id) ?? baseById.get(id)
+    return item?.type !== 'arrow'
+  })
+  markThreadDiagram(extra._meta, current.path, focusNodeIds)
+  return {
+    content: [{
+      type: 'text',
+      text: `Prepared an incremental Canvas patch for ${current.path}: ${result.changedElementIds.length} updated, ${result.addedElementIds.length} added, ${result.removedElementIds.length} removed${result.automaticElementIds.length ? `, ${result.automaticElementIds.length} automatic impact element(s)` : ''}. The file was not modified.`,
+    }],
+    structuredContent: { kind: 'diagram-proposal', workspacePath: store.workspacePath, proposal: proposalSummary(proposal) },
+  }
+})
+
 server.registerTool('diagram.proposal', {
   title: 'Read diagram proposal',
   description: 'Internal app bridge for loading the pending candidate source for the current conversation.',
@@ -864,7 +992,7 @@ server.registerTool('diagram.applyProposal', {
   if (!proposal) throw new Error('当前聊天没有待应用的 Diagram Proposal。')
   const store = await DiagramStore.open(proposal.workspacePath)
   const source = elementIds?.length
-    ? mergeCanvasProposalElements(proposal.baseSource, proposal.source, elementIds)
+    ? mergeCanvasProposalSelection(proposal.baseSource, proposal.source, elementIds, !proposal.patchSummary)
     : proposal.source
   const diagram = await store.update(proposal.path, source, proposal.baseModifiedAt)
   threadProposals.delete(threadId)
@@ -1262,6 +1390,9 @@ function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
     updatedAt: proposal.updatedAt,
     scopeElementIds: proposal.scopeElementIds,
     newElementIds: proposal.newElementIds,
+    impactElementIds: proposal.impactElementIds,
+    automaticElementIds: proposal.automaticElementIds,
+    patchSummary: proposal.patchSummary,
   }
 }
 
@@ -1321,67 +1452,6 @@ function validateCanvasSubgraphProposal(baseSource: string, candidateSource: str
   if (JSON.stringify(base.lanes ?? []) !== JSON.stringify(candidate.lanes ?? [])) {
     throw new Error('Subgraph Proposal 当前不允许修改泳道元数据；请改用整图 Proposal。')
   }
-}
-
-function mergeCanvasProposalElements(baseSource: string, candidateSource: string, elementIds: string[]): string {
-  let base: CanvasScene
-  let candidate: CanvasScene
-  try {
-    base = parseCanvasScene(baseSource)
-    candidate = parseCanvasScene(candidateSource)
-  } catch {
-    throw new Error('部分接受仅支持结构有效的 Canvas Proposal。')
-  }
-  const selected = new Set(elementIds)
-  const candidateById = new Map(candidate.elements.map((item) => [item.id, item]))
-  const relatedArrowIds = new Set<string>()
-  for (const item of candidate.elements) {
-    if (item.type === 'arrow' && (selected.has(item.id) || selected.has(item.from) || selected.has(item.to))) relatedArrowIds.add(item.id)
-  }
-  for (const item of base.elements) {
-    if (item.type === 'arrow' && (selected.has(item.id) || selected.has(item.from) || selected.has(item.to))) relatedArrowIds.add(item.id)
-  }
-  const affected = new Set([...selected, ...relatedArrowIds])
-  const nextElements: CanvasElement[] = []
-  const seen = new Set<string>()
-  for (const item of base.elements) {
-    if (!affected.has(item.id)) {
-      nextElements.push(item)
-      seen.add(item.id)
-      continue
-    }
-    const replacement = candidateById.get(item.id)
-    if (replacement) {
-      nextElements.push(replacement)
-      seen.add(item.id)
-    }
-  }
-  for (const item of candidate.elements) {
-    if (!affected.has(item.id) || seen.has(item.id)) continue
-    nextElements.push(item)
-    seen.add(item.id)
-  }
-  const liveNodeIds = new Set(nextElements.filter((item) => item.type !== 'arrow').map((item) => item.id))
-  const sanitized = nextElements.filter((item) => item.type !== 'arrow' || (liveNodeIds.has(item.from) && liveNodeIds.has(item.to)))
-  const groupIds = new Set(sanitized.flatMap((item) => item.type === 'arrow' || !item.groupId ? [] : [item.groupId]))
-  const laneIds = new Set(sanitized.flatMap((item) => item.type === 'arrow' || !item.laneId ? [] : [item.laneId]))
-  const groups = mergeCanvasMetadataById(base.groups, candidate.groups, groupIds)
-  const lanes = mergeCanvasMetadataById(base.lanes, candidate.lanes, laneIds)
-  return serializeCanvasScene({
-    ...base,
-    elements: sanitized,
-    groups: groups.length ? groups : undefined,
-    lanes: lanes.length ? lanes : undefined,
-  })
-}
-
-function mergeCanvasMetadataById<T extends { id: string }>(base: T[] | undefined, candidate: T[] | undefined, usedIds: Set<string>): T[] {
-  const candidateById = new Map((candidate ?? []).map((item) => [item.id, item]))
-  const baseById = new Map((base ?? []).map((item) => [item.id, item]))
-  return [...usedIds].flatMap((id) => {
-    const item = candidateById.get(id) ?? baseById.get(id)
-    return item ? [item] : []
-  })
 }
 
 interface CodexDesktopState {
