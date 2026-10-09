@@ -9,6 +9,7 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     `架构视觉主题：${theme}。`,
     architectureThemeRule(theme),
     '先选择构图原型，再放节点：端到端调用优先 backbone/linear，单源多依赖优先 fan-out，多源进入一个核心能力优先 convergence，中心平台连接多系统优先 hub-spoke，跨职责链路优先 layered/swimlane。不要默认把所有组件排成等权卡片矩阵。',
+    'diagram.beautifyArchitecture 会根据真实节点角色与关系自动选择 layered、hub-spoke、event-driven、data-platform、agent-runtime、cloud-native 等架构骨架；不要为了迎合某个固定版式提前伪造分区或节点位置。只有用户已经手工锁定位置时才把 authored geometry 当作硬约束。',
     '把架构图当作视觉论证：首先让读者看见“系统边界 → 主业务路径 → 关键依赖/结果”，外围配置、管理面和低频依赖降到第二层级；留白用于区分职责和系统边界。',
     '先表达系统边界和职责层次，再表达细节；不要把所有节点平铺成一层。',
     '优先区分外部参与方、体验/入口、核心应用、后台处理/异步、数据/检索等局部区域；这些区域默认表现为紧贴内容的 boundary/group，不要自动拉成贯穿整张画布的泳道。只有用户明确要求 swimlane 时才使用 lane。',

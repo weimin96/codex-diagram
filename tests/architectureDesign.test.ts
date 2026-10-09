@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyArchitectureTheme, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
+import { applyArchitectureTheme, beautifyArchitectureScene, inferArchitectureComposition, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
 import { assessCanvasVisualQuality } from '../src/canvasQuality.js'
 import { anchorPoint, canvasArrowRoutePoints, canvasBundleTrunks, canvasGroupFrames, type CanvasScene } from '../src/canvas.js'
 
@@ -42,6 +42,79 @@ test('beautifies architecture into semantic partitions with technology roles', (
   assert.equal(nodes.get('db')?.icon, 'database')
   assert.notEqual(nodes.get('web')?.groupId, nodes.get('db')?.groupId)
   assert.ok(result.summary.partitions >= 4)
+  assert.equal(result.summary.composition, 'layered')
+})
+
+test('infers architecture composition from topology and semantic roles', () => {
+  const node = (id: string, icon: 'user' | 'web' | 'gateway' | 'api' | 'service' | 'worker' | 'database' | 'queue' | 'search' | 'file' | 'ai' | 'mcp' | 'external' | 'cloud', stencil?: 'kafka' | 'postgres' | 'qdrant' | 'minio' | 'kubernetes' | 'docker' | 'nginx' | 'openai' | 'mcp') => ({
+    id, type: 'node' as const, x: 0, y: 0, width: 170, height: 72, text: id, icon, ...(stencil ? { stencil } : {}),
+  })
+  const arrow = (id: string, from: string, to: string) => ({ id, type: 'arrow' as const, from, to })
+  const scene = (title: string, elements: CanvasScene['elements']): CanvasScene => ({
+    type: 'codex-diagram-canvas', version: 1, title, width: 1400, height: 900, elements,
+  })
+
+  const hub = scene('hub', [
+    node('hub', 'service'), node('a', 'external'), node('b', 'web'), node('c', 'database'), node('d', 'search'), node('e', 'worker'),
+    arrow('h1', 'a', 'hub'), arrow('h2', 'b', 'hub'), arrow('h3', 'hub', 'c'), arrow('h4', 'hub', 'd'), arrow('h5', 'hub', 'e'),
+  ])
+  const events = scene('events', [
+    node('api', 'api'), node('queue', 'queue', 'kafka'), node('worker', 'worker'), node('db', 'database', 'postgres'),
+    arrow('e1', 'api', 'queue'), arrow('e2', 'queue', 'worker'), arrow('e3', 'worker', 'db'),
+  ])
+  const dataPlatform = scene('data', [
+    node('source', 'external'), node('web', 'web'), node('worker-a', 'worker'), node('worker-b', 'worker'),
+    node('db', 'database', 'postgres'), node('vector', 'database', 'qdrant'), node('files', 'file', 'minio'),
+    arrow('d1', 'source', 'worker-a'), arrow('d2', 'worker-a', 'worker-b'), arrow('d3', 'worker-b', 'db'), arrow('d4', 'worker-b', 'vector'), arrow('d5', 'worker-a', 'files'),
+  ])
+  const agent = scene('agent', [
+    node('web', 'web'), node('agent', 'ai'), node('tools', 'mcp', 'mcp'), node('model', 'ai', 'openai'), node('worker', 'worker'), node('db', 'database'),
+    arrow('a1', 'web', 'agent'), arrow('a2', 'agent', 'tools'), arrow('a3', 'agent', 'model'), arrow('a4', 'agent', 'db'), arrow('a5', 'tools', 'worker'),
+  ])
+  const cloud = scene('cloud', [
+    node('entry', 'gateway', 'nginx'), node('cluster', 'cloud', 'kubernetes'), node('runtime', 'cloud', 'docker'), node('api', 'service'), node('service', 'service'), node('worker', 'worker'), node('db', 'database'),
+    arrow('c1', 'entry', 'api'), arrow('c2', 'api', 'service'), arrow('c3', 'service', 'worker'), arrow('c4', 'worker', 'db'), arrow('c5', 'cluster', 'api'), arrow('c6', 'runtime', 'service'),
+  ])
+
+  assert.equal(inferArchitectureComposition(sampleScene()), 'layered')
+  assert.equal(inferArchitectureComposition(hub), 'hub-spoke')
+  assert.equal(inferArchitectureComposition(events), 'event-driven')
+  assert.equal(inferArchitectureComposition(dataPlatform), 'data-platform')
+  assert.equal(inferArchitectureComposition(agent), 'agent-runtime')
+  assert.equal(inferArchitectureComposition(cloud), 'cloud-native')
+
+  const composed = new Map([
+    ['hub-spoke', beautifyArchitectureScene(hub).scene],
+    ['event-driven', beautifyArchitectureScene(events).scene],
+    ['data-platform', beautifyArchitectureScene(dataPlatform).scene],
+    ['agent-runtime', beautifyArchitectureScene(agent).scene],
+    ['cloud-native', beautifyArchitectureScene(cloud).scene],
+  ])
+  for (const [name, result] of composed) {
+    const quality = assessCanvasVisualQuality(result)
+    assert.equal(quality.metrics.nodeOverlaps, 0, `${name}: composition should not overlap nodes`)
+    assert.equal(quality.metrics.edgeNodeIntersections, 0, `${name}: composition should not route through nodes`)
+    assert.equal(quality.metrics.edgeCrossings, 0, `${name}: composition should preserve a clean reading path`)
+  }
+
+  const centers = (value: CanvasScene) => new Map(canvasGroupFrames(value)
+    .filter((frame) => frame.id.startsWith('arch-'))
+    .map((frame) => [frame.id, { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 }]))
+  const hubCenters = centers(composed.get('hub-spoke')!)
+  assert.ok(hubCenters.get('arch-application')!.y > hubCenters.get('arch-experience')!.y)
+  assert.ok(hubCenters.get('arch-application')!.y < hubCenters.get('arch-data')!.y)
+  const eventCenters = centers(composed.get('event-driven')!)
+  assert.ok(eventCenters.get('arch-processing')!.y > eventCenters.get('arch-application')!.y)
+  assert.ok(eventCenters.get('arch-data')!.y > eventCenters.get('arch-processing')!.y)
+  const dataCenters = centers(composed.get('data-platform')!)
+  assert.ok(dataCenters.get('arch-external')!.x < dataCenters.get('arch-processing')!.x)
+  assert.ok(dataCenters.get('arch-processing')!.x < dataCenters.get('arch-data')!.x)
+  const agentCenters = centers(composed.get('agent-runtime')!)
+  assert.ok(agentCenters.get('arch-application')!.y > agentCenters.get('arch-experience')!.y)
+  assert.ok(agentCenters.get('arch-processing')!.y > agentCenters.get('arch-application')!.y)
+  const cloudCenters = centers(composed.get('cloud-native')!)
+  assert.ok(cloudCenters.get('arch-processing')!.x > cloudCenters.get('arch-application')!.x)
+  assert.ok(cloudCenters.get('arch-data')!.y > cloudCenters.get('arch-application')!.y)
 })
 
 test('spreads architecture relationships with orthogonal channels and async styling', () => {
@@ -117,6 +190,32 @@ test('bundles fan-out relationships through a shared source trunk when the corri
   assert.ok(canvasBundleTrunks(result).some((trunk) => trunk.count >= 2))
 })
 
+test('keeps short intra-boundary relationships direct while preserving event-bus fanout bundling', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas', version: 1, title: 'Local bundle policy', width: 1100, height: 620,
+    groups: [{ id: 'runtime', label: 'Runtime', kind: 'boundary' }],
+    elements: [
+      { id: 'api', type: 'node', x: 120, y: 120, width: 170, height: 72, text: 'API', icon: 'api', groupId: 'runtime' },
+      { id: 'svc-a', type: 'node', x: 420, y: 80, width: 170, height: 72, text: 'Service A', icon: 'service', groupId: 'runtime' },
+      { id: 'svc-b', type: 'node', x: 420, y: 210, width: 170, height: 72, text: 'Service B', icon: 'service', groupId: 'runtime' },
+      { id: 'queue', type: 'node', x: 120, y: 400, width: 170, height: 72, text: 'Events', icon: 'queue', groupId: 'runtime' },
+      { id: 'worker-a', type: 'node', x: 420, y: 360, width: 170, height: 72, text: 'Worker A', icon: 'worker', groupId: 'runtime' },
+      { id: 'worker-b', type: 'node', x: 420, y: 490, width: 170, height: 72, text: 'Worker B', icon: 'worker', groupId: 'runtime' },
+      { id: 'api-a', type: 'arrow', from: 'api', to: 'svc-a' },
+      { id: 'api-b', type: 'arrow', from: 'api', to: 'svc-b' },
+      { id: 'queue-a', type: 'arrow', from: 'queue', to: 'worker-a' },
+      { id: 'queue-b', type: 'arrow', from: 'queue', to: 'worker-b' },
+    ],
+  }
+
+  const result = routeArchitectureEdges(scene)
+  const arrows = new Map(result.elements.filter((item) => item.type === 'arrow').map((item) => [item.id, item]))
+  assert.equal(arrows.get('api-a')?.bundleKey, undefined)
+  assert.equal(arrows.get('api-b')?.bundleKey, undefined)
+  assert.equal(arrows.get('queue-a')?.bundleKey, 'from:queue')
+  assert.equal(arrows.get('queue-b')?.bundleKey, 'from:queue')
+})
+
 test('routes downward fan-out into one architecture group through a shared data bus', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',
@@ -144,6 +243,34 @@ test('routes downward fan-out into one architecture group through a shared data 
   const firstBends = arrows.map((arrow) => arrow.points?.[0]).filter(Boolean)
   assert.equal(firstBends.length, 3)
   assert.ok(firstBends.every((point) => point?.x === firstBends[0]?.x && point?.y === firstBends[0]?.y))
+})
+
+test('does not route a shared downward fanout through sibling targets in a multi-row group', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Stacked target group',
+    width: 1200,
+    height: 760,
+    groups: [{ id: 'data', label: 'Data', kind: 'boundary' }],
+    elements: [
+      { id: 'api', type: 'node', x: 480, y: 80, width: 180, height: 80, text: 'Query API', icon: 'api' },
+      { id: 'top-left', type: 'node', x: 340, y: 430, width: 160, height: 72, text: 'Search', icon: 'search', groupId: 'data' },
+      { id: 'top-right', type: 'node', x: 600, y: 430, width: 160, height: 72, text: 'Vector', icon: 'vector', groupId: 'data' },
+      { id: 'bottom-left', type: 'node', x: 340, y: 560, width: 160, height: 72, text: 'Database', icon: 'database', groupId: 'data' },
+      { id: 'bottom-right', type: 'node', x: 600, y: 560, width: 160, height: 72, text: 'Files', icon: 'file', groupId: 'data' },
+      { id: 'to-search', type: 'arrow', from: 'api', to: 'top-left' },
+      { id: 'to-vector', type: 'arrow', from: 'api', to: 'top-right' },
+      { id: 'to-db', type: 'arrow', from: 'api', to: 'bottom-left' },
+      { id: 'to-files', type: 'arrow', from: 'api', to: 'bottom-right' },
+    ],
+    architecture: { theme: 'enterprise', view: 'detail', density: 'compact' },
+  }
+
+  const result = routeArchitectureEdges(scene)
+  const quality = assessCanvasVisualQuality(result)
+  assert.equal(quality.metrics.edgeNodeIntersections, 0)
+  assert.equal(quality.metrics.nodeOverlaps, 0)
 })
 
 test('shared data bus can exit a dense service cluster without falling back to crossing straight lines', () => {

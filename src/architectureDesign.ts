@@ -18,6 +18,7 @@ import type {
 import { anchorPoint, canvasArrowRoutePoints, canvasGroupFrames } from './canvas.js'
 
 export type ArchitectureTheme = CanvasArchitectureTheme
+export type ArchitectureComposition = 'layered' | 'hub-spoke' | 'event-driven' | 'data-platform' | 'agent-runtime' | 'cloud-native'
 
 export interface ArchitectureBeautifyOptions {
   theme?: ArchitectureTheme
@@ -32,6 +33,7 @@ export interface ArchitectureBeautifyResult {
   scene: CanvasScene
   summary: {
     theme: ArchitectureTheme
+    composition: ArchitectureComposition
     partitions: number
     enrichedNodes: number
     routedEdges: number
@@ -100,6 +102,48 @@ const themeTones: Record<ArchitectureTheme, Record<ArchitecturePartition, Canvas
   },
 }
 
+export function inferArchitectureComposition(scene: CanvasScene): ArchitectureComposition {
+  const boxes = scene.elements
+    .filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+    .map((item) => enrichArchitectureBox(item))
+  const partitions = new Map(boxes.map((item) => [item.id, classifyArchitectureBox(item)]))
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  return detectArchitectureComposition(boxes, arrows, partitions)
+}
+
+function detectArchitectureComposition(
+  boxes: Array<CanvasNode | CanvasNote>,
+  arrows: CanvasArrow[],
+  partitions: Map<string, ArchitecturePartition>,
+): ArchitectureComposition {
+  if (boxes.length < 3) return 'layered'
+  const degree = new Map(boxes.map((item) => [item.id, 0]))
+  arrows.forEach((arrow) => {
+    degree.set(arrow.from, (degree.get(arrow.from) ?? 0) + 1)
+    degree.set(arrow.to, (degree.get(arrow.to) ?? 0) + 1)
+  })
+
+  const ai = boxes.filter((item) => item.icon === 'ai' || item.stencil === 'openai')
+  const mcp = boxes.filter((item) => item.icon === 'mcp' || item.stencil === 'mcp')
+  const cloudInfra = boxes.filter((item) => item.stencil === 'kubernetes' || item.stencil === 'docker' || item.stencil === 'nginx')
+  const queues = boxes.filter((item) => item.icon === 'queue' || item.stencil === 'kafka' || item.stencil === 'rabbitmq')
+  const workers = boxes.filter((item) => item.icon === 'worker' || item.icon === 'scheduler')
+  const processing = boxes.filter((item) => partitions.get(item.id) === 'processing')
+  const data = boxes.filter((item) => partitions.get(item.id) === 'data')
+  const sources = boxes.filter((item) => partitions.get(item.id) === 'external' || partitions.get(item.id) === 'experience')
+
+  if (ai.length && mcp.length && Math.max(...ai.map((item) => degree.get(item.id) ?? 0), 0) >= 3) return 'agent-runtime'
+  if (cloudInfra.length >= 2 && boxes.filter((item) => partitions.get(item.id) === 'application').length >= 2) return 'cloud-native'
+  if (queues.length && workers.length && queues.some((item) => (degree.get(item.id) ?? 0) >= 2)) return 'event-driven'
+  if (processing.length >= 2 && data.length >= 3 && sources.length >= 1) return 'data-platform'
+
+  const degrees = boxes.map((item) => degree.get(item.id) ?? 0)
+  const maxDegree = Math.max(...degrees, 0)
+  const averageDegree = degrees.reduce((sum, value) => sum + value, 0) / Math.max(1, degrees.length)
+  if (maxDegree >= 4 && maxDegree >= Math.max(4, averageDegree * 1.8)) return 'hub-spoke'
+  return 'layered'
+}
+
 export function beautifyArchitectureScene(scene: CanvasScene, options: ArchitectureBeautifyOptions = {}): ArchitectureBeautifyResult {
   const theme = options.theme ?? 'enterprise'
   const view = options.view ?? scene.architecture?.view ?? 'detail'
@@ -112,7 +156,12 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
   const semanticBoxes = originalBoxes.map((item) => enrichArchitectureBox(item))
   const partitionById = new Map(semanticBoxes.map((item) => [item.id, classifyArchitectureBox(item)]))
   const activePartitions = partitionOrder.filter((partition) => semanticBoxes.some((item) => partitionById.get(item.id) === partition))
-  const resolvedDensity = resolveArchitectureLayoutDensity(density, semanticBoxes.length)
+  const composition = detectArchitectureComposition(
+    semanticBoxes,
+    scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow'),
+    partitionById,
+  )
+  const resolvedDensity = resolveArchitectureLayoutDensity(density, semanticBoxes.length, composition)
   const partitionGroups = repartition ? buildArchitectureGroups(scene, activePartitions, theme) : scene.groups
 
   let enrichedNodes = 0
@@ -160,7 +209,7 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
     },
   }
 
-  if (relayout && repartition) next = layoutArchitectureTopology(next, partitionById, theme, resolvedDensity)
+  if (relayout && repartition) next = layoutArchitectureTopology(next, partitionById, theme, resolvedDensity, composition)
   next = applyArchitectureTheme(next, theme, partitionById)
   next = applyArchitectureEmphasis(next, partitionById)
   if (reroute) next = routeArchitectureEdges(next)
@@ -182,6 +231,7 @@ export function beautifyArchitectureScene(scene: CanvasScene, options: Architect
     scene: next,
     summary: {
       theme,
+      composition,
       partitions: activePartitions.length,
       enrichedNodes,
       routedEdges: reroute ? next.elements.filter((item) => item.type === 'arrow').length : 0,
@@ -444,11 +494,7 @@ function routeArchitectureArrow(
   const nodeObstacles = [...boxes.values()]
     .filter((item) => item.id !== from.id && item.id !== to.id)
     .map((item) => expandRect(item, 18))
-  const bundleKey = (fanout.get(arrow.from) ?? 0) >= 2
-    ? `from:${arrow.from}`
-    : (fanin.get(arrow.to) ?? 0) >= 2
-      ? `to:${arrow.to}`
-      : undefined
+  const bundleKey = architectureArrowBundleKey(from, to, fanout, fanin)
   const groupObstacles = routingGroupObstacles(from, to, groupFrames, groups)
   const obstacles = [...nodeObstacles, ...groupObstacles]
   const fromFrame = from.groupId ? groupFrames.get(from.groupId) : undefined
@@ -484,6 +530,33 @@ function routeArchitectureArrow(
     points: simplified.length > 2 ? simplified.slice(1, -1) : undefined,
     bundleKey,
   }
+}
+
+function architectureArrowBundleKey(
+  from: CanvasNode | CanvasNote,
+  to: CanvasNode | CanvasNote,
+  fanout: Map<string, number>,
+  fanin: Map<string, number>,
+): string | undefined {
+  const fromCount = fanout.get(from.id) ?? 0
+  const toCount = fanin.get(to.id) ?? 0
+  const sameGroup = Boolean(from.groupId && to.groupId && from.groupId === to.groupId)
+  const groupedRelationship = Boolean(from.groupId || to.groupId)
+  const distance = Math.abs((to.x + to.width / 2) - (from.x + from.width / 2))
+    + Math.abs((to.y + to.height / 2) - (from.y + from.height / 2))
+
+  if (sameGroup) {
+    if (fromCount >= 2 && (from.icon === 'queue' || from.stencil === 'kafka' || from.stencil === 'rabbitmq')) return `from:${from.id}`
+    return undefined
+  }
+  // Group-aware fan-outs are handled by the dedicated shared-bus routers.
+  // If those cannot find a safe bus (for example a multi-row target group),
+  // fall back to independent shortest routes instead of forcing a generic
+  // trunk that can send local relationships around the outside of a boundary.
+  if (groupedRelationship) return undefined
+  if (fromCount >= 2 && distance >= 280) return `from:${from.id}`
+  if (toCount >= 2 && distance >= 280) return `to:${to.id}`
+  return undefined
 }
 
 function collectDownwardGroupFanoutArrowIds(
@@ -777,9 +850,10 @@ function routeDownwardGroupFanouts(
 
     const start = fixedAnchorPoint(source, 'bottom')
     const branchY = targetTop - 28
-    const targetIds = new Set(targets.map((target) => target.id))
+    const targetLeft = Math.min(...targets.map((target) => target.x))
+    const targetRight = Math.max(...targets.map((target) => target.x + target.width))
     const obstacles = [...boxes.values()]
-      .filter((item) => item.id !== source.id && !targetIds.has(item.id))
+      .filter((item) => item.id !== source.id && !targets.some((target) => target.id === item.id))
       // Shared data buses need to leave dense service clusters without being
       // rejected only because an adjacent card falls inside the generic 18px
       // comfort margin. Keep a smaller visual clearance here; the quality gate
@@ -791,27 +865,62 @@ function routeDownwardGroupFanouts(
       ...intermediate.flatMap((item) => [item.x - 24, item.x + item.width + 24]),
     ])
 
-    let best: { score: number; routes: Map<string, CanvasPoint[]> } | undefined
+    let best: {
+      score: number
+      routes: Map<string, { route: CanvasPoint[]; toAnchor: 'top' | 'right' | 'bottom' | 'left' }>
+    } | undefined
     for (const corridorX of corridorCandidates) {
-      const routes = new Map<string, CanvasPoint[]>()
+      const routes = new Map<string, { route: CanvasPoint[]; toAnchor: 'top' | 'right' | 'bottom' | 'left' }>()
       let score = 0
       let valid = true
       for (const arrow of members) {
         const target = boxes.get(arrow.to)!
-        const end = fixedAnchorPoint(target, 'top')
+        const routeObstacles = [
+          ...obstacles,
+          ...targets
+            .filter((other) => other.id !== target.id)
+            .map((other) => expandRect(other, 4)),
+        ]
         const exitY = Math.min(branchY, start.y + 42)
-        const route = simplifyRoute(corridorX === start.x
-          ? [start, { x: start.x, y: branchY }, { x: end.x, y: branchY }, end]
-          : [start, { x: start.x, y: exitY }, { x: corridorX, y: exitY }, { x: corridorX, y: branchY }, { x: end.x, y: branchY }, end])
-        const collisions = countRouteObstacleCollisions(route, obstacles)
-        if (collisions > 0) {
+        const prefix = corridorX === start.x
+          ? [start, { x: start.x, y: branchY }]
+          : [start, { x: start.x, y: exitY }, { x: corridorX, y: exitY }, { x: corridorX, y: branchY }]
+        const routeCandidates: Array<{ route: CanvasPoint[]; toAnchor: 'top' | 'right' | 'bottom' | 'left' }> = []
+        if (target.y <= targetTop + 4) {
+          const end = fixedAnchorPoint(target, 'top')
+          routeCandidates.push({
+            route: simplifyRoute([...prefix, { x: end.x, y: branchY }, end]),
+            toAnchor: 'top',
+          })
+        } else {
+          const leftEnd = fixedAnchorPoint(target, 'left')
+          const rightEnd = fixedAnchorPoint(target, 'right')
+          routeCandidates.push(
+            {
+              route: simplifyRoute([...prefix, { x: targetLeft - 28, y: branchY }, { x: targetLeft - 28, y: leftEnd.y }, leftEnd]),
+              toAnchor: 'left',
+            },
+            {
+              route: simplifyRoute([...prefix, { x: targetRight + 28, y: branchY }, { x: targetRight + 28, y: rightEnd.y }, rightEnd]),
+              toAnchor: 'right',
+            },
+          )
+        }
+        const routeChoice = routeCandidates
+          .filter((candidate) => countRouteObstacleCollisions(candidate.route, routeObstacles) === 0)
+          .map((candidate) => ({
+            ...candidate,
+            score: routeLength(candidate.route)
+              + Math.max(0, candidate.route.length - 2) * 18
+              + countRouteCrossings(candidate.route, occupied) * 1800,
+          }))
+          .sort((left, right) => left.score - right.score)[0]
+        if (!routeChoice) {
           valid = false
           break
         }
-        routes.set(arrow.id, route)
-        score += routeLength(route)
-          + Math.max(0, route.length - 2) * 18
-          + countRouteCrossings(route, occupied) * 1800
+        routes.set(arrow.id, { route: routeChoice.route, toAnchor: routeChoice.toAnchor })
+        score += routeChoice.score
       }
       if (valid && (!best || score < best.score)) best = { score, routes }
     }
@@ -819,9 +928,9 @@ function routeDownwardGroupFanouts(
 
     const bundleKey = `from:${source.id}`
     for (const arrow of members) {
-      const route = best.routes.get(arrow.id)
+      const routed = best.routes.get(arrow.id)
       const target = boxes.get(arrow.to)
-      if (!route || !target) continue
+      if (!routed || !target) continue
       const asyncEdge = source.icon === 'queue' || target.icon === 'queue'
         || source.stencil === 'kafka' || target.stencil === 'kafka'
         || source.stencil === 'rabbitmq' || target.stencil === 'rabbitmq'
@@ -829,13 +938,13 @@ function routeDownwardGroupFanouts(
         ...arrow,
         routing: 'orthogonal',
         fromAnchor: 'bottom',
-        toAnchor: 'top',
+        toAnchor: routed.toAnchor,
         lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
-        points: route.length > 2 ? route.slice(1, -1) : undefined,
+        points: routed.route.length > 2 ? routed.route.slice(1, -1) : undefined,
         bundleKey,
       }
       result.set(arrow.id, routedArrow)
-      addOccupiedSegments(route, occupied, bundleKey)
+      addOccupiedSegments(routed.route, occupied, bundleKey)
     }
   }
   return result
@@ -1269,21 +1378,32 @@ function layoutArchitectureTopology(
   partitions: Map<string, ArchitecturePartition>,
   theme: ArchitectureTheme,
   density: Exclude<CanvasArchitectureDensity, 'auto'>,
+  composition: ArchitectureComposition,
 ): CanvasScene {
   const metrics = architectureTopologyMetrics(theme, density)
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const sourceOrder = new Map(boxes.map((item, index) => [item.id, index]))
+  const connectionDegree = new Map(boxes.map((item) => [item.id, 0]))
+  scene.elements.forEach((item) => {
+    if (item.type !== 'arrow') return
+    connectionDegree.set(item.from, (connectionDegree.get(item.from) ?? 0) + 1)
+    connectionDegree.set(item.to, (connectionDegree.get(item.to) ?? 0) + 1)
+  })
   const members = new Map<ArchitecturePartition, Array<CanvasNode | CanvasNote>>()
   for (const partition of partitionOrder) {
+    const placementMode = architectureCompositionPartitionPlacement(composition, partition)
     members.set(partition, boxes
       .filter((item) => partitions.get(item.id) === partition && !item.locked)
-      .sort((a, b) => architectureSortKey(a) - architectureSortKey(b) || a.y - b.y || a.x - b.x))
+      .sort((a, b) => placementMode === 'center'
+        ? (connectionDegree.get(b.id) ?? 0) - (connectionDegree.get(a.id) ?? 0) || architectureSortKey(a) - architectureSortKey(b) || (sourceOrder.get(a.id) ?? 0) - (sourceOrder.get(b.id) ?? 0)
+        : architectureSortKey(a) - architectureSortKey(b) || a.y - b.y || a.x - b.x))
   }
 
   const layouts = new Map<ArchitecturePartition, ArchitectureClusterLayout>()
   for (const partition of partitionOrder) {
     const items = members.get(partition) ?? []
     if (!items.length) continue
-    layouts.set(partition, measureArchitectureCluster(partition, items.length, metrics))
+    layouts.set(partition, measureArchitectureCluster(partition, items.length, metrics, composition))
   }
 
   const topPartitions = (['external', 'experience', 'application'] as ArchitecturePartition[]).filter((partition) => layouts.has(partition))
@@ -1300,17 +1420,61 @@ function layoutArchitectureTopology(
     const layout = layouts.get(partition)
     const items = members.get(partition) ?? []
     if (!layout) return
+    const centerWeighted = architectureCompositionPartitionPlacement(composition, partition) === 'center'
+    const slots = centerWeighted
+      ? architectureCenterOutSlots(layout.columns, layout.rows, items.length)
+      : items.map((_, index) => index)
     items.forEach((item, index) => {
-      const col = index % layout.columns
-      const row = Math.floor(index / layout.columns)
+      const slot = slots[index] ?? index
+      const col = slot % layout.columns
+      const row = Math.floor(slot / layout.columns)
       const rowStart = row * layout.columns
       const rowCount = Math.min(layout.columns, items.length - rowStart)
-      const rowOffset = Math.max(0, (layout.columns - rowCount) * metrics.columnStep / 2)
+      const rowOffset = centerWeighted ? 0 : Math.max(0, (layout.columns - rowCount) * metrics.columnStep / 2)
       positionById.set(item.id, {
         x: metrics.canvasMargin + x + metrics.groupPaddingX + rowOffset + col * metrics.columnStep,
         y: y + metrics.groupHeader + row * metrics.rowStep,
       })
     })
+  }
+
+  if (composition !== 'layered') {
+    const rows = architectureCompositionRows(composition)
+      .map((row) => row.filter((partition) => layouts.has(partition)))
+      .filter((row) => row.length > 0)
+    const rowWidths = rows.map((row) => architectureRowWidth(row, layouts, metrics.clusterGap))
+    const compositionWidth = Math.max(0, ...rowWidths)
+    const placedPartitions = new Map<ArchitecturePartition, { x: number; width: number }>()
+    let compositionY = metrics.canvasMargin
+    rows.forEach((row, rowIndex) => {
+      const rowHeight = Math.max(0, ...row.map((partition) => layouts.get(partition)?.height ?? 0))
+      let rowX = Math.max(0, (compositionWidth - rowWidths[rowIndex]) / 2)
+      if (composition === 'cloud-native' && rowIndex === 0 && row.includes('external')) rowX = 0
+      if (composition === 'data-platform' && rowIndex === 0 && row.length === 1 && row[0] === 'experience') {
+        rowX = Math.max(0, compositionWidth - rowWidths[rowIndex])
+      }
+      if ((composition === 'agent-runtime' || composition === 'event-driven') && row.length === 1) {
+        const anchorPartition = composition === 'event-driven' && row[0] === 'data' ? 'processing' : 'application'
+        const anchor = placedPartitions.get(anchorPartition)
+        if (anchor) rowX = Math.max(0, Math.min(compositionWidth - rowWidths[rowIndex], anchor.x + anchor.width / 2 - rowWidths[rowIndex] / 2))
+      }
+      row.forEach((partition) => {
+        const layout = layouts.get(partition)
+        if (!layout) return
+        placePartition(partition, rowX, compositionY)
+        placedPartitions.set(partition, { x: rowX, width: layout.width })
+        rowX += layout.width + metrics.clusterGap
+      })
+      compositionY += rowHeight + metrics.rowGap
+    })
+    return applyArchitectureLayoutPositions(
+      scene,
+      boxes,
+      positionById,
+      compositionWidth + metrics.canvasMargin * 2,
+      Math.max(metrics.canvasMargin, compositionY - metrics.rowGap) + metrics.canvasMargin,
+      metrics,
+    )
   }
 
   let cursorX = Math.max(0, (rowWidth - topWidth) / 2)
@@ -1337,12 +1501,79 @@ function layoutArchitectureTopology(
     nextRowY += dataHeight
   }
 
-  const unlockedWidth = rowWidth + metrics.canvasMargin * 2
-  const unlockedHeight = Math.max(metrics.canvasMargin + topHeight, nextRowY) + metrics.canvasMargin
+  return applyArchitectureLayoutPositions(
+    scene,
+    boxes,
+    positionById,
+    rowWidth + metrics.canvasMargin * 2,
+    Math.max(metrics.canvasMargin + topHeight, nextRowY) + metrics.canvasMargin,
+    metrics,
+  )
+}
+
+function architectureCompositionRows(composition: Exclude<ArchitectureComposition, 'layered'>): ArchitecturePartition[][] {
+  if (composition === 'hub-spoke') return [
+    ['external', 'experience'],
+    ['application'],
+    ['processing', 'data'],
+  ]
+  if (composition === 'agent-runtime') return [
+    ['external', 'experience'],
+    ['application', 'data'],
+    ['processing'],
+  ]
+  if (composition === 'event-driven') return [
+    ['external', 'experience', 'application'],
+    ['processing'],
+    ['data'],
+  ]
+  if (composition === 'data-platform') return [
+    ['experience'],
+    ['external', 'processing', 'data', 'application'],
+  ]
+  return [
+    ['external', 'experience'],
+    ['application', 'processing'],
+    ['data'],
+  ]
+}
+
+function architectureCompositionPartitionPlacement(
+  composition: ArchitectureComposition,
+  partition: ArchitecturePartition,
+): 'standard' | 'center' {
+  if (composition === 'event-driven' && partition === 'processing') return 'center'
+  if ((composition === 'hub-spoke' || composition === 'agent-runtime') && partition === 'application') return 'center'
+  return 'standard'
+}
+
+function architectureCenterOutSlots(columns: number, rows: number, count: number): number[] {
+  const centerX = (columns - 1) / 2
+  const centerY = (rows - 1) / 2
+  return Array.from({ length: columns * rows }, (_, index) => index)
+    .sort((left, right) => {
+      const leftCol = left % columns
+      const leftRow = Math.floor(left / columns)
+      const rightCol = right % columns
+      const rightRow = Math.floor(right / columns)
+      const leftDistance = Math.abs(leftCol - centerX) + Math.abs(leftRow - centerY)
+      const rightDistance = Math.abs(rightCol - centerX) + Math.abs(rightRow - centerY)
+      return leftDistance - rightDistance || leftRow - rightRow || leftCol - rightCol
+    })
+    .slice(0, count)
+}
+
+function applyArchitectureLayoutPositions(
+  scene: CanvasScene,
+  boxes: Array<CanvasNode | CanvasNote>,
+  positionById: Map<string, { x: number; y: number }>,
+  unlockedWidth: number,
+  unlockedHeight: number,
+  metrics: ReturnType<typeof architectureTopologyMetrics>,
+): CanvasScene {
   const locked = boxes.filter((item) => item.locked)
   const lockedRight = Math.max(0, ...locked.map((item) => item.x + item.width + metrics.canvasMargin))
   const lockedBottom = Math.max(0, ...locked.map((item) => item.y + item.height + metrics.canvasMargin))
-
   return {
     ...scene,
     width: Math.max(960, unlockedWidth, lockedRight),
@@ -1373,8 +1604,10 @@ function measureArchitectureCluster(
   partition: ArchitecturePartition,
   count: number,
   metrics: ReturnType<typeof architectureTopologyMetrics>,
+  composition: ArchitectureComposition = 'layered',
 ): ArchitectureClusterLayout {
-  const maxColumns = partition === 'external' ? 1
+  const maxColumns = composition === 'data-platform' && partition === 'data' ? 2
+    : partition === 'external' ? 1
     : partition === 'experience' ? 2
       : partition === 'application' ? 3
         : partition === 'processing' ? 3
@@ -1401,9 +1634,11 @@ function architectureRowWidth(
 function resolveArchitectureLayoutDensity(
   density: CanvasArchitectureDensity,
   nodeCount: number,
+  composition: ArchitectureComposition = 'layered',
 ): Exclude<CanvasArchitectureDensity, 'auto'> {
   if (density !== 'auto') return density
   if (nodeCount >= 46) return 'dense'
+  if (nodeCount >= 10 && (composition === 'event-driven' || composition === 'data-platform' || composition === 'agent-runtime' || composition === 'cloud-native')) return 'compact'
   if (nodeCount >= 22) return 'compact'
   return 'comfortable'
 }
