@@ -17,6 +17,7 @@ export interface MermaidVisualPalette {
 }
 
 export type MermaidVisualDensity = 'comfortable' | 'compact' | 'dense'
+export type MermaidVisualStyle = 'technical' | 'minimal' | 'editorial' | 'presentation'
 
 interface MermaidTreemapRuntimeConfig {
   useMaxWidth?: boolean
@@ -34,6 +35,11 @@ interface MermaidTreemapRuntimeConfig {
 export type MermaidVisualConfig = MermaidConfig & {
   /** Mermaid 11.17 supports this at runtime, but its public MermaidConfig typing omits it. */
   treemap?: MermaidTreemapRuntimeConfig
+}
+
+export function resolveMermaidVisualStyle(source: string): MermaidVisualStyle {
+  const match = source.match(/^\s*%%\s*codex-diagram:style=(technical|minimal|editorial|presentation)\s*$/im)
+  return (match?.[1] as MermaidVisualStyle | undefined) ?? 'technical'
 }
 
 export function normalizeMermaidSourceForRender(type: MermaidDiagramType | 'unknown', source: string): string {
@@ -116,19 +122,27 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
 
 export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palette: MermaidVisualPalette, source = ''): MermaidVisualConfig {
   const density = resolveMermaidVisualDensity(type, source)
-  const nodeSpacing = density === 'comfortable' ? 38 : density === 'compact' ? 30 : 24
-  const rankSpacing = density === 'comfortable' ? 58 : density === 'compact' ? 48 : 40
-  const flowchartRankSpacing = density === 'comfortable' ? 54 : density === 'compact' ? 42 : 32
-  const actorMargin = density === 'comfortable' ? 72 : density === 'compact' ? 58 : 46
-  const messageMargin = density === 'comfortable' ? 34 : density === 'compact' ? 29 : 24
-  const actorWidth = density === 'comfortable' ? 150 : density === 'compact' ? 136 : 118
-  const actorHeight = density === 'comfortable' ? 50 : density === 'compact' ? 47 : 44
-  const entityPadding = density === 'comfortable' ? 12 : density === 'compact' ? 10 : 8
+  const style = resolveMermaidVisualStyle(source)
+  const requestedSpacing = style === 'minimal' ? 0.88 : style === 'editorial' ? 1.14 : style === 'presentation' ? 1.24 : 1
+  const spacing = density === 'dense' ? Math.min(requestedSpacing, 1.08) : requestedSpacing
+  const scaled = (value: number) => Math.round(value * spacing)
+  const nodeSpacing = scaled(density === 'comfortable' ? 38 : density === 'compact' ? 30 : 24)
+  const rankSpacing = scaled(density === 'comfortable' ? 58 : density === 'compact' ? 48 : 40)
+  const flowchartRankSpacing = scaled(density === 'comfortable' ? 54 : density === 'compact' ? 42 : 32)
+  const actorMargin = scaled(density === 'comfortable' ? 72 : density === 'compact' ? 58 : 46)
+  const messageMargin = scaled(density === 'comfortable' ? 34 : density === 'compact' ? 29 : 24)
+  const actorWidth = scaled(density === 'comfortable' ? 150 : density === 'compact' ? 136 : 118)
+  const actorHeight = scaled(density === 'comfortable' ? 50 : density === 'compact' ? 47 : 44)
+  const entityPadding = scaled(density === 'comfortable' ? 12 : density === 'compact' ? 10 : 8)
+  const fontSize = style === 'minimal' ? '12px' : style === 'editorial' ? '14px' : style === 'presentation' ? '15px' : '13px'
+  const fontWeight = style === 'presentation' ? '600' : style === 'editorial' ? '550' : '500'
+  const radius = style === 'minimal' ? 5 : style === 'editorial' ? 10 : style === 'presentation' ? 12 : 8
+  const strokeWidth = style === 'presentation' ? '1.5px' : style === 'editorial' ? '1.25px' : '1px'
   const themeVariables = {
-    fontSize: '13px',
-    fontWeight: '500',
-    radius: 8,
-    strokeWidth: '1px',
+    fontSize,
+    fontWeight,
+    radius,
+    strokeWidth,
     dropShadow: 'none',
     background: palette.background,
     primaryColor: palette.raised,
@@ -276,68 +290,68 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
     startOnLoad: false,
     securityLevel: 'strict',
     theme: 'base',
-    look: type === 'flowchart' || type === 'state' || type === 'class' ? 'neo' : 'classic',
+    look: (type === 'flowchart' || type === 'state' || type === 'class') && style !== 'minimal' && style !== 'editorial' ? 'neo' : 'classic',
     themeVariables,
     markdownAutoWrap: true,
     flowchart: {
-      diagramPadding: 16,
+      diagramPadding: scaled(16),
       htmlLabels: true,
       nodeSpacing,
       rankSpacing: flowchartRankSpacing,
       defaultRenderer: 'dagre-wrapper',
       curve: 'linear',
-      padding: density === 'dense' ? 9 : 12,
-      wrappingWidth: density === 'dense' ? 170 : 190,
+      padding: scaled(density === 'dense' ? 9 : 12),
+      wrappingWidth: scaled(density === 'dense' ? 170 : 190),
     },
     sequence: {
-      diagramMarginX: density === 'dense' ? 18 : 28,
-      diagramMarginY: density === 'dense' ? 10 : 18,
-      actorMargin: density === 'dense' ? 34 : actorMargin,
+      diagramMarginX: scaled(density === 'dense' ? 18 : 28),
+      diagramMarginY: scaled(density === 'dense' ? 10 : 18),
+      actorMargin: density === 'dense' ? scaled(34) : actorMargin,
       width: actorWidth,
-      height: density === 'dense' ? 42 : actorHeight,
-      boxMargin: density === 'dense' ? 7 : 10,
-      boxTextMargin: density === 'dense' ? 4 : 6,
-      noteMargin: density === 'dense' ? 10 : 14,
-      messageMargin: density === 'dense' ? 16 : messageMargin,
+      height: density === 'dense' ? scaled(42) : actorHeight,
+      boxMargin: scaled(density === 'dense' ? 7 : 10),
+      boxTextMargin: scaled(density === 'dense' ? 4 : 6),
+      noteMargin: scaled(density === 'dense' ? 10 : 14),
+      messageMargin: density === 'dense' ? scaled(16) : messageMargin,
       mirrorActors: false,
       bottomMarginAdj: 8,
-      actorFontSize: 13,
-      messageFontSize: 12,
-      noteFontSize: 12,
+      actorFontSize: style === 'presentation' ? 15 : style === 'editorial' ? 14 : 13,
+      messageFontSize: style === 'presentation' ? 14 : style === 'editorial' ? 13 : 12,
+      noteFontSize: style === 'presentation' ? 13 : 12,
       wrap: true,
-      wrapPadding: density === 'dense' ? 7 : 10,
+      wrapPadding: scaled(density === 'dense' ? 7 : 10),
     },
     er: {
-      diagramPadding: 18,
+      diagramPadding: scaled(18),
       layoutDirection: 'LR',
-      minEntityWidth: 120,
-      minEntityHeight: 70,
+      minEntityWidth: scaled(120),
+      minEntityHeight: scaled(70),
       entityPadding,
       nodeSpacing: nodeSpacing + 2,
       rankSpacing: rankSpacing + 4,
-      fontSize: 12,
+      fontSize: style === 'presentation' ? 14 : style === 'editorial' ? 13 : 12,
       stroke: palette.strongBorder,
       fill: palette.raised,
     },
     state: {
-      padding: 12,
-      noteMargin: 12,
+      padding: scaled(12),
+      noteMargin: scaled(12),
       nodeSpacing: nodeSpacing + 4,
       rankSpacing,
-      miniPadding: 5,
-      fontSize: 12,
-      radius: 8,
+      miniPadding: scaled(5),
+      fontSize: style === 'presentation' ? 14 : style === 'editorial' ? 13 : 12,
+      radius,
       defaultRenderer: 'dagre-wrapper',
     },
     mindmap: {
-      padding: 14,
-      maxNodeWidth: density === 'dense' ? 160 : density === 'compact' ? 175 : 190,
+      padding: scaled(14),
+      maxNodeWidth: scaled(density === 'dense' ? 160 : density === 'compact' ? 175 : 190),
     },
     class: {
-      padding: 10,
+      padding: scaled(10),
       nodeSpacing: nodeSpacing + 4,
       rankSpacing,
-      diagramPadding: 16,
+      diagramPadding: scaled(16),
       htmlLabels: true,
       hideEmptyMembersBox: true,
       hierarchicalNamespaces: true,

@@ -8,6 +8,8 @@ v0.18 增加 Visual Quality Gate 与可重复压力基准。`pnpm visual:benchma
 
 v0.19 增加固定画布的 Pixel Visual Regression。`pnpm visual:regression` 会把同一批复杂样例以 1400×1000、固定 48px 边距和 light/dark 两套主题渲染成 golden view，再同时比较显著像素变化、平均色差与 20px macro-cell 结构差异。少量抗锯齿抖动不会直接失败，但整体间距、配色、节点形态或布局明显变化会阻断回归。基线存放在 `tests/fixtures/visual-baseline/`；只有显式运行 `pnpm visual:regression:update` 才会重建。失败时会把 baseline/current/diff 三张诊断图写到 `test-results/visual-regression/`。`pnpm visual:verify` 会串行执行模板浏览器 smoke、复杂几何 benchmark 与像素 golden regression。
 
+Mermaid 支持每张图声明轻量视觉 Profile：在源码首部加入 `%% codex-diagram:style=technical|minimal|editorial|presentation`。默认 `technical` 保持工程文档密度；`minimal` 更克制紧凑；`editorial` 增强叙事留白和层级；`presentation` 为评审/汇报提高字号与间距。Profile 只改变 Visual Grammar，不把颜色或布局细节硬编码进业务 Mermaid。需要实际看效果时，可运行 `node scripts/render-gallery.mjs --source-dir <目录> --output-dir test-results/visual-gallery`，脚本会在真实 Chrome 中把 Mermaid 与 `.diagram.json` Canvas 同时渲染为 light/dark PNG，并生成可浏览的 `index.html`。
+
 当前 Diagram Skill 进一步采用渐进式设计合同：每一种 Mermaid 类型显式声明适用的构图原型（例如线性主链、决策树、泳道、汇聚、层级树、定量流向等），并把“视觉论证 / 证据来源 / 密度 / 反模式 / 质量回检”分开。模型不应默认生成等权卡片墙；架构 Canvas 额外支持 backbone、fan-out、convergence、hub-spoke、layered/swimlane 等拓扑选择。直接通过 MCP 对话生成复杂图时，可先调用 `diagram.designGuide` 只读取当前类型的规则，避免把 19 种 Skill 一次性塞入上下文。完成生成或大改后调用 `diagram.inspectQuality` 做一次有界质量回检：Canvas 检查节点重叠、连线穿节点、关系交叉、层级过平和超长标签；Mermaid 检查各类型自己的密度与拆图阈值。若 `needsRevision=true`，只针对报告问题修正并最多再回检一次。
 
 开发回归除 `pnpm test` / `pnpm smoke` 外，还可运行 `pnpm visual:smoke`：它使用本机 Chrome/Chromium 在真实浏览器中按 light/dark 两套 Visual Grammar 渲染全部正式 Mermaid 模板，并检查渲染失败与异常超大 SVG，用于捕获 Node 单测难以发现的 Mermaid lexer、DOMPurify 和浏览器渲染兼容问题。

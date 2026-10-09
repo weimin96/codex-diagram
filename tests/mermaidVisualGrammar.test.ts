@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mermaidVisualConfig, mermaidVisualProfile, normalizeMermaidSourceForRender, resolveMermaidVisualDensity } from '../src/mermaidVisualGrammar.js'
+import { mermaidVisualConfig, mermaidVisualProfile, normalizeMermaidSourceForRender, resolveMermaidVisualDensity, resolveMermaidVisualStyle } from '../src/mermaidVisualGrammar.js'
 
 const palette = {
   background: '#ffffff', surface: '#fafafa', raised: '#f4f4f5', muted: '#eeeeef', text: '#18181b', secondaryText: '#6b7280',
@@ -129,4 +129,23 @@ test('flowchart render normalization removes HTML line breaks without rewriting 
   assert.equal(normalized, 'flowchart TB\n  A["Parse retry"] --> B[Done]\n')
   assert.match(source, /<br\/>/)
   assert.equal(normalizeMermaidSourceForRender('sequence', source), source)
+})
+
+test('visual style directives select stable profiles without changing the diagram grammar', () => {
+  assert.equal(resolveMermaidVisualStyle('flowchart LR\n  A --> B'), 'technical')
+  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=editorial\nflowchart LR\n  A --> B'), 'editorial')
+  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=presentation\nflowchart LR\n  A --> B'), 'presentation')
+
+  const technical = mermaidVisualConfig('flowchart', palette, 'flowchart LR\n  A --> B')
+  const minimal = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=minimal\nflowchart LR\n  A --> B')
+  const editorial = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=editorial\nflowchart LR\n  A --> B')
+  const presentation = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=presentation\nflowchart LR\n  A --> B')
+
+  assert.equal(technical.look, 'neo')
+  assert.equal(minimal.look, 'classic')
+  assert.equal(editorial.look, 'classic')
+  assert.ok((minimal.flowchart?.nodeSpacing ?? 0) < (technical.flowchart?.nodeSpacing ?? 0))
+  assert.ok((editorial.flowchart?.nodeSpacing ?? 0) > (technical.flowchart?.nodeSpacing ?? 0))
+  assert.ok((presentation.flowchart?.nodeSpacing ?? 0) > (editorial.flowchart?.nodeSpacing ?? 0))
+  assert.equal(presentation.themeVariables?.fontSize, '15px')
 })
