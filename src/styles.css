@@ -843,6 +843,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .impact-unmapped-list { display: grid; gap: 3px; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 7px; }
 .impact-unmapped-list code { overflow: hidden; color: var(--text-tertiary); font: 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .impact-empty { margin: 0; padding: 8px; color: var(--text-tertiary); font-size: 11px; }
+.patch-history-trigger.is-active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)) !important; background: color-mix(in srgb, var(--accent) 7%, transparent) !important; color: var(--accent) !important; }
+.patch-history-panel { grid-template-rows: auto auto minmax(0, 1fr); width: min(520px, 100%); }
+.patch-history-head-actions { min-width: auto !important; display: flex !important; grid-template-columns: none !important; align-items: center !important; gap: 5px !important; }
+.patch-history-body { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; padding: 10px 11px 18px; background: var(--app-bg); }
+.patch-history-empty { padding: 24px 12px; border: 1px dashed var(--border); border-radius: 9px; color: var(--text-tertiary); font-size: 11px; text-align: center; }
+.patch-history-entry { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-panel); box-shadow: 0 3px 12px rgba(0,0,0,.025); }
+.patch-history-entry.is-undone { opacity: .66; }
+.patch-history-entry-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px 11px 8px; }
+.patch-history-entry-head > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.patch-history-entry-head time { color: var(--text-tertiary); font: 9px var(--font-mono); }
+.patch-history-entry-head strong { overflow: hidden; color: var(--text-primary); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.patch-history-badges { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 48%; }
+.patch-history-badges span { padding: 2px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-tertiary); font-size: 9px; white-space: nowrap; }
+.patch-history-badges span.is-undone { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); color: var(--danger); }
+.patch-history-counts { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 11px 8px; color: var(--text-tertiary); font-size: 10px; }
+.patch-history-counts strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.patch-history-changes { display: grid; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.patch-history-change { min-width: 0; min-height: 34px; display: grid; grid-template-columns: 38px 32px minmax(0, .9fr) minmax(0, 1.1fr); align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); background: transparent; color: var(--text-secondary); text-align: left; }
+.patch-history-change:last-child { border-bottom: 0; }
+.patch-history-change:hover { background: var(--surface-hover); }
+.patch-history-change strong, .patch-history-change small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.patch-history-change strong { color: var(--text-secondary); font: 10px var(--font-mono); }
+.patch-history-change small { color: var(--text-tertiary); font-size: 9px; }
+.patch-history-origin { color: #7c3aed; font-size: 9px; font-weight: 650; }
+.patch-history-origin.is-automatic { color: var(--accent); }
+.patch-history-more { padding: 6px 10px; color: var(--text-tertiary); font-size: 9px; }
+.patch-history-entry-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 8px 10px; }
+.patch-history-entry-actions button { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 10px; }
+.patch-history-entry-actions button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.patch-history-entry-actions button.is-danger { color: var(--danger); }
+.patch-history-entry-actions > span { margin-right: auto; color: var(--text-tertiary); font-size: 9px; }
 .proposal-scope-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, var(--surface-panel)); }
 .proposal-scope-summary strong { color: var(--accent); font: 10px var(--font-mono); letter-spacing: .08em; }
 .proposal-scope-summary span { color: var(--text-secondary); font-size: 11px; }

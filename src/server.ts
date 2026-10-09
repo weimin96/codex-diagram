@@ -8,8 +8,9 @@ import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
 import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch, type CanvasSubgraphPatchInput } from './canvasPatch.js'
+import { buildCanvasPatchHistoryEntry, CanvasPatchHistoryStore, undoCanvasPatchHistory, type CanvasPatchHistorySummary } from './canvasHistory.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
 import { DiagramStore } from './store.js'
 import { readGitChanges } from './gitChanges.js'
@@ -71,7 +72,7 @@ const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
-type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string; modifiedAt?: string }
+type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo'; path: string; key: string; modifiedAt?: string }
 const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; activity?: ThreadDrawActivity; updatedAt: string }>()
 interface ThreadDiagramProposal {
   workspacePath: string
@@ -86,6 +87,7 @@ interface ThreadDiagramProposal {
   impactElementIds?: string[]
   automaticElementIds?: string[]
   canvasPatch?: CanvasSubgraphPatchInput
+  rebased?: boolean
   patchSummary?: {
     updated: number
     added: number
@@ -1007,7 +1009,7 @@ server.registerTool('diagram.applyProposal', {
   let candidateSource = proposal.source
   let baseSource = proposal.baseSource
   let expectedModifiedAt = proposal.baseModifiedAt
-  let rebased = false
+  let rebased = Boolean(proposal.rebased)
   if (stale && proposal.canvasPatch) {
     const rebasedPatch = rebaseCanvasSubgraphPatch(
       parseCanvasScene(proposal.baseSource),
@@ -1028,6 +1030,7 @@ server.registerTool('diagram.applyProposal', {
     if (reviewIds.size) {
       const refreshed: ThreadDiagramProposal = {
         ...proposal,
+        rebased: true,
         source: rebasedSource,
         baseSource: current.source,
         baseModifiedAt: current.modifiedAt,
@@ -1069,9 +1072,37 @@ server.registerTool('diagram.applyProposal', {
     ? mergeCanvasProposalSelection(baseSource, candidateSource, elementIds, !proposal.patchSummary)
     : candidateSource
   const diagram = await store.update(proposal.path, source, expectedModifiedAt)
+  let historyEntryId: string | undefined
+  let historyRecorded = false
+  if (proposal.canvasPatch) {
+    const declaredElementIds = [
+      ...(proposal.canvasPatch.updates ?? []).map((item) => item.id),
+      ...(proposal.canvasPatch.adds ?? []).map((item) => item.id),
+      ...(proposal.canvasPatch.removeIds ?? []),
+    ]
+    const entry = buildCanvasPatchHistoryEntry({
+      workspacePath: store.workspacePath,
+      path: proposal.path,
+      before: parseCanvasScene(baseSource),
+      after: parseCanvasScene(source),
+      beforeModifiedAt: expectedModifiedAt,
+      afterModifiedAt: diagram.modifiedAt,
+      reason: proposal.reason,
+      layout: proposal.canvasPatch.layout ?? 'preserve',
+      rebased,
+      acceptedElementIds: elementIds,
+      scopeElementIds: proposal.scopeElementIds,
+      declaredElementIds,
+      automaticElementIds: proposal.automaticElementIds,
+    })
+    if (entry.changes.length) {
+      historyEntryId = entry.id
+      historyRecorded = await new CanvasPatchHistoryStore(store.workspacePath).appendApply(entry).then(() => true).catch(() => false)
+    }
+  }
   threadProposals.delete(threadId)
   markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal', diagram.modifiedAt)
-  const proposalApply = { rebased, beforeSource: baseSource }
+  const proposalApply = { rebased, beforeSource: baseSource, historyEntryId, historyRecorded }
   return {
     content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram, proposalApply }) }],
     structuredContent: {
@@ -1097,6 +1128,77 @@ server.registerTool('diagram.dismissProposal', {
     threadSelection.set(threadId, { ...current, updatedAt: new Date().toISOString() })
   }
   return { content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram-proposal-dismissed' }) }], structuredContent: { kind: 'diagram-proposal-dismissed' } }
+})
+
+server.registerTool('diagram.patchHistory', {
+  title: 'Read AI Canvas patch history',
+  description: 'Internal app bridge for listing applied incremental Canvas AI patches and their direct/automatic element changes.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(200).default(80),
+  }),
+  annotations: readonly,
+  _meta: appOnly,
+}, async ({ workspacePath, path: diagramPath, limit }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  const history = new CanvasPatchHistoryStore(store.workspacePath)
+  const entries = await history.list(targetPath, limit)
+  const payload = {
+    kind: 'diagram-patch-history',
+    workspacePath: store.workspacePath,
+    path: targetPath,
+    entries: entries.map(patchHistorySummary),
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
+server.registerTool('diagram.undoPatchHistory', {
+  title: 'Undo AI Canvas patch',
+  description: 'Internal app bridge for safely undoing one applied incremental Canvas patch. Reverts only fields owned by that transaction and refuses to overwrite later edits to the same fields.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    historyId: z.string().min(1),
+  }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, historyId }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const history = new CanvasPatchHistoryStore(store.workspacePath)
+  const entry = await history.get(historyId)
+  if (!entry) throw new Error('找不到这条 AI 修改历史，可能已被清理或属于其他工作空间。')
+  if (entry.undoneAt) throw new Error('这条 AI 修改已经撤销过。')
+  const current = await store.get(entry.path)
+  if (current.type !== 'canvas') throw new Error('AI Patch 历史撤销只支持 Canvas 图。')
+  const result = undoCanvasPatchHistory(parseCanvasScene(current.source), entry)
+  const diagram = await store.update(entry.path, serializeCanvasScene(result.scene), current.modifiedAt)
+  const undoEvent = await history.appendUndo({
+    path: entry.path,
+    targetId: entry.id,
+    beforeModifiedAt: current.modifiedAt,
+    afterModifiedAt: diagram.modifiedAt,
+  })
+  const byId = new Map(result.scene.elements.map((item) => [item.id, item]))
+  const focusNodeIds = result.revertedElementIds.filter((id) => byId.get(id)?.type !== 'arrow')
+  markThreadDiagram(extra._meta, diagram.path, focusNodeIds, undefined, 'history-undo', diagram.modifiedAt)
+  const payload = {
+    kind: 'diagram-patch-history-undo',
+    workspacePath: store.workspacePath,
+    diagram,
+    historyId: entry.id,
+    undoEventId: undoEvent.id,
+    revertedElementIds: result.revertedElementIds,
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
 })
 
 server.registerTool('diagram.rename', {
@@ -1472,9 +1574,63 @@ function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
     newElementIds: proposal.newElementIds,
     impactElementIds: proposal.impactElementIds,
     automaticElementIds: proposal.automaticElementIds,
+    rebased: proposal.rebased,
     rebaseable: Boolean(proposal.canvasPatch),
     patchSummary: proposal.patchSummary,
   }
+}
+
+function patchHistorySummary(entry: CanvasPatchHistorySummary) {
+  return {
+    id: entry.id,
+    path: entry.path,
+    appliedAt: entry.appliedAt,
+    reason: entry.reason,
+    layout: entry.layout,
+    rebased: entry.rebased,
+    partial: entry.partial,
+    acceptedElementIds: entry.acceptedElementIds,
+    scopeElementIds: entry.scopeElementIds,
+    automaticElementIds: entry.automaticElementIds,
+    undoneAt: entry.undoneAt,
+    undoEventId: entry.undoEventId,
+    counts: {
+      updated: entry.changes.filter((item) => item.kind === 'update').length,
+      added: entry.changes.filter((item) => item.kind === 'add').length,
+      removed: entry.changes.filter((item) => item.kind === 'remove').length,
+      automatic: entry.changes.filter((item) => item.automatic).length,
+    },
+    changes: entry.changes.map((change) => ({
+      id: change.id,
+      kind: change.kind,
+      automatic: change.automatic,
+      declared: change.declared,
+      label: canvasHistoryElementLabel(change.after ?? change.before),
+      fields: change.before && change.after ? canvasHistoryChangedFields(change.before, change.after) : [change.kind === 'add' ? '新增' : '删除'],
+    })),
+  }
+}
+
+function canvasHistoryElementLabel(element: CanvasElement | undefined): string {
+  if (!element) return '未知元素'
+  if (element.type === 'arrow') return `${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
+  return element.text || element.id
+}
+
+function canvasHistoryChangedFields(before: CanvasElement, after: CanvasElement): string[] {
+  const left = before as unknown as Record<string, unknown>
+  const right = after as unknown as Record<string, unknown>
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .filter((key) => key !== 'id' && key !== 'type' && JSON.stringify(left[key]) !== JSON.stringify(right[key]))
+    .map(canvasHistoryFieldLabel)
+}
+
+function canvasHistoryFieldLabel(field: string): string {
+  return ({
+    text: '文字', subtitle: '副标题', description: '说明', tags: '标签', x: 'X', y: 'Y', width: '宽度', height: '高度',
+    from: '起点', to: '终点', points: '折点', label: '关系文字', labelPosition: '标签位置', routing: '路由', fromAnchor: '起点锚点', toAnchor: '终点锚点',
+    groupId: '边界', laneId: '泳道', c4Type: 'C4', icon: '角色', stencil: '技术栈', emphasis: '强调', sourcePaths: '源码', tone: '色调', shape: '形状', locked: '锁定', bundleKey: '关系通道', lineStyle: '线型',
+  } as Record<string, string>)[field] ?? field
 }
 
 function validateCanvasSubgraphProposal(baseSource: string, candidateSource: string, elementIds: string[], newElementIds: string[]): void {

@@ -25,7 +25,7 @@ interface DiagramResult {
   kind: 'diagram'
   workspacePath: string
   diagram: DiagramDocument
-  proposalApply?: { rebased: boolean; beforeSource?: string }
+  proposalApply?: { rebased: boolean; beforeSource?: string; historyEntryId?: string; historyRecorded?: boolean }
 }
 
 interface DiagramListResult {
@@ -63,7 +63,7 @@ interface DiagramThreadStateResult {
   activeDiagramPath?: string
   focusElementIds?: string[]
   trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
-  activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync'; path: string; key: string; modifiedAt?: string }
+  activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo'; path: string; key: string; modifiedAt?: string }
   proposal?: DiagramProposalSummary
   gitImpact?: { path: string; updatedAt: string; fileCount: number; directCount: number; affectedCount: number; unmatchedCount: number }
   updatedAt?: string
@@ -102,6 +102,48 @@ interface DiagramProposalRefreshResult {
   before: DiagramDocument
   candidateSource: string
   reviewElementIds: string[]
+}
+
+interface DiagramPatchHistoryChange {
+  id: string
+  kind: 'add' | 'remove' | 'update'
+  automatic: boolean
+  declared: boolean
+  label: string
+  fields: string[]
+}
+
+interface DiagramPatchHistoryEntry {
+  id: string
+  path: string
+  appliedAt: string
+  reason?: string
+  layout: 'preserve' | 'local'
+  rebased: boolean
+  partial: boolean
+  acceptedElementIds?: string[]
+  scopeElementIds: string[]
+  automaticElementIds: string[]
+  undoneAt?: string
+  undoEventId?: string
+  counts: { updated: number; added: number; removed: number; automatic: number }
+  changes: DiagramPatchHistoryChange[]
+}
+
+interface DiagramPatchHistoryResult {
+  kind: 'diagram-patch-history'
+  workspacePath: string
+  path?: string
+  entries: DiagramPatchHistoryEntry[]
+}
+
+interface DiagramPatchHistoryUndoResult {
+  kind: 'diagram-patch-history-undo'
+  workspacePath: string
+  diagram: DiagramDocument
+  historyId: string
+  undoEventId: string
+  revertedElementIds: string[]
 }
 
 interface DiagramGitImpactResult {
@@ -280,6 +322,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [gitImpactOpen, setGitImpactOpen] = useState(false)
   const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [proposalReviewOpen, setProposalReviewOpen] = useState(false)
+  const [patchHistoryOpen, setPatchHistoryOpen] = useState(false)
+  const [patchHistoryEntries, setPatchHistoryEntries] = useState<DiagramPatchHistoryEntry[]>([])
+  const [patchHistoryLoading, setPatchHistoryLoading] = useState(false)
+  const [patchHistoryUndoingId, setPatchHistoryUndoingId] = useState<string | null>(null)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
@@ -291,6 +337,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const lastPlaybackActivity = useRef<string | undefined>(undefined)
   const pendingPlaybackActivity = useRef<DiagramThreadStateResult['activity'] | undefined>(undefined)
   const selectRequestSeq = useRef(0)
+  const patchHistoryRequestSeq = useRef(0)
   const threadStateInitialized = useRef(false)
   const backgroundFailures = useRef({ thread: 0, revision: 0 })
   const dirty = Boolean(selected && source !== selected.source)
@@ -317,6 +364,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   useEffect(() => {
     selectRequestSeq.current += 1
+    patchHistoryRequestSeq.current += 1
     setSelected(null)
     setThreadTabs([])
     setCanvasSelection(null)
@@ -330,6 +378,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setGitImpactOpen(false)
     setAiProposal(null)
     setProposalReviewOpen(false)
+    setPatchHistoryOpen(false)
+    setPatchHistoryEntries([])
+    setPatchHistoryLoading(false)
+    setPatchHistoryUndoingId(null)
     setChangeReview(null)
     setChangeReviewOpen(false)
     setSource('')
@@ -375,7 +427,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             lastPlaybackActivity.current = state.activity?.key
           } else if (state.activity?.key && state.activity.key !== lastPlaybackActivity.current) {
             lastPlaybackActivity.current = state.activity.key
-            const alreadyAppliedProposal = state.activity.kind === 'proposal'
+            const alreadyAppliedProposal = (state.activity.kind === 'proposal' || state.activity.kind === 'history-undo')
               && state.activity.path === selected?.path
               && Boolean(state.activity.modifiedAt)
               && state.activity.modifiedAt === selected?.modifiedAt
@@ -693,6 +745,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
+      if (result.diagram.type !== 'canvas' && patchHistoryOpen) {
+        patchHistoryRequestSeq.current += 1
+        setPatchHistoryOpen(false)
+        setPatchHistoryEntries([])
+      } else if (patchHistoryOpen) {
+        void loadPatchHistory(result.diagram.path)
+      }
       if (remember) rememberThreadTab(result.diagram.path)
     } catch (cause) {
       if (requestSeq !== selectRequestSeq.current) return
@@ -864,7 +923,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      setNotice(result.proposalApply?.rebased ? '已接受 Codex 候选修改，并安全合并期间的其它画布改动' : '已接受 Codex 候选修改')
+      if (patchHistoryOpen && result.proposalApply?.historyRecorded) void loadPatchHistory(result.diagram.path)
+      const historyWarning = result.proposalApply?.historyEntryId && result.proposalApply.historyRecorded === false ? '；但本地历史记录写入失败' : ''
+      setNotice(`${result.proposalApply?.rebased ? '已接受 Codex 候选修改，并安全合并期间的其它画布改动' : '已接受 Codex 候选修改'}${historyWarning}`)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -882,6 +943,95 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setNotice('已拒绝 Codex 候选修改，当前文件未改变')
     } catch (cause) {
       setError(errorMessage(cause))
+    }
+  }
+
+  async function loadPatchHistory(diagramPath = selected?.path) {
+    if (!diagramPath) return
+    const requestSeq = ++patchHistoryRequestSeq.current
+    setPatchHistoryLoading(true)
+    try {
+      const result = await callTool<DiagramPatchHistoryResult>('diagram.patchHistory', { workspacePath, path: diagramPath, limit: 100 })
+      if (requestSeq !== patchHistoryRequestSeq.current) return
+      setPatchHistoryEntries(result.entries)
+    } catch (cause) {
+      if (requestSeq !== patchHistoryRequestSeq.current) return
+      setError(errorMessage(cause))
+    } finally {
+      if (requestSeq === patchHistoryRequestSeq.current) setPatchHistoryLoading(false)
+    }
+  }
+
+  function openPatchHistory() {
+    if (!selected) return
+    setProposalReviewOpen(false)
+    setChangeReviewOpen(false)
+    setGitImpactOpen(false)
+    setPatchHistoryOpen(true)
+    void loadPatchHistory(selected.path)
+  }
+
+  async function undoPatchHistory(entry: DiagramPatchHistoryEntry) {
+    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId) return
+    if (dirty && externalChange) {
+      setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
+      return
+    }
+    setSaving(true)
+    setPatchHistoryUndoingId(entry.id)
+    setError(null)
+    try {
+      let beforeSource = source
+      if (dirty) {
+        const savedDraft = await callTool<DiagramResult>('diagram.update', {
+          workspacePath,
+          path: selected.path,
+          source,
+          expectedModifiedAt: selected.modifiedAt,
+          animate: false,
+        })
+        setSelected(savedDraft.diagram)
+        setSource(savedDraft.diagram.source)
+        beforeSource = savedDraft.diagram.source
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
+        })
+      }
+      const result = await callTool<DiagramPatchHistoryUndoResult>('diagram.undoPatchHistory', {
+        workspacePath,
+        historyId: entry.id,
+      })
+      if (isThread && result.diagram.type === 'canvas') {
+        setCanvasPlayback({
+          key: `history-undo:${entry.id}:${result.diagram.modifiedAt}`,
+          path: result.diagram.path,
+          mode: 'update',
+          fromSource: beforeSource,
+          label: '正在撤销 AI 修改',
+        })
+      }
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      if (result.diagram.type === 'canvas' && result.revertedElementIds.length) {
+        const restored = parseCanvasScene(result.diagram.source)
+        const nodeIds = new Set(restored.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.revertedElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `history-focus:${entry.id}:${result.diagram.modifiedAt}` })
+      }
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      await loadPatchHistory(result.diagram.path)
+      setNotice(`已撤销这次 AI 修改 · ${result.revertedElementIds.length} 个元素恢复`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+      setPatchHistoryUndoingId(null)
     }
   }
 
@@ -1453,6 +1603,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   <button className="change-review-trigger" type="button" onClick={() => setChangeReviewOpen(true)}>变更</button>
                 ) : null}
                 {aiProposal ? <button className="proposal-review-trigger" type="button" onClick={() => setProposalReviewOpen(true)}>Proposal</button> : null}
+                {selected.type === 'canvas' ? <button className={`patch-history-trigger${patchHistoryOpen ? ' is-active' : ''}`} type="button" onClick={openPatchHistory}>历史</button> : null}
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
                 {!isThread ? <div className="document-actions">
@@ -1625,6 +1776,23 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onReject={() => void dismissAiProposal()}
           />
         ) : null}
+        {selected?.type === 'canvas' && patchHistoryOpen ? (
+          <PatchHistoryPanel
+            path={selected.path}
+            entries={patchHistoryEntries}
+            loading={patchHistoryLoading}
+            undoingId={patchHistoryUndoingId}
+            onClose={() => setPatchHistoryOpen(false)}
+            onRefresh={() => void loadPatchHistory(selected.path)}
+            onUndo={(entry) => void undoPatchHistory(entry)}
+            onFocus={(ids) => {
+              const live = parseCanvasScene(source)
+              const nodeIds = new Set(live.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+              const focusIds = ids.filter((id) => nodeIds.has(id))
+              if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `history-focus:${Date.now()}` })
+            }}
+          />
+        ) : null}
         {gitImpactReport && gitImpactOpen ? (
           <GitImpactPanel
             report={gitImpactReport}
@@ -1661,6 +1829,81 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ) : null}
       </section>
     </main>
+  )
+}
+
+function PatchHistoryPanel({ path, entries, loading, undoingId, onClose, onRefresh, onUndo, onFocus }: {
+  path: string
+  entries: DiagramPatchHistoryEntry[]
+  loading: boolean
+  undoingId: string | null
+  onClose: () => void
+  onRefresh: () => void
+  onUndo: (entry: DiagramPatchHistoryEntry) => void
+  onFocus: (ids: string[]) => void
+}) {
+  return (
+    <aside className="change-review-panel patch-history-panel" aria-label="AI 修改历史">
+      <div className="change-review-head">
+        <div>
+          <div className="eyebrow">AI CHANGE TIMELINE</div>
+          <strong>AI 修改历史</strong>
+          <span>{entries.length} transactions</span>
+        </div>
+        <div className="patch-history-head-actions">
+          <button type="button" disabled={loading} onClick={onRefresh}>{loading ? '刷新中…' : '刷新'}</button>
+          <button type="button" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+      <div className="change-review-path">{path}</div>
+      <div className="patch-history-body">
+        {loading && entries.length === 0 ? <div className="patch-history-empty">正在读取本地 AI 修改历史…</div> : null}
+        {!loading && entries.length === 0 ? <div className="patch-history-empty">这张图还没有已应用的增量 AI 修改。</div> : null}
+        {entries.map((entry) => (
+          <article key={entry.id} className={`patch-history-entry${entry.undoneAt ? ' is-undone' : ''}`}>
+            <div className="patch-history-entry-head">
+              <div>
+                <time dateTime={entry.appliedAt}>{formatPatchHistoryTime(entry.appliedAt)}</time>
+                <strong>{entry.reason?.trim() || '增量修改 Canvas'}</strong>
+              </div>
+              <div className="patch-history-badges">
+                {entry.rebased ? <span>已 Rebase</span> : null}
+                {entry.partial ? <span>部分接受</span> : null}
+                <span>{entry.layout === 'local' ? '局部布局' : '保持布局'}</span>
+                {entry.undoneAt ? <span className="is-undone">已撤销</span> : null}
+              </div>
+            </div>
+            <div className="patch-history-counts">
+              <span><strong>{entry.counts.updated}</strong> 修改</span>
+              <span><strong>{entry.counts.added}</strong> 新增</span>
+              <span><strong>{entry.counts.removed}</strong> 删除</span>
+              {entry.counts.automatic ? <span><strong>{entry.counts.automatic}</strong> 自动影响</span> : null}
+            </div>
+            <div className="patch-history-changes">
+              {entry.changes.slice(0, 8).map((change) => (
+                <button key={change.id} type="button" className="patch-history-change" onClick={() => onFocus([change.id])} title={change.id}>
+                  <span className={`proposal-change-kind is-${change.kind}`}>{change.kind === 'add' ? '新增' : change.kind === 'remove' ? '删除' : '修改'}</span>
+                  <span className={`patch-history-origin${change.automatic ? ' is-automatic' : ''}`}>{change.automatic ? '自动' : 'AI'}</span>
+                  <strong>{change.label}</strong>
+                  <small>{change.fields.join(' · ')}</small>
+                </button>
+              ))}
+              {entry.changes.length > 8 ? <div className="patch-history-more">还有 {entry.changes.length - 8} 个受影响元素</div> : null}
+            </div>
+            <div className="patch-history-entry-actions">
+              <button type="button" disabled={entry.changes.length === 0} onClick={() => onFocus(entry.changes.map((item) => item.id))}>定位影响</button>
+              {entry.undoneAt ? (
+                <span>撤销于 {formatPatchHistoryTime(entry.undoneAt)}</span>
+              ) : (
+                <button className="is-danger" type="button" disabled={Boolean(undoingId)} onClick={() => onUndo(entry)}>
+                  {undoingId === entry.id ? '撤销中…' : '撤销这次修改'}
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </aside>
   )
 }
 
@@ -2395,7 +2638,16 @@ function playbackActivityLabel(kind: NonNullable<DiagramThreadStateResult['activ
   if (kind === 'create') return 'Codex 正在创建画板'
   if (kind === 'source-sync') return 'Codex 正在同步源码节点'
   if (kind === 'proposal') return 'Codex 正在应用候选修改'
+  if (kind === 'history-undo') return '正在撤销 AI 修改'
   return 'Codex 正在更新画板'
+}
+
+function formatPatchHistoryTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(date)
 }
 
 function shortPath(value: string): string {
