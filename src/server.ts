@@ -7,7 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
-import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, mergeCanvasProposalSelection } from './canvasPatch.js'
+import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch, type CanvasSubgraphPatchInput } from './canvasPatch.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
 import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
@@ -53,8 +53,8 @@ const server = new McpServer(
       'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
-      'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put existing ids in elementIds; send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
-      'Before a finite Canvas patch, prefer diagram.getSubgraph over diagram.get. getSubgraph returns the selected elements, direct relationships, bounded neighbors and only the relevant Group/Lane metadata, avoiding full-document context on large diagrams. Use diagram.get only when the task genuinely needs whole-diagram state.',
+      'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put selected existing ids in elementIds; when the user intent explicitly changes a direct relationship, you may also include the relevant id returned in getSubgraph.directRelationshipIds. Treat getSubgraph.contextElementIds as read-only context unless the user clearly asks to expand the edit scope. Send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
+      'Before a finite Canvas patch, prefer diagram.getSubgraph over diagram.get. getSubgraph separates scopeNodeIds, directRelationshipIds and contextElementIds, bounds node/relation counts, and returns only relevant Group/Lane metadata so large-diagram edits do not load the whole document. Use diagram.get only when the task genuinely needs whole-diagram state.',
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
       'When an architecture Canvas is visually flat, crowded, weakly grouped, or has crossing/overlapping relationships, use diagram.beautifyArchitecture. It deterministically adds architecture partitions, semantic tones, role/technology badges and orthogonal routing; do not try to solve those presentation problems only with prose prompting.',
@@ -85,6 +85,7 @@ interface ThreadDiagramProposal {
   newElementIds?: string[]
   impactElementIds?: string[]
   automaticElementIds?: string[]
+  canvasPatch?: CanvasSubgraphPatchInput
   patchSummary?: {
     updated: number
     added: number
@@ -222,7 +223,7 @@ server.registerTool('diagram.get', {
 
 server.registerTool('diagram.getSubgraph', {
   title: 'Read Canvas subgraph',
-  description: 'Read a bounded Canvas neighborhood around selected element ids without loading the whole diagram. Prefer this before an incremental Canvas patch, especially for large diagrams.',
+  description: 'Read a bounded Canvas neighborhood around selected element ids without loading the whole diagram. The result separates original scope nodes, directly connected relationships that may be edited when intent requires, and read-only context elements. Prefer this before an incremental Canvas patch, especially for large diagrams.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().min(1),
@@ -930,6 +931,13 @@ server.registerTool('diagram.proposeSubgraphPatch', {
     newElementIds: result.addedElementIds,
     impactElementIds: result.impactElementIds,
     automaticElementIds: result.automaticElementIds,
+    canvasPatch: {
+      scopeElementIds: [...new Set(elementIds)],
+      updates,
+      adds,
+      removeIds,
+      layout,
+    },
     patchSummary: {
       updated: result.changedElementIds.length,
       added: result.addedElementIds.length,
@@ -990,16 +998,88 @@ server.registerTool('diagram.applyProposal', {
   if (!threadId) throw new Error('当前调用没有聊天上下文。')
   const proposal = threadProposals.get(threadId)
   if (!proposal) throw new Error('当前聊天没有待应用的 Diagram Proposal。')
+  if (elementIds?.length && proposal.patchSummary?.layout === 'local') {
+    throw new Error('局部布局 Proposal 是耦合事务，不能只接受部分元素；请全部接受或拒绝后重新调整。')
+  }
   const store = await DiagramStore.open(proposal.workspacePath)
+  const current = await store.get(proposal.path)
+  const stale = current.modifiedAt !== proposal.baseModifiedAt
+  let candidateSource = proposal.source
+  let baseSource = proposal.baseSource
+  let expectedModifiedAt = proposal.baseModifiedAt
+  let rebased = false
+  if (stale && proposal.canvasPatch) {
+    const rebasedPatch = rebaseCanvasSubgraphPatch(
+      parseCanvasScene(proposal.baseSource),
+      parseCanvasScene(current.source),
+      proposal.canvasPatch,
+      proposal.automaticElementIds,
+    )
+    const rebasedSource = serializeCanvasScene(rebasedPatch.scene)
+    const reviewIds = new Set([
+      ...canvasPatchRebaseReviewIds(
+        parseCanvasScene(proposal.source),
+        rebasedPatch.scene,
+        proposal.automaticElementIds,
+        proposal.newElementIds,
+      ),
+      ...rebasedPatch.automaticElementIds.filter((id) => !(proposal.automaticElementIds ?? []).includes(id)),
+    ])
+    if (reviewIds.size) {
+      const refreshed: ThreadDiagramProposal = {
+        ...proposal,
+        source: rebasedSource,
+        baseSource: current.source,
+        baseModifiedAt: current.modifiedAt,
+        updatedAt: new Date().toISOString(),
+        newElementIds: rebasedPatch.addedElementIds,
+        impactElementIds: rebasedPatch.impactElementIds,
+        automaticElementIds: rebasedPatch.automaticElementIds,
+        patchSummary: {
+          updated: rebasedPatch.changedElementIds.length,
+          added: rebasedPatch.addedElementIds.length,
+          removed: rebasedPatch.removedElementIds.length,
+          layout: proposal.canvasPatch.layout ?? 'preserve',
+        },
+      }
+      threadProposals.set(threadId, refreshed)
+      const currentById = new Map(parseCanvasScene(current.source).elements.map((item) => [item.id, item]))
+      const candidateById = new Map(rebasedPatch.scene.elements.map((item) => [item.id, item]))
+      const focusNodeIds = rebasedPatch.impactElementIds.filter((id) => (candidateById.get(id) ?? currentById.get(id))?.type !== 'arrow')
+      markThreadDiagram(extra._meta, current.path, focusNodeIds)
+      const payload = {
+        kind: 'diagram-proposal-refresh',
+        workspacePath: store.workspacePath,
+        proposal: proposalSummary(refreshed),
+        before: current,
+        candidateSource: rebasedSource,
+        reviewElementIds: [...reviewIds],
+      }
+      return {
+        content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+        structuredContent: payload,
+      }
+    }
+    candidateSource = rebasedSource
+    baseSource = current.source
+    expectedModifiedAt = current.modifiedAt
+    rebased = true
+  }
   const source = elementIds?.length
-    ? mergeCanvasProposalSelection(proposal.baseSource, proposal.source, elementIds, !proposal.patchSummary)
-    : proposal.source
-  const diagram = await store.update(proposal.path, source, proposal.baseModifiedAt)
+    ? mergeCanvasProposalSelection(baseSource, candidateSource, elementIds, !proposal.patchSummary)
+    : candidateSource
+  const diagram = await store.update(proposal.path, source, expectedModifiedAt)
   threadProposals.delete(threadId)
   markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal', diagram.modifiedAt)
+  const proposalApply = { rebased, beforeSource: baseSource }
   return {
-    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram }) }],
-    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram, proposalApply }) }],
+    structuredContent: {
+      kind: 'diagram',
+      workspacePath: store.workspacePath,
+      diagram,
+      proposalApply,
+    },
   }
 })
 
@@ -1392,6 +1472,7 @@ function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
     newElementIds: proposal.newElementIds,
     impactElementIds: proposal.impactElementIds,
     automaticElementIds: proposal.automaticElementIds,
+    rebaseable: Boolean(proposal.canvasPatch),
     patchSummary: proposal.patchSummary,
   }
 }

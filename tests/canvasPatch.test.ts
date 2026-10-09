@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { CanvasArrow, CanvasNode, CanvasScene } from '../src/canvas.js'
-import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, mergeCanvasProposalSelection } from '../src/canvasPatch.js'
+import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch } from '../src/canvasPatch.js'
 import { parseCanvasScene, serializeCanvasScene } from '../src/canvas.js'
 
 function scene(): CanvasScene {
@@ -57,6 +57,22 @@ test('adds a stable node without authored coordinates and routes its declared re
   assert.equal(edge.routing, 'orthogonal')
   assert.ok(result.addedElementIds.includes('cache'))
   assert.ok(result.addedElementIds.includes('api-cache'))
+})
+
+test('new nodes inherit an unambiguous group and lane and stay inside that lane', () => {
+  const source = scene()
+  source.lanes = [{ id: 'runtime', label: 'Runtime', axis: 'vertical', start: 400, size: 420 }]
+  source.elements = source.elements.map((item) => item.id === 'api' && item.type === 'node' ? { ...item, laneId: 'runtime' } : item)
+  const result = buildCanvasSubgraphPatch(source, {
+    scopeElementIds: ['api'],
+    adds: [{ id: 'worker', type: 'node', properties: { text: 'Worker' } }],
+  })
+  const worker = result.scene.elements.find((item) => item.id === 'worker')
+  assert.ok(worker && worker.type === 'node')
+  assert.equal(worker.groupId, 'system')
+  assert.equal(worker.laneId, 'runtime')
+  assert.ok(worker.x >= 412)
+  assert.ok(worker.x + worker.width <= 808)
 })
 
 test('reconnecting an arrow through a patch clears stale authored route metadata', () => {
@@ -141,7 +157,7 @@ test('local layout reports moved neighbors as automatic impact and preserves loc
   assert.deepEqual(result.scene.elements.find((item) => item.id === 'locked'), lockedBefore)
 })
 
-test('strict partial acceptance does not silently include automatic relationship changes', () => {
+test('strict partial acceptance repairs required architecture relationship geometry', () => {
   const base = scene()
   const candidate = buildCanvasSubgraphPatch(base, {
     scopeElementIds: ['api'],
@@ -158,7 +174,32 @@ test('strict partial acceptance does not silently include automatic relationship
   const mergedEdge = merged.elements.find((item) => item.id === 'api-db')
   assert.ok(api && api.type === 'node')
   assert.equal(api.x, 620)
-  assert.deepEqual(mergedEdge, baseEdge)
+  assert.notDeepEqual(mergedEdge, baseEdge)
+})
+
+test('partial acceptance rejects a relationship whose new endpoint was not selected', () => {
+  const base = scene()
+  const candidate = buildCanvasSubgraphPatch(base, {
+    scopeElementIds: ['api'],
+    adds: [
+      { id: 'cache', type: 'node', properties: { text: 'Cache', groupId: 'system' } },
+      { id: 'api-cache', type: 'arrow', properties: { from: 'api', to: 'cache', label: 'lookup' } },
+    ],
+  }).scene
+  assert.throws(() => mergeCanvasProposalSelection(
+    serializeCanvasScene(base),
+    serializeCanvasScene(candidate),
+    ['api-cache'],
+    false,
+  ), /需要同时接受新增端点 cache/)
+  const merged = parseCanvasScene(mergeCanvasProposalSelection(
+    serializeCanvasScene(base),
+    serializeCanvasScene(candidate),
+    ['cache', 'api-cache'],
+    false,
+  ))
+  assert.ok(merged.elements.some((item) => item.id === 'cache'))
+  assert.ok(merged.elements.some((item) => item.id === 'api-cache'))
 })
 
 test('legacy partial acceptance can still include related relationship changes', () => {
@@ -192,6 +233,19 @@ test('subgraph context returns direct relationships and only relevant metadata',
   assert.equal(ids.has('locked'), false)
   assert.deepEqual(context.groups?.map((item) => item.id), ['system'])
   assert.deepEqual(context.lanes?.map((item) => item.id), ['lane-runtime'])
+  assert.deepEqual(context.scopeNodeIds, ['api'])
+  assert.deepEqual(new Set(context.directRelationshipIds), new Set(['web-api', 'api-db']))
+  assert.ok(context.contextElementIds.includes('web'))
+  assert.ok(context.contextElementIds.includes('db'))
+  assert.equal(context.contextElementIds.includes('web-api'), false)
+})
+
+test('selecting only an arrow does not promote its endpoint nodes into editable scope', () => {
+  const context = buildCanvasSubgraphContext(scene(), ['api-db'], 0, 20)
+  assert.deepEqual(context.scopeNodeIds, [])
+  assert.deepEqual(context.directRelationshipIds, ['api-db'])
+  assert.ok(context.contextElementIds.includes('api'))
+  assert.ok(context.contextElementIds.includes('db'))
 })
 
 test('subgraph context bounds high fan-out neighborhoods', () => {
@@ -239,6 +293,35 @@ test('subgraph context also bounds dense relationship sets', () => {
   assert.ok(context.hiddenArrows > 0)
 })
 
+test('5000-node canvases keep subgraph context bounded and patch only the requested element', () => {
+  const source: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Huge',
+    width: 200000,
+    height: 4000,
+    elements: [],
+  }
+  for (let index = 0; index < 5000; index += 1) {
+    source.elements.push({ id: `n-${index}`, type: 'node', x: 40 + index * 36, y: 120 + index % 4 * 120, width: 120, height: 64, text: `N${index}` })
+    if (index > 0) source.elements.push({ id: `e-${index - 1}-${index}`, type: 'arrow', from: `n-${index - 1}`, to: `n-${index}` })
+  }
+  const context = buildCanvasSubgraphContext(source, ['n-2500'], 1, 24)
+  assert.ok(context.elements.filter((item) => item.type !== 'arrow').length <= 24)
+  assert.ok(context.hiddenNodes >= 4976)
+  assert.ok(context.contextElementIds.length < 100)
+
+  const result = buildCanvasSubgraphPatch(source, {
+    scopeElementIds: ['n-2500'],
+    updates: [{ id: 'n-2500', changes: { text: 'Updated middle node' } }],
+  })
+  assert.deepEqual(result.changedElementIds, ['n-2500'])
+  assert.equal(result.automaticElementIds.length, 0)
+  const distant = result.scene.elements.find((item) => item.id === 'n-4999')
+  assert.ok(distant && distant.type === 'node')
+  assert.equal(distant.text, 'N4999')
+})
+
 test('incremental patch refuses to degrade into a hidden whole-graph reroute', () => {
   const source: CanvasScene = {
     type: 'codex-diagram-canvas',
@@ -257,4 +340,132 @@ test('incremental patch refuses to degrade into a hidden whole-graph reroute', (
     scopeElementIds: ['hub'],
     updates: [{ id: 'hub', changes: { x: 180 } }],
   }), /自动重排影响过大/)
+})
+
+test('rebases a semantic patch over unrelated concurrent edits', () => {
+  const base = scene()
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'db' && item.type === 'node'
+    ? { ...item, text: 'Primary DB', x: 1040 }
+    : item)
+  const result = rebaseCanvasSubgraphPatch(base, current, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { text: 'Public API' } }],
+  })
+  const api = result.scene.elements.find((item) => item.id === 'api')
+  const db = result.scene.elements.find((item) => item.id === 'db')
+  assert.ok(api && api.type === 'node' && db && db.type === 'node')
+  assert.equal(api.text, 'Public API')
+  assert.equal(db.text, 'Primary DB')
+  assert.equal(db.x, 1040)
+  assert.equal(result.rebased, true)
+})
+
+test('rebases changes to a different field on the same element', () => {
+  const base = scene()
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'api' && item.type === 'node'
+    ? { ...item, subtitle: 'Concurrent subtitle' }
+    : item)
+  const result = rebaseCanvasSubgraphPatch(base, current, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { text: 'Public API' } }],
+  })
+  const api = result.scene.elements.find((item) => item.id === 'api')
+  assert.ok(api && api.type === 'node')
+  assert.equal(api.text, 'Public API')
+  assert.equal(api.subtitle, 'Concurrent subtitle')
+})
+
+test('rejects rebase when the same owned field changed concurrently', () => {
+  const base = scene()
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'api' && item.type === 'node'
+    ? { ...item, text: 'Concurrent API' }
+    : item)
+  assert.throws(() => rebaseCanvasSubgraphPatch(base, current, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { text: 'Public API' } }],
+  }), /api\.text/)
+})
+
+test('rejects rebase when automatic route geometry was edited concurrently', () => {
+  const base = scene()
+  const original = buildCanvasSubgraphPatch(base, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { x: 620 } }],
+  })
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'api-db' && item.type === 'arrow'
+    ? { ...item, points: [{ x: 870, y: 260 }] }
+    : item)
+  assert.throws(() => rebaseCanvasSubgraphPatch(base, current, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { x: 620 } }],
+  }, original.automaticElementIds), /api-db\.points/)
+})
+
+test('rejects local-layout rebase when neighborhood geometry changed concurrently', () => {
+  const base = scene()
+  const original = buildCanvasSubgraphPatch(base, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { subtitle: 'Restructure' } }],
+    layout: 'local',
+  })
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'web' && item.type === 'node'
+    ? { ...item, y: item.y + 80 }
+    : item)
+  assert.throws(() => rebaseCanvasSubgraphPatch(base, current, {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { subtitle: 'Restructure' } }],
+    layout: 'local',
+  }, original.automaticElementIds), /web\.y/)
+})
+
+test('rebase drift asks for review when automatic routing geometry changes', () => {
+  const base = scene()
+  const patch = {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { x: 620 } }],
+  }
+  const original = buildCanvasSubgraphPatch(base, patch)
+  const current = scene()
+  current.elements.push({ id: 'blocker', type: 'node', x: 760, y: 120, width: 180, height: 180, text: 'Concurrent blocker', groupId: 'system' })
+  const rebased = rebaseCanvasSubgraphPatch(base, current, patch, original.automaticElementIds)
+  const reviewIds = canvasPatchRebaseReviewIds(original.scene, rebased.scene, original.automaticElementIds, original.addedElementIds)
+  assert.ok(reviewIds.some((id) => original.automaticElementIds.includes(id)))
+})
+
+test('rebase drift ignores concurrent semantic fields on automatic relationships', () => {
+  const base = scene()
+  const patch = {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { x: 620 } }],
+  }
+  const original = buildCanvasSubgraphPatch(base, patch)
+  const current = scene()
+  current.elements = current.elements.map((item) => item.id === 'api-db' && item.type === 'arrow' ? { ...item, label: 'Concurrent SQL label' } : item)
+  const rebased = rebaseCanvasSubgraphPatch(base, current, patch, original.automaticElementIds)
+  const reviewIds = canvasPatchRebaseReviewIds(original.scene, rebased.scene, original.automaticElementIds, original.addedElementIds)
+  assert.equal(reviewIds.includes('api-db'), false)
+})
+
+test('rebase drift asks for review when concurrent nodes change automatic placement of a new node', () => {
+  const base = scene()
+  const patch = {
+    scopeElementIds: ['api'],
+    adds: [{ id: 'cache', type: 'node' as const, properties: { text: 'Cache', groupId: 'system' } }],
+  }
+  const original = buildCanvasSubgraphPatch(base, patch)
+  const cache = original.scene.elements.find((item) => item.id === 'cache')
+  assert.ok(cache && cache.type === 'node')
+  const current = scene()
+  current.elements.push({ id: 'concurrent-node', type: 'node', x: cache.x, y: cache.y, width: cache.width, height: cache.height, text: 'Concurrent node', groupId: 'system' })
+  const rebased = rebaseCanvasSubgraphPatch(base, current, patch, original.automaticElementIds)
+  const rebasedCache = rebased.scene.elements.find((item) => item.id === 'cache')
+  assert.ok(rebasedCache && rebasedCache.type === 'node')
+  assert.notDeepEqual({ x: rebasedCache.x, y: rebasedCache.y }, { x: cache.x, y: cache.y })
+  const reviewIds = canvasPatchRebaseReviewIds(original.scene, rebased.scene, original.automaticElementIds, original.addedElementIds)
+  assert.ok(reviewIds.includes('cache'))
 })

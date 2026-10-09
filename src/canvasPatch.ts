@@ -31,8 +31,15 @@ export interface CanvasSubgraphPatchResult {
   automaticElementIds: string[]
 }
 
+export interface CanvasPatchRebaseResult extends CanvasSubgraphPatchResult {
+  rebased: true
+}
+
 export interface CanvasSubgraphContext {
   scopeElementIds: string[]
+  scopeNodeIds: string[]
+  directRelationshipIds: string[]
+  contextElementIds: string[]
   elementIds: string[]
   elements: CanvasElement[]
   groups: CanvasScene['groups']
@@ -53,6 +60,7 @@ const arrowFields = new Set([
 const requiredBoxFields = new Set(['x', 'y', 'width', 'height', 'text'])
 const requiredArrowFields = new Set(['from', 'to'])
 const geometryFields = new Set(['x', 'y', 'width', 'height'])
+const arrowRouteFields = ['routing', 'fromAnchor', 'toAnchor', 'lineStyle', 'points', 'labelPosition', 'bundleKey'] as const
 
 export function buildCanvasSubgraphPatch(base: CanvasScene, patch: CanvasSubgraphPatchInput): CanvasSubgraphPatchResult {
   base = normalizeStrict(base)
@@ -191,6 +199,131 @@ export function buildCanvasSubgraphPatch(base: CanvasScene, patch: CanvasSubgrap
   }
 }
 
+/**
+ * Replays an incremental patch on top of a newer Canvas revision. Only fields
+ * actually owned by the patch participate in conflict detection, so unrelated
+ * edits (including other fields on the same element) are preserved. Automatic
+ * layout/routing fields are protected as well because replaying them would
+ * otherwise overwrite geometry authored after the proposal was created.
+ */
+export function rebaseCanvasSubgraphPatch(
+  base: CanvasScene,
+  current: CanvasScene,
+  patch: CanvasSubgraphPatchInput,
+  previousAutomaticElementIds: string[] = [],
+): CanvasPatchRebaseResult {
+  base = normalizeStrict(base)
+  current = normalizeStrict(current)
+  const baseById = new Map(base.elements.map((item) => [item.id, item]))
+  const currentById = new Map(current.elements.map((item) => [item.id, item]))
+  const conflicts = new Set<string>()
+
+  for (const id of patch.scopeElementIds) {
+    const before = baseById.get(id)
+    if (before && !currentById.has(id)) conflicts.add(`${id}（已被删除）`)
+  }
+
+  for (const update of patch.updates ?? []) {
+    const before = baseById.get(update.id)
+    const latest = currentById.get(update.id)
+    if (!before || !latest) {
+      conflicts.add(`${update.id}（元素不存在）`)
+      continue
+    }
+    if (before.type !== latest.type) {
+      conflicts.add(`${update.id}.type`)
+      continue
+    }
+    for (const [field, desiredRaw] of Object.entries(update.changes)) {
+      const beforeValue = elementField(before, field)
+      const latestValue = elementField(latest, field)
+      const desiredValue = desiredRaw === null ? undefined : desiredRaw
+      if (!sameValue(latestValue, beforeValue) && !sameValue(latestValue, desiredValue)) conflicts.add(`${update.id}.${field}`)
+    }
+    if (before.type === 'arrow') {
+      const endpointsChanged = Object.prototype.hasOwnProperty.call(update.changes, 'from') || Object.prototype.hasOwnProperty.call(update.changes, 'to')
+      if (endpointsChanged) {
+        for (const field of arrowRouteFields) {
+          if (Object.prototype.hasOwnProperty.call(update.changes, field)) continue
+          if (!sameValue(elementField(latest, field), elementField(before, field))) conflicts.add(`${update.id}.${field}`)
+        }
+      }
+    }
+  }
+
+  for (const id of patch.removeIds ?? []) {
+    const before = baseById.get(id)
+    const latest = currentById.get(id)
+    if (!before || !latest) {
+      conflicts.add(`${id}（删除目标已变化）`)
+      continue
+    }
+    if (!sameValue(before, latest)) conflicts.add(`${id}（删除目标已修改）`)
+  }
+
+  for (const add of patch.adds ?? []) {
+    if (currentById.has(add.id)) conflicts.add(`${add.id}（新增 id 已占用）`)
+  }
+
+  // Local layout owns geometry for the selected neighborhood. Preserve any
+  // geometry/routing authored after the proposal by treating it as a conflict.
+  const automatic = new Set(previousAutomaticElementIds)
+  const layoutProtected = new Set<string>(patch.layout === 'local'
+    ? [...patch.scopeElementIds, ...automatic]
+    : [...automatic])
+  for (const id of layoutProtected) {
+    const before = baseById.get(id)
+    const latest = currentById.get(id)
+    if (!before || !latest || before.type !== latest.type) continue
+    if (before.type === 'arrow') {
+      for (const field of arrowRouteFields) {
+        if (!sameValue(elementField(latest, field), elementField(before, field))) conflicts.add(`${id}.${field}`)
+      }
+    } else if (patch.layout === 'local') {
+      for (const field of geometryFields) {
+        if (!sameValue(elementField(latest, field), elementField(before, field))) conflicts.add(`${id}.${field}`)
+      }
+    }
+  }
+
+  if (conflicts.size) {
+    const entries = [...conflicts]
+    throw new Error(`Canvas patch 与最新画布存在并发冲突：${entries.slice(0, 12).join(', ')}${entries.length > 12 ? `…（共 ${entries.length} 项）` : ''}`)
+  }
+
+  return { ...buildCanvasSubgraphPatch(current, patch), rebased: true }
+}
+
+export function canvasPatchRebaseReviewIds(
+  originalCandidate: CanvasScene,
+  rebasedCandidate: CanvasScene,
+  previousAutomaticElementIds: string[] = [],
+  previousAddedElementIds: string[] = [],
+): string[] {
+  originalCandidate = normalizeStrict(originalCandidate)
+  rebasedCandidate = normalizeStrict(rebasedCandidate)
+  const originalById = new Map(originalCandidate.elements.map((item) => [item.id, item]))
+  const rebasedById = new Map(rebasedCandidate.elements.map((item) => [item.id, item]))
+  const review = new Set<string>()
+  for (const id of previousAddedElementIds) {
+    if (!sameValue(originalById.get(id), rebasedById.get(id))) review.add(id)
+  }
+  for (const id of previousAutomaticElementIds) {
+    const before = originalById.get(id)
+    const after = rebasedById.get(id)
+    if (!before || !after || before.type !== after.type) {
+      if (!sameValue(before, after)) review.add(id)
+      continue
+    }
+    if (before.type === 'arrow') {
+      if (arrowRouteFields.some((field) => !sameValue(elementField(before, field), elementField(after, field)))) review.add(id)
+    } else if ([...geometryFields].some((field) => !sameValue(elementField(before, field), elementField(after, field)))) {
+      review.add(id)
+    }
+  }
+  return [...review]
+}
+
 export function buildCanvasSubgraphContext(scene: CanvasScene, scopeElementIds: string[], depth = 0, maxNodes = 160): CanvasSubgraphContext {
   scene = normalizeStrict(scene)
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
@@ -203,15 +336,24 @@ export function buildCanvasSubgraphContext(scene: CanvasScene, scopeElementIds: 
 
   const nodeIds = new Set<string>()
   const arrowIds = new Set<string>()
+  const selectedNodeIds = new Set<string>()
   for (const id of scope) {
     const box = boxById.get(id)
-    if (box) nodeIds.add(box.id)
+    if (box) {
+      nodeIds.add(box.id)
+      selectedNodeIds.add(box.id)
+    }
     const arrow = arrowById.get(id)
     if (arrow) {
       arrowIds.add(arrow.id)
       nodeIds.add(arrow.from)
       nodeIds.add(arrow.to)
     }
+  }
+  const scopeNodeIds = new Set(selectedNodeIds)
+  const directRelationshipIds = new Set<string>([...arrowIds])
+  for (const arrow of arrows) {
+    if (scopeNodeIds.has(arrow.from) || scopeNodeIds.has(arrow.to)) directRelationshipIds.add(arrow.id)
   }
   const safeMaxNodes = Math.max(nodeIds.size, Math.min(240, Math.max(12, Math.floor(maxNodes))))
   const maxArrows = Math.max(arrowIds.size, Math.min(960, Math.max(80, safeMaxNodes * 4)))
@@ -242,6 +384,7 @@ export function buildCanvasSubgraphContext(scene: CanvasScene, scopeElementIds: 
 
   const includedIds = new Set([...nodeIds, ...arrowIds])
   const elements = scene.elements.filter((item) => includedIds.has(item.id))
+  const contextElementIds = elements.map((item) => item.id).filter((id) => !scope.includes(id) && !directRelationshipIds.has(id))
   const groupById = new Map((scene.groups ?? []).map((item) => [item.id, item]))
   const usedGroupIds = new Set<string>()
   for (const box of boxes) {
@@ -257,6 +400,9 @@ export function buildCanvasSubgraphContext(scene: CanvasScene, scopeElementIds: 
   const usedLaneIds = new Set(boxes.filter((item) => nodeIds.has(item.id) && item.laneId).map((item) => item.laneId as string))
   return {
     scopeElementIds: scope,
+    scopeNodeIds: [...scopeNodeIds],
+    directRelationshipIds: [...directRelationshipIds].filter((id) => includedIds.has(id)),
+    contextElementIds,
     elementIds: elements.map((item) => item.id),
     elements,
     groups: scene.groups?.filter((item) => usedGroupIds.has(item.id)),
@@ -284,6 +430,15 @@ export function mergeCanvasProposalSelection(
   }
   const selected = new Set(elementIds)
   const candidateById = new Map(candidate.elements.map((item) => [item.id, item]))
+  const baseNodeIds = new Set(base.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+  for (const id of selected) {
+    const item = candidateById.get(id)
+    if (!item || item.type !== 'arrow') continue
+    for (const endpoint of [item.from, item.to]) {
+      if (baseNodeIds.has(endpoint) || selected.has(endpoint)) continue
+      throw new Error(`部分接受关系 ${item.id} 还需要同时接受新增端点 ${endpoint}。`)
+    }
+  }
   const relatedArrowIds = new Set<string>()
   if (includeRelatedArrows) {
     for (const item of candidate.elements) {
@@ -319,12 +474,23 @@ export function mergeCanvasProposalSelection(
   const laneIds = new Set(sanitized.flatMap((item) => item.type === 'arrow' || !item.laneId ? [] : [item.laneId]))
   const groups = mergeMetadataById(base.groups, candidate.groups, groupIds)
   const lanes = mergeMetadataById(base.lanes, candidate.lanes, laneIds)
-  return serializeCanvasScene({
+  let merged: CanvasScene = {
     ...base,
     elements: sanitized,
     groups: groups.length ? groups : undefined,
     lanes: lanes.length ? lanes : undefined,
-  })
+  }
+  if (merged.architecture) {
+    const baseBoxes = new Map(base.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+    const movedNodeIds = new Set<string>()
+    for (const item of merged.elements) {
+      if (item.type === 'arrow') continue
+      const before = baseBoxes.get(item.id)
+      if (!before || before.x !== item.x || before.y !== item.y || before.width !== item.width || before.height !== item.height) movedNodeIds.add(item.id)
+    }
+    if (movedNodeIds.size) merged = routeArchitectureEdgesIncremental(merged, movedNodeIds)
+  }
+  return serializeCanvasScene(merged)
 }
 
 function applyElementChanges(item: CanvasElement, changes: Record<string, unknown>): CanvasElement {
@@ -366,9 +532,12 @@ function buildAddedBox(scene: CanvasScene, add: CanvasPatchAddInput, index: numb
   const height = finitePositive(properties.height, add.type === 'note' ? 120 : 96)
   const explicitX = finiteNumber(properties.x)
   const explicitY = finiteNumber(properties.y)
+  const scopeBoxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && scopeIds.includes(item.id))
+  const inheritedGroupId = Object.prototype.hasOwnProperty.call(properties, 'groupId') ? undefined : unanimousContextValue(scopeBoxes.map((item) => item.groupId))
+  const inheritedLaneId = Object.prototype.hasOwnProperty.call(properties, 'laneId') ? undefined : unanimousContextValue(scopeBoxes.map((item) => item.laneId))
   const position = explicitX !== undefined && explicitY !== undefined
     ? { x: explicitX, y: explicitY }
-    : findPatchPlacement(scene, scopeIds, width, height, index)
+    : findPatchPlacement(scene, scopeIds, width, height, index, typeof properties.laneId === 'string' ? properties.laneId : inheritedLaneId)
   return {
     id: add.id,
     type: add.type === 'note' ? 'note' : 'node',
@@ -377,6 +546,8 @@ function buildAddedBox(scene: CanvasScene, add: CanvasPatchAddInput, index: numb
     width,
     height,
     text: typeof properties.text === 'string' && properties.text.trim() ? properties.text : add.type === 'note' ? '新备注' : '新节点',
+    ...(inheritedGroupId ? { groupId: inheritedGroupId } : {}),
+    ...(inheritedLaneId ? { laneId: inheritedLaneId } : {}),
     ...optionalBoxProperties(properties),
   }
 }
@@ -401,24 +572,47 @@ function optionalBoxProperties(properties: Record<string, unknown>): Partial<Can
   return result as Partial<CanvasNode>
 }
 
-function findPatchPlacement(scene: CanvasScene, scopeIds: string[], width: number, height: number, offset: number): CanvasPoint {
+function findPatchPlacement(scene: CanvasScene, scopeIds: string[], width: number, height: number, offset: number, laneId?: string): CanvasPoint {
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const scope = boxes.filter((item) => scopeIds.includes(item.id))
   const reference = scope.length ? scope : boxes
+  const minX = reference.length ? Math.min(...reference.map((item) => item.x)) : 80
   const maxX = reference.length ? Math.max(...reference.map((item) => item.x + item.width)) : 80
   const minY = reference.length ? Math.min(...reference.map((item) => item.y)) : 80
+  const maxY = reference.length ? Math.max(...reference.map((item) => item.y + item.height)) : 80
   const candidates: CanvasPoint[] = []
-  for (let ring = 0; ring < 10; ring += 1) {
-    const col = (offset + ring) % 4
-    const row = Math.floor((offset + ring) / 4)
-    candidates.push({ x: maxX + 96 + col * (width + 40), y: minY + row * (height + 36) })
-    candidates.push({ x: Math.max(24, maxX - width - col * (width + 40)), y: minY + (row + 1) * (height + 36) })
+  for (let ring = 0; ring < 18; ring += 1) {
+    const slot = offset + ring
+    const col = slot % 5
+    const row = Math.floor(slot / 5)
+    candidates.push({ x: maxX + 64 + col * 24, y: minY + row * (height + 32) })
+    candidates.push({ x: minX + col * (width + 32), y: maxY + 48 + row * 24 })
+    candidates.push({ x: minX - width - 64 - col * 24, y: minY + row * (height + 32) })
+    candidates.push({ x: minX + col * (width + 32), y: minY - height - 48 - row * 24 })
   }
-  const chosen = candidates.find((point) => !boxes.some((item) => rectsOverlap({ ...point, width, height }, item))) ?? candidates[0]
-  return {
-    x: clamp(Math.round(chosen.x / 16) * 16, 0, Math.max(0, scene.width - width)),
-    y: clamp(Math.round(chosen.y / 16) * 16, 0, Math.max(0, scene.height - height)),
+  const lane = laneId ? scene.lanes?.find((item) => item.id === laneId) : undefined
+  const minAllowedX = lane?.axis === 'vertical' ? lane.start + 12 : 0
+  const maxAllowedX = lane?.axis === 'vertical' ? lane.start + lane.size - width - 12 : scene.width - width
+  const minAllowedY = lane?.axis === 'horizontal' ? lane.start + 12 : 0
+  const maxAllowedY = lane?.axis === 'horizontal' ? lane.start + lane.size - height - 12 : scene.height - height
+  const safeMinX = Math.max(0, Math.min(minAllowedX, Math.max(0, scene.width - width)))
+  const safeMaxX = Math.max(safeMinX, Math.min(Math.max(0, scene.width - width), maxAllowedX))
+  const safeMinY = Math.max(0, Math.min(minAllowedY, Math.max(0, scene.height - height)))
+  const safeMaxY = Math.max(safeMinY, Math.min(Math.max(0, scene.height - height), maxAllowedY))
+  const normalized: CanvasPoint[] = []
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    const point = {
+      x: clamp(Math.round(candidate.x / 16) * 16, safeMinX, safeMaxX),
+      y: clamp(Math.round(candidate.y / 16) * 16, safeMinY, safeMaxY),
+    }
+    const key = `${point.x}:${point.y}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      normalized.push(point)
+    }
   }
+  return normalized.find((point) => !boxes.some((item) => rectsOverlap({ ...point, width, height }, item))) ?? normalized[0] ?? { x: safeMinX, y: safeMinY }
 }
 
 function validateElementReferences(scene: CanvasScene): void {
@@ -591,6 +785,21 @@ function isFinitePoint(value: unknown): value is CanvasPoint {
   if (!value || typeof value !== 'object') return false
   const point = value as Record<string, unknown>
   return typeof point.x === 'number' && Number.isFinite(point.x) && typeof point.y === 'number' && Number.isFinite(point.y)
+}
+
+function unanimousContextValue(values: Array<string | undefined>): string | undefined {
+  if (!values.length || values.some((value) => !value)) return undefined
+  const first = values[0]
+  return values.every((value) => value === first) ? first : undefined
+}
+
+function elementField(item: CanvasElement, field: string): unknown {
+  return (item as unknown as Record<string, unknown>)[field]
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function mergeMetadataById<T extends { id: string }>(base: T[] | undefined, candidate: T[] | undefined, usedIds: Set<string>): T[] {

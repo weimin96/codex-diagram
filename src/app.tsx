@@ -25,6 +25,7 @@ interface DiagramResult {
   kind: 'diagram'
   workspacePath: string
   diagram: DiagramDocument
+  proposalApply?: { rebased: boolean; beforeSource?: string }
 }
 
 interface DiagramListResult {
@@ -77,6 +78,7 @@ interface DiagramProposalSummary {
   newElementIds?: string[]
   impactElementIds?: string[]
   automaticElementIds?: string[]
+  rebaseable?: boolean
   patchSummary?: {
     updated: number
     added: number
@@ -91,6 +93,15 @@ interface DiagramProposalSourceResult {
   proposal: DiagramProposalSummary
   before: DiagramDocument
   candidateSource: string
+}
+
+interface DiagramProposalRefreshResult {
+  kind: 'diagram-proposal-refresh'
+  workspacePath: string
+  proposal: DiagramProposalSummary
+  before: DiagramDocument
+  candidateSource: string
+  reviewElementIds: string[]
 }
 
 interface DiagramGitImpactResult {
@@ -792,16 +803,55 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function acceptAiProposal(elementIds?: string[]) {
     if (!aiProposal || saving) return
+    if (dirty && !aiProposal.summary.rebaseable) {
+      setError('当前还有未保存的手工修改。整图 Proposal 不能安全合并本地草稿，请先保存或放弃这些修改。')
+      return
+    }
+    if (dirty && externalChange) {
+      setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.applyProposal', elementIds?.length ? { elementIds } : {})
+      if (dirty) {
+        if (!selected || selected.path !== aiProposal.before.path) throw new Error('当前本地草稿与待应用 Proposal 不属于同一张图。')
+        const savedDraft = await callTool<DiagramResult>('diagram.update', {
+          workspacePath,
+          path: selected.path,
+          source,
+          expectedModifiedAt: selected.modifiedAt,
+          animate: false,
+        })
+        setSelected(savedDraft.diagram)
+        setSource(savedDraft.diagram.source)
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
+        })
+      }
+      const result = await callTool<DiagramResult | DiagramProposalRefreshResult>('diagram.applyProposal', elementIds?.length ? { elementIds } : {})
+      if (result.kind === 'diagram-proposal-refresh') {
+        const after: DiagramDocument = { ...result.before, source: result.candidateSource }
+        setAiProposal({ summary: result.proposal, before: result.before, after })
+        setProposalReviewOpen(true)
+        setSelected(result.before)
+        setSource(result.before.source)
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === result.before.path ? result.before : item),
+        })
+        setNotice(`画布期间发生并发修改，候选已安全重算；${result.reviewElementIds.length} 个自动结果发生变化，请重新审查`)
+        return
+      }
       if (isThread && aiProposal.before.type === 'canvas' && result.diagram.type === 'canvas' && aiProposal.before.path === result.diagram.path) {
         setCanvasPlayback({
           key: `proposal:${result.diagram.path}:${result.diagram.modifiedAt}`,
           path: result.diagram.path,
           mode: 'update',
-          fromSource: aiProposal.before.source,
+          fromSource: result.proposalApply?.beforeSource ?? aiProposal.before.source,
           label: 'Codex 正在应用候选修改',
         })
       }
@@ -814,7 +864,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ...snapshot,
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
-      setNotice('已接受 Codex 候选修改')
+      setNotice(result.proposalApply?.rebased ? '已接受 Codex 候选修改，并安全合并期间的其它画布改动' : '已接受 Codex 候选修改')
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -1567,6 +1617,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             newElementIds={aiProposal.summary.newElementIds}
             impactElementIds={aiProposal.summary.impactElementIds}
             automaticElementIds={aiProposal.summary.automaticElementIds}
+            rebaseable={aiProposal.summary.rebaseable}
             patchSummary={aiProposal.summary.patchSummary}
             applying={saving}
             onClose={() => setProposalReviewOpen(false)}
@@ -1715,7 +1766,7 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
   )
 }
 
-function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, patchSummary, applying, onClose, onAccept, onReject }: {
+function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, rebaseable, patchSummary, applying, onClose, onAccept, onReject }: {
   before: DiagramDocument
   after: DiagramDocument
   reason?: string
@@ -1723,6 +1774,7 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   newElementIds?: string[]
   impactElementIds?: string[]
   automaticElementIds?: string[]
+  rebaseable?: boolean
   patchSummary?: DiagramProposalSummary['patchSummary']
   applying: boolean
   onClose: () => void
@@ -1733,7 +1785,9 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   const added = diff.filter((line) => line.kind === 'add').length
   const removed = diff.filter((line) => line.kind === 'remove').length
   const canvasChanges = useMemo(() => buildCanvasProposalChanges(before, after), [after, before])
+  const canvasDependencies = useMemo(() => buildCanvasProposalDependencies(before, after), [after, before])
   const automaticIds = useMemo(() => new Set(automaticElementIds ?? []), [automaticElementIds])
+  const partialSelectionAllowed = patchSummary?.layout !== 'local'
   const [selectedChangeIds, setSelectedChangeIds] = useState<string[]>([])
   useEffect(() => {
     setSelectedChangeIds(canvasChanges?.map((item) => item.id) ?? [])
@@ -1766,6 +1820,7 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
           <span><strong>{patchSummary.added}</strong> 新增</span>
           <span><strong>{patchSummary.removed}</strong> 删除</span>
           <span>{patchSummary.layout === 'local' ? '局部布局' : '保持布局'}</span>
+          {rebaseable ? <span>并发安全合并</span> : null}
         </div>
       ) : null}
       {reason ? <div className="proposal-review-reason">{reason}</div> : null}
@@ -1773,40 +1828,59 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
         <div className="proposal-element-changes" aria-label="候选元素修改">
           <div className="proposal-element-head">
             <strong>Canvas 元素</strong>
-            <span>{selectedChangeIds.length}/{canvasChanges.length} 已选择</span>
+            <span>{partialSelectionAllowed ? `${selectedChangeIds.length}/${canvasChanges.length} 已选择` : '局部布局 · 整体事务'}</span>
           </div>
           {canvasChanges.map((change) => (
             <label key={change.id} className={`proposal-element-row${automaticIds.has(change.id) ? ' is-automatic' : ''}`}>
               <input
                 type="checkbox"
+                disabled={!partialSelectionAllowed}
                 checked={selectedChangeIds.includes(change.id)}
-                onChange={(event) => setSelectedChangeIds((current) => event.target.checked ? [...current, change.id] : current.filter((id) => id !== change.id))}
+                onChange={(event) => setSelectedChangeIds((current) => updateProposalSelection(current, change.id, event.target.checked, canvasDependencies))}
               />
               <span className={`proposal-change-kind is-${change.kind}`}>{change.kind === 'add' ? '新增' : change.kind === 'remove' ? '删除' : '修改'}</span>
-              <span className="proposal-auto-badge">{automaticIds.has(change.id) ? '自动' : ''}</span>
-              <code>{change.label}</code>
+              <span className="proposal-auto-badge">{automaticIds.has(change.id) ? '自动' : 'AI'}</span>
+              <span className="proposal-change-detail">
+                <code>{change.label}</code>
+                {change.fields.length ? <small>{change.fields.join(' · ')}</small> : null}
+              </span>
             </label>
           ))}
         </div>
       ) : null}
-      <div className="change-review-diff" role="log" aria-label="候选源码差异">
-        {diff.map((line, index) => (
-          <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
-            <span>{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
-            <code>{line.text || ' '}</code>
+      {patchSummary && canvasChanges?.length ? <div className="proposal-selection-note">{partialSelectionAllowed ? '部分接受会保留未选元素；必要关系会按最终节点状态安全清理或重新路由。' : '局部布局会同时调整一个受限邻域，为避免只应用一半布局造成重叠，本候选只支持整体接受或拒绝。'}</div> : null}
+      {patchSummary ? (
+        <details className="proposal-source-diff">
+          <summary>源码差异 · +{added} / −{removed}</summary>
+          <div className="change-review-diff" role="log" aria-label="候选源码差异">
+            {diff.map((line, index) => (
+              <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
+                <span>{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
+                <code>{line.text || ' '}</code>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </details>
+      ) : (
+        <div className="change-review-diff" role="log" aria-label="候选源码差异">
+          {diff.map((line, index) => (
+            <div key={`${index}-${line.kind}`} className={`diff-line is-${line.kind}`}>
+              <span>{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
+              <code>{line.text || ' '}</code>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="change-review-actions">
         <button type="button" disabled={applying} onClick={onReject}>拒绝</button>
-        {canvasChanges?.length ? <button type="button" disabled={applying || selectedChangeIds.length === 0 || selectedChangeIds.length === canvasChanges.length} onClick={() => onAccept(selectedChangeIds)}>{applying ? '应用中…' : `仅应用已选 (${selectedChangeIds.length})`}</button> : null}
+        {canvasChanges?.length && partialSelectionAllowed ? <button type="button" disabled={applying || selectedChangeIds.length === 0 || selectedChangeIds.length === canvasChanges.length} onClick={() => onAccept(selectedChangeIds)}>{applying ? '应用中…' : `仅应用已选 (${selectedChangeIds.length})`}</button> : null}
         <button className="primary-button" type="button" disabled={applying} onClick={() => onAccept()}>{applying ? '应用中…' : '全部接受'}</button>
       </div>
     </aside>
   )
 }
 
-type CanvasProposalChange = { id: string; kind: 'add' | 'remove' | 'update'; label: string }
+type CanvasProposalChange = { id: string; kind: 'add' | 'remove' | 'update'; label: string; fields: string[] }
 
 function buildCanvasProposalChanges(before: DiagramDocument, after: DiagramDocument): CanvasProposalChange[] | null {
   if (before.type !== 'canvas' || after.type !== 'canvas') return null
@@ -1820,9 +1894,9 @@ function buildCanvasProposalChanges(before: DiagramDocument, after: DiagramDocum
     for (const id of ids) {
       const previous = leftById.get(id)
       const next = rightById.get(id)
-      if (!previous && next) changes.push({ id, kind: 'add', label: canvasElementReviewLabel(next) })
-      else if (previous && !next) changes.push({ id, kind: 'remove', label: canvasElementReviewLabel(previous) })
-      else if (previous && next && JSON.stringify(previous) !== JSON.stringify(next)) changes.push({ id, kind: 'update', label: canvasElementReviewLabel(next) })
+      if (!previous && next) changes.push({ id, kind: 'add', label: canvasElementReviewLabel(next), fields: ['新增'] })
+      else if (previous && !next) changes.push({ id, kind: 'remove', label: canvasElementReviewLabel(previous), fields: ['删除'] })
+      else if (previous && next && JSON.stringify(previous) !== JSON.stringify(next)) changes.push({ id, kind: 'update', label: canvasElementReviewLabel(next), fields: canvasElementChangedFields(previous, next) })
     }
     return changes
   } catch {
@@ -1830,9 +1904,78 @@ function buildCanvasProposalChanges(before: DiagramDocument, after: DiagramDocum
   }
 }
 
+function canvasElementChangedFields(previous: ReturnType<typeof parseCanvasScene>['elements'][number], next: ReturnType<typeof parseCanvasScene>['elements'][number]): string[] {
+  const labels = new Set<string>()
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)])
+  keys.delete('id')
+  keys.delete('type')
+  for (const key of keys) {
+    const before = (previous as unknown as Record<string, unknown>)[key]
+    const after = (next as unknown as Record<string, unknown>)[key]
+    if (JSON.stringify(before) === JSON.stringify(after)) continue
+    labels.add(canvasChangeFieldLabel(key))
+  }
+  return [...labels]
+}
+
+function canvasChangeFieldLabel(field: string): string {
+  if (field === 'x' || field === 'y') return '位置'
+  if (field === 'width' || field === 'height') return '尺寸'
+  if (field === 'from' || field === 'to') return '端点'
+  if (field === 'points' || field === 'routing' || field === 'fromAnchor' || field === 'toAnchor' || field === 'bundleKey') return '路由'
+  if (field === 'labelPosition') return '标签位置'
+  if (field === 'text') return '文字'
+  if (field === 'label') return '关系文字'
+  if (field === 'subtitle') return '副标题'
+  if (field === 'description') return '说明'
+  if (field === 'icon') return '角色'
+  if (field === 'stencil') return '技术栈'
+  if (field === 'groupId') return '边界'
+  if (field === 'laneId') return '泳道'
+  if (field === 'c4Type') return 'C4'
+  if (field === 'tone' || field === 'shape' || field === 'emphasis' || field === 'lineStyle') return '外观'
+  if (field === 'sourcePaths') return '源码'
+  if (field === 'tags') return '标签'
+  if (field === 'locked') return '锁定'
+  return field
+}
+
 function canvasElementReviewLabel(element: ReturnType<typeof parseCanvasScene>['elements'][number]): string {
   if (element.type === 'arrow') return `${element.id}: ${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
   return `${element.id}: ${element.text}`
+}
+
+function buildCanvasProposalDependencies(before: DiagramDocument, after: DiagramDocument): Map<string, string[]> {
+  const dependencies = new Map<string, string[]>()
+  if (before.type !== 'canvas' || after.type !== 'canvas') return dependencies
+  try {
+    const left = parseCanvasScene(before.source)
+    const right = parseCanvasScene(after.source)
+    const baseIds = new Set(left.elements.map((item) => item.id))
+    const changedIds = new Set(buildCanvasProposalChanges(before, after)?.map((item) => item.id) ?? [])
+    for (const item of right.elements) {
+      if (item.type !== 'arrow' || !changedIds.has(item.id)) continue
+      const required = [item.from, item.to].filter((id) => !baseIds.has(id) && changedIds.has(id))
+      if (required.length) dependencies.set(item.id, required)
+    }
+  } catch {
+    return dependencies
+  }
+  return dependencies
+}
+
+function updateProposalSelection(current: string[], id: string, checked: boolean, dependencies: Map<string, string[]>): string[] {
+  const selected = new Set(current)
+  if (checked) {
+    selected.add(id)
+    for (const dependency of dependencies.get(id) ?? []) selected.add(dependency)
+  } else {
+    selected.delete(id)
+    for (const [owner, required] of dependencies) {
+      if (required.includes(id)) selected.delete(owner)
+    }
+  }
+  return [...selected]
 }
 
 type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string }

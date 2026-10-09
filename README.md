@@ -69,8 +69,10 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - MCP `diagram.upsertSourceNodes` 可一次同步最多 80 个真实源码文件，单次读取源码索引、单次写入 Canvas revision，适合 Codex 分析一个模块后批量补齐 Controller / Service / Repository / DB 节点
 - 对已有图的对话修改先进入右侧 Proposal Diff，不直接写盘；Mermaid、标题/画布尺寸、Group/Lane 元数据或真正的整图重构使用 `diagram.proposeUpdate`，有限范围的 Canvas 修改优先使用增量 `diagram.proposeSubgraphPatch`
 - “调整选中”走 `diagram.proposeSubgraphPatch`：模型只发送变化字段、新增元素和删除 id，不再回传完整 Canvas JSON。服务端保留未声明的人工节点坐标、折点和 Label 位置，自动计算关系重路由/连带删除等影响范围，并在 Proposal 中区分 scope、实际影响和自动影响；旧 `diagram.proposeSubgraphUpdate` 仅保留兼容
-- 大型 Canvas 的局部 AI 修改先走 `diagram.getSubgraph`，只读取当前 element ids、直接关系、有限深度邻域和相关 Group/Lane 元数据；节点与关系数量都有硬上限，避免为了改几个元素把 5000 节点整图塞进模型上下文
-- 增量 Canvas Proposal 的部分接受使用严格 element-id 语义：未勾选的自动重路由不会因为相邻节点被勾选而被偷偷带入；删除节点时无效悬空关系仍会在最终合并时被安全清理
+- 大型 Canvas 的局部 AI 修改先走 `diagram.getSubgraph`，返回 `scopeNodeIds / directRelationshipIds / contextElementIds`：原始选区是默认可编辑范围，用户意图明确涉及直接关系时才扩到对应 relationship，邻居默认只读；节点与关系数量都有硬上限，避免为了改几个元素把 5000 节点整图塞进模型上下文
+- 增量 Canvas Proposal 支持字段级并发 rebase：Proposal 生成后如果用户或另一个 Agent 又改了无关字段/节点，接受时会在最新 revision 上重放 patch 并保留并发修改；同字段冲突、删除目标变化、人工路由冲突会明确拒绝。若 rebase 导致自动布局/路由或新增节点位置与已审查候选不同，会刷新 Proposal 要求再次审查，而不是直接写盘
+- 增量 Canvas Proposal 的部分接受使用 element-id 语义并做依赖校验：新增关系必须同时接受缺失的新端点；删除节点会安全清理悬空关系；架构节点几何只应用一部分时，会根据最终节点位置重新计算必要关系路由，避免留下指向旧位置的折点
+- Proposal 出现后仍可继续手工编辑 Canvas：接受增量 Proposal 时，插件会先保存本地 dirty 草稿，再通过字段级 rebase 合并；整图 Proposal 无法安全合并本地草稿时会阻止覆盖
 - 右侧可直接“调整选中”，该操作会显式携带当前 element ids 和选区结构，让 Codex 只修改当前选区，不需要常驻聊天上下文
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
 - Canvas 文档默认保存为 `docs/diagrams/*.diagram.json`，可以直接进入 Git diff，也不会被源码选择器误当成业务 JSON
@@ -134,14 +136,14 @@ pnpm plugin:install:desktop
 | `diagram.upsertSourceNodes` | 批量将真实源码文件创建/同步为 Canvas 节点，单 revision 写入 |
 | `diagram.create` | 在 `docs/diagrams/` 创建图表 |
 | `diagram.update` | 更新已有图表源码 |
-| `diagram.getSubgraph` | 按 element ids 读取受限 Canvas 邻域，供大图增量分析/修改使用 |
+| `diagram.getSubgraph` | 按 element ids 读取受限 Canvas 邻域，并区分 scope、直接关系和只读上下文，供大图增量分析/修改使用 |
 | `diagram.beautifyArchitecture` | 对 Canvas 架构图执行自动分区、主题配色、角色/技术图标补全、布局和连线整理 |
 | `diagram.routeArchitectureEdges` | 仅重新计算 Canvas 架构关系的锚点、避障路径和线路通道，不移动节点 |
 | `diagram.proposeUpdate` | 提交不落盘的候选图表更新，供右侧 Diff 审查 |
 | `diagram.proposeSubgraphPatch` | 提交增量 Canvas 子图 patch；只发送 updates/adds/removeIds，服务端计算候选、影响范围与局部路由 |
 | `diagram.proposeSubgraphUpdate` | 兼容旧版完整 Canvas 子图候选修改，不再作为首选 |
 | `diagram.proposal` | UI 内部读取当前聊天待审查 Proposal |
-| `diagram.applyProposal` | UI 内部接受 Proposal；Canvas 可指定 element ids 部分应用，并按原 revision 安全写入 |
+| `diagram.applyProposal` | UI 内部接受 Proposal；Canvas 可指定 element ids 部分应用，增量 patch 支持字段级并发 rebase 与候选漂移二次审查 |
 | `diagram.dismissProposal` | UI 内部拒绝 Proposal，不修改文件 |
 | `diagram.rename` | 重命名图表 |
 | `diagram.duplicate` | 复制图表 |

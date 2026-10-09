@@ -92,10 +92,10 @@ export function buildSubgraphModificationPrompt(workspacePath: string, diagram: 
     `修改要求：${instruction.trim()}`,
     '',
     '执行要求：',
-    '1. 先调用 diagram.getSubgraph，path 使用当前图表路径、elementIds 使用上面的稳定 id、depth 默认 0；只有明确需要更远依赖时才提高到 1～2。不要先读取完整 Canvas。需要代码事实时再读取相关源码。',
-    '2. 调用 diagram.proposeSubgraphPatch，不要生成或传回完整 Canvas JSON。elementIds 使用上面的已有稳定 id。',
+    '1. 先调用 diagram.getSubgraph，path 使用当前图表路径、elementIds 使用上面的稳定 id、depth 默认 0；只有明确需要更远依赖时才提高到 1～2。不要先读取完整 Canvas。返回值会区分 scopeNodeIds、directRelationshipIds、contextElementIds；contextElementIds 默认只读。需要代码事实时再读取相关源码。',
+    '2. 调用 diagram.proposeSubgraphPatch，不要生成或传回完整 Canvas JSON。elementIds 默认使用上面的稳定 id；如果用户要求明确涉及这些节点的直接关系，可把 getSubgraph 返回的 directRelationshipIds 中相关关系一并加入 elementIds。不要仅因为看到了 contextElementIds 就扩大修改范围。',
     '3. updates 只写真正发生变化的字段；没有要移动节点时，不要写 x/y/width/height。没有要人工改线路时，不要写 arrow.points/labelPosition/bundleKey。null 只用于明确清除可选字段。',
-    '4. 新增元素放在 adds 中并使用新的稳定 id。新增 node/note 可以省略 x/y，由服务端在当前子图附近寻找位置；新增 arrow 必须提供 from/to。删除已有元素放在 removeIds。',
+    '4. 新增元素放在 adds 中并使用新的稳定 id。新增 node/note 可以省略 x/y，由服务端在当前子图附近寻找位置；当当前 scope 的 group/lane 唯一且明确时，服务端也会继承该上下文。新增 arrow 必须提供 from/to。删除已有元素放在 removeIds。',
     '5. layout 默认 preserve；只有用户明确要求当前子图重新布局/整理时才使用 local。服务端会计算关系重路由、删除节点的连带关系等自动影响，并在 Proposal 中单独显示。',
     '6. 不要直接调用 diagram.update，也不要优先使用旧的 diagram.proposeSubgraphUpdate。等待用户在右侧 Diagram 审查并接受/拒绝。',
   ].join('\n')
