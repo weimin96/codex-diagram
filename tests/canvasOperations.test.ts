@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reverseCanvasArrow, separateCanvasSelection } from '../src/canvasOperations.js'
+import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -175,4 +175,24 @@ test('lays out only the local graph neighborhood and preserves the selected anch
   assert.ok(Math.abs(after.x + after.width / 2 - beforeCenter.x) <= 16)
   assert.ok(Math.abs(after.y + after.height / 2 - beforeCenter.y) <= 16)
   assert.deepEqual(result.scene.elements.find((item) => item.id === 'node-4'), distant)
+})
+
+test('switches persisted C4 hierarchy between system, container and expanded levels', () => {
+  const source = scene()
+  source.groups = [
+    { id: 'system', label: 'Platform', kind: 'boundary', c4Type: 'software-system' },
+    { id: 'runtime', label: 'Runtime', kind: 'boundary', c4Type: 'container', parentId: 'system' },
+    { id: 'domain', label: 'Domain', kind: 'boundary', parentId: 'runtime', collapsed: true },
+  ]
+  const system = setCanvasC4CollapseLevel(source, 'system')
+  assert.equal(system.groups?.find((group) => group.id === 'system')?.collapsed, true)
+  assert.equal(system.groups?.find((group) => group.id === 'runtime')?.collapsed, undefined)
+  assert.equal(system.groups?.find((group) => group.id === 'domain')?.collapsed, true)
+  const container = setCanvasC4CollapseLevel(system, 'container')
+  assert.equal(container.groups?.find((group) => group.id === 'system')?.collapsed, undefined)
+  assert.equal(container.groups?.find((group) => group.id === 'runtime')?.collapsed, true)
+  const expanded = setCanvasC4CollapseLevel(container, 'expanded')
+  assert.equal(expanded.groups?.find((group) => group.id === 'system')?.collapsed, undefined)
+  assert.equal(expanded.groups?.find((group) => group.id === 'runtime')?.collapsed, undefined)
+  assert.equal(expanded.groups?.find((group) => group.id === 'domain')?.collapsed, true)
 })

@@ -372,7 +372,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-architecture-breadcrumb button.is-current { color: var(--text-primary); font-weight: 700; }
 .freeform-architecture-breadcrumb i { color: var(--text-tertiary); font-size: 10px; font-style: normal; }
 .freeform-architecture-breadcrumb em { margin-left: 5px; color: var(--text-tertiary); font: 9px var(--font-mono); white-space: nowrap; }
-.freeform-large-scene-hint { position: absolute; z-index: 6; left: 12px; bottom: 48px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 7px; background: color-mix(in srgb, var(--surface-panel) 90%, transparent); color: var(--text-tertiary); font: 9px var(--font-mono); backdrop-filter: blur(8px); pointer-events: none; }
+.freeform-large-scene-hint { position: absolute; z-index: 6; left: 12px; bottom: 132px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 7px; background: color-mix(in srgb, var(--surface-panel) 90%, transparent); color: var(--text-tertiary); font: 9px var(--font-mono); backdrop-filter: blur(8px); pointer-events: none; }
 .freeform-inspector {
   position: absolute;
   z-index: 7;
@@ -591,6 +591,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-group-frame text { fill: var(--text-tertiary); font-size: 12px; font-weight: 650; font-family: var(--font-sans); }
 .freeform-group-frame.tone-accent rect { stroke: #818cf8; fill: color-mix(in srgb, #818cf8 5%, transparent); }
 .freeform-group-frame.tone-success rect { stroke: #34d399; fill: color-mix(in srgb, #34d399 5%, transparent); }
+.freeform-group-frame.is-lod-summary rect { fill: color-mix(in srgb, var(--surface-panel) 88%, var(--surface-muted)); stroke-dasharray: none; stroke-width: 1.8; }
+.freeform-group-frame.is-lod-summary text { fill: var(--text-secondary); font-size: 13px; font-weight: 720; }
+.freeform-editor.lod-overview .freeform-lane-body { opacity: .68; }
+.freeform-editor.lod-overview .freeform-lane text { opacity: .78; }
+.freeform-editor.lod-regions .freeform-lane-body { opacity: .36; }
+.freeform-editor.lod-regions .freeform-lane-head { opacity: .72; }
+.freeform-editor.lod-regions .freeform-arrow:not(.is-selected):not(.is-collapsed-summary) { opacity: .62; }
+.freeform-editor.lod-regions .freeform-arrow.is-collapsed-summary { opacity: .94; }
 .freeform-group-frame.tone-warning rect { stroke: #f59e0b; fill: color-mix(in srgb, #f59e0b 5%, transparent); }
 .freeform-group-frame.tone-danger rect { stroke: #f87171; fill: color-mix(in srgb, #f87171 5%, transparent); }
 .freeform-group-frame.is-selected rect { stroke-width: 2.2; stroke-dasharray: 7 4; }

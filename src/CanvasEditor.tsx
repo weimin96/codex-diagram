@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasSemanticLodProjection, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -999,11 +999,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!parsed.scene || playbackActive || !architectureScope) return null
     return canvasArchitectureScopeProjection(parsed.scene, architectureScope)
   }, [architectureScope, parsed.scene, playbackActive])
+  const staticSemanticLodProjection = useMemo(() => {
+    const projected = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
+    if (!projected) return null
+    if (playbackActive || architectureScope) {
+      return { scene: projected, level: 'detail' as const, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
+    }
+    return canvasSemanticLodProjection(projected, viewport.zoom, selectedIds)
+  }, [architectureScope, playbackActive, selectedIds, staticArchitectureProjection, staticScopeProjection, viewport.zoom])
   const staticGroupBounds = useMemo(() => parsed.scene ? canvasGroupFrames(parsed.scene) : [], [parsed.scene])
   const staticProjectedGroupBounds = useMemo(() => {
-    const projected = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
+    const projected = staticSemanticLodProjection?.scene
     return projected ? canvasGroupFrames(projected) : []
-  }, [staticArchitectureProjection, staticScopeProjection])
+  }, [staticSemanticLodProjection])
   const staticArchitectureHeader = useMemo(() => parsed.scene ? canvasArchitectureHeader(parsed.scene) : undefined, [parsed.scene])
 
   useEffect(() => {
@@ -1035,7 +1043,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         hiddenArrows: scopedArchitectureProjection.hiddenArrows,
       }
     : baseArchitectureProjection
-  const renderSceneBase = architectureProjection.scene
+  const semanticLodProjection = staticSemanticLodProjection!
+  const semanticLodLevel = semanticLodProjection.level
+  const autoCollapsedGroupIds = new Set(semanticLodProjection.autoCollapsedGroupIds)
+  const renderSceneBase = semanticLodProjection.scene
   const renderScene = gesturePositionOverrides
     ? {
         ...renderSceneBase,
@@ -1082,6 +1093,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedGroup = selectedGroupId
     ? scene.groups?.find((group) => group.id === selectedGroupId) ?? { id: selectedGroupId, label: selectedGroupId, tone: 'muted' as CanvasTone }
     : undefined
+  const c4CollapseLevel: CanvasC4CollapseLevel = scene.groups?.some((group) => group.c4Type === 'software-system' && group.collapsed)
+    ? 'system'
+    : scene.groups?.some((group) => group.c4Type === 'container' && group.collapsed)
+      ? 'container'
+      : 'expanded'
   const collapsedOwners = canvasCollapsedOwners(renderScene)
   const collapsedMemberIds = new Set(collapsedOwners.keys())
   const renderBoxes = projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
@@ -1152,7 +1168,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const relationBundleTrunks = playback?.active || Boolean(gesturePositionOverrides) && renderArrows.length > 120
     ? []
     : canvasBundleTrunks(relationshipRenderScene)
-  const relationLabelLayouts = canvasArrowLabelLayouts(relationshipRenderScene)
+  const selectedIdSet = new Set(selectedIds)
+  const relationshipLabelScene = semanticLodLevel === 'detail'
+    ? relationshipRenderScene
+    : {
+        ...relationshipRenderScene,
+        elements: relationshipRenderScene.elements.map((item) => item.type === 'arrow' && item.label && !semanticLodAllowsArrowLabel(semanticLodLevel, item, selectedIdSet)
+          ? { ...item, label: undefined }
+          : item),
+      }
+  const relationLabelLayouts = canvasArrowLabelLayouts(relationshipLabelScene)
   const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
     ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)
@@ -1170,7 +1195,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...projectedBoxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
   const compactMinimap = renderBoxes.length > 420
-  const selectedIdSet = new Set(selectedIds)
   const minimapNodeCloudPath = compactMinimap
     ? renderBoxes.filter((item) => !selectedIdSet.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
     : ''
@@ -1469,6 +1493,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function toggleSelectedGroupCollapsed() {
     if (!selectedGroup) return
     updateSelectedGroup({ collapsed: !selectedGroup.collapsed })
+  }
+
+  function applyC4CollapseLevel(level: CanvasC4CollapseLevel) {
+    commit(setCanvasC4CollapseLevel(currentScene(), level))
+    setSelectedIds([])
+    setSelectedGroupTarget(null)
+    setArchitectureScope(null)
+    setToolbarMenu(null)
   }
 
   function applyLanePreset(axis: 'horizontal' | 'vertical') {
@@ -2207,6 +2239,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const analysisToolbarLabel = traceDirection
     ? `分析 · ${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}`
     : '分析'
+  const semanticLodLabel = semanticLodLevel === 'detail' ? '细节'
+    : semanticLodLevel === 'compact' ? '紧凑'
+      : semanticLodLevel === 'overview' ? '概览'
+        : '区域'
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
     const presentation = playback?.boxOverrides?.[item.id] ?? item
@@ -2215,7 +2251,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
+    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} lod-${semanticLodLevel}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
@@ -2260,6 +2296,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       ))}
                     </div>
                   </section>
+                  {scene.groups?.some((group) => Boolean(group.c4Type)) ? (
+                    <section>
+                      <span>C4 层级</span>
+                      <div className="freeform-menu-grid three">
+                        <button type="button" aria-pressed={c4CollapseLevel === 'expanded'} className={c4CollapseLevel === 'expanded' ? 'is-selected' : ''} onClick={() => applyC4CollapseLevel('expanded')}>展开</button>
+                        <button type="button" aria-pressed={c4CollapseLevel === 'container'} className={c4CollapseLevel === 'container' ? 'is-selected' : ''} onClick={() => applyC4CollapseLevel('container')}>容器</button>
+                        <button type="button" aria-pressed={c4CollapseLevel === 'system'} className={c4CollapseLevel === 'system' ? 'is-selected' : ''} onClick={() => applyC4CollapseLevel('system')}>系统</button>
+                      </div>
+                    </section>
+                  ) : null}
                 </> : (
                   <section className="freeform-architecture-entry">
                     <span>架构模式</span>
@@ -2372,8 +2418,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <em>{visibleRenderBoxes.length} 节点 · {displayGroupBounds.filter((group) => group.collapsed).length} 区域 · {visibleRenderArrows.length} 关系</em>
           </nav>
         ) : null}
-        {largeSceneViewportCulling ? (
-          <div className="freeform-large-scene-hint">大图视窗渲染 · {visibleRenderBoxes.length}/{renderBoxes.length} 节点</div>
+        {largeSceneViewportCulling || semanticLodLevel === 'overview' || semanticLodLevel === 'regions' ? (
+          <div className="freeform-large-scene-hint">LOD {semanticLodLabel}{largeSceneViewportCulling ? ` · 视窗 ${visibleRenderBoxes.length}/${renderBoxes.length} 节点` : ''}{semanticLodProjection.hiddenNodes ? ` · 摘要 ${semanticLodProjection.hiddenNodes} 节点` : ''}</div>
         ) : null}
 
         {layersOpen ? (
@@ -2771,7 +2817,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           )).map((group) => (
             <g
               key={group.id}
-              className={`freeform-group-frame kind-${group.kind ?? 'group'} c4-${group.c4Type ?? 'none'}${group.parentId ? ' has-parent' : ''}${group.collapsed ? ' is-collapsed' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-group-frame kind-${group.kind ?? 'group'} c4-${group.c4Type ?? 'none'}${group.parentId ? ' has-parent' : ''}${group.collapsed ? ' is-collapsed' : ''}${autoCollapsedGroupIds.has(group.id) ? ' is-lod-summary' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
               pointerEvents="none"
             >
               {group.description ? <title>{group.description}</title> : null}
@@ -2782,10 +2828,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 height={group.height}
                 rx="20"
                 pointerEvents={group.collapsed ? 'all' : 'none'}
-                onClick={group.collapsed ? (event) => { event.stopPropagation(); selectGroup(group.id) } : undefined}
+                onClick={group.collapsed ? (event) => {
+                  event.stopPropagation()
+                  if (autoCollapsedGroupIds.has(group.id)) {
+                    setSelectedIds([])
+                    setSelectedGroupTarget(group.id)
+                  } else selectGroup(group.id)
+                } : undefined}
                 onDoubleClick={group.collapsed ? (event) => {
                   event.stopPropagation()
                   if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
+                  else if (autoCollapsedGroupIds.has(group.id)) revealAndFocus(group.memberIds)
                   else {
                     commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false }))
                     setSelectedGroupTarget(group.id)
@@ -2809,7 +2862,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   }}
                 />
               ) : null}
-              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : ' · 双击展开' : ''}</text> : null}
+              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{autoCollapsedGroupIds.has(group.id) ? ` · ${group.memberIds.length} 节点` : group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : autoCollapsedGroupIds.has(group.id) ? ' · 双击进入' : ' · 双击展开' : ''}</text> : null}
             </g>
           ))}
           {relationBundleTrunks.map((bundle) => (
@@ -2951,7 +3004,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const architectureCard = displayItem.type === 'node' && Boolean(displayItem.icon || displayItem.stencil || displayItem.c4Type)
             const cardTemplate = canvasArchitectureCardTemplate(displayItem)
             const cardMeta = displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
-            const showCardSubtitle = Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
+            const selectedForLod = selectedIdSet.has(item.id)
+            const showNodeTitle = semanticLodLevel !== 'regions' || selectedForLod || displayItem.emphasis === 'primary'
+            const showRoleIcon = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || displayItem.emphasis === 'primary'
+            const showCardMeta = semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod
+            const showC4Badge = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod
+            const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
+            const showSourceBadge = semanticLodLevel === 'detail' || selectedForLod
+            const showAnchorPoints = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id
             const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
             return (
             <g
@@ -2979,7 +3039,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : 14} />
               {displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
-              {displayItem.icon ? (
+              {displayItem.icon && showRoleIcon ? (
                 <g className="freeform-node-role" transform="translate(18 18)">
                   <circle r="10" />
                   <g className="freeform-node-role-symbol" transform="translate(-7 -7) scale(.5833)">
@@ -2987,19 +3047,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </g>
                 </g>
               ) : null}
-              {cardMeta ? <text className="freeform-node-icon" x={displayItem.icon ? 34 : 13} y="19">{cardMeta}</text> : null}
-              {displayItem.c4Type ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
-              <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureCard ? 16 : displayItem.width / 2} y={architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+              {cardMeta && showCardMeta ? <text className="freeform-node-icon" x={displayItem.icon && showRoleIcon ? 34 : 13} y="19">{cardMeta}</text> : null}
+              {displayItem.c4Type && showC4Badge ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
+              {showNodeTitle ? <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureCard ? 16 : displayItem.width / 2} y={architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
                 {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
-              </text>
+              </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureCard ? 16 : displayItem.width / 2} y={displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
-              {displayItem.sourcePaths?.length ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
-              <g className="freeform-anchor-points">
+              {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
+              {showAnchorPoints ? <g className="freeform-anchor-points">
                   <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
                   <circle cx={displayItem.width} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'right')} />
                   <circle cx={displayItem.width / 2} cy={displayItem.height} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'bottom')} />
                   <circle cx={0} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'left')} />
-              </g>
+              </g> : null}
               {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? (
                 <rect
                   className="freeform-resize-handle"
@@ -3708,6 +3768,13 @@ function rectanglesOverlapWithPadding(
     && left.x + left.width + padding > right.x
     && left.y < right.y + right.height + padding
     && left.y + left.height + padding > right.y
+}
+
+function semanticLodAllowsArrowLabel(level: CanvasSemanticLodLevel, arrow: CanvasArrow, selected: Set<string>): boolean {
+  if (level === 'detail' || selected.has(arrow.id)) return true
+  if (level === 'compact') return arrow.emphasis !== 'muted' || Boolean(arrow.labelPosition)
+  if (level === 'overview') return arrow.emphasis === 'primary' || Boolean(arrow.labelPosition)
+  return false
 }
 
 function nearestSnap(sources: number[], targets: number[], threshold: number): { delta: number; target: number } | null {

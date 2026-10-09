@@ -169,6 +169,16 @@ export interface CanvasArchitectureProjection {
   hiddenArrows: number
 }
 
+export type CanvasSemanticLodLevel = 'detail' | 'compact' | 'overview' | 'regions'
+
+export interface CanvasSemanticLodProjection {
+  scene: CanvasScene
+  level: CanvasSemanticLodLevel
+  autoCollapsedGroupIds: string[]
+  hiddenNodes: number
+  hiddenArrows: number
+}
+
 export interface CanvasArchitectureScope {
   kind: CanvasArchitectureScopeKind
   id: string
@@ -564,6 +574,167 @@ export function canvasArchitectureScopeProjection(scene: CanvasScene, scope: Can
     hiddenNodes: boxes.length - visible.size,
     hiddenArrows: arrows.length - visibleArrows.length,
   }
+}
+
+export function resolveCanvasSemanticLod(zoom: number, nodeCount: number): CanvasSemanticLodLevel {
+  const pressure = nodeCount >= 3000 ? 0.22 : nodeCount >= 1200 ? 0.14 : nodeCount >= 500 ? 0.08 : nodeCount >= 180 ? 0.04 : 0
+  if (zoom >= 0.92 + pressure) return 'detail'
+  if (zoom >= 0.62 + pressure) return 'compact'
+  if (zoom >= 0.36 + pressure / 2) return 'overview'
+  return 'regions'
+}
+
+/**
+ * Display-only semantic LOD. It never mutates persisted collapse state.
+ * At the farthest zoom level, stable semantic boundaries become temporary
+ * region summaries so large diagrams preserve shape without mounting every
+ * member node into the main SVG.
+ */
+export function canvasSemanticLodProjection(
+  scene: CanvasScene,
+  zoom: number,
+  selectedIds: string[] = [],
+): CanvasSemanticLodProjection {
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const level = resolveCanvasSemanticLod(zoom, boxes.length)
+  if (level === 'detail' || level === 'compact') {
+    return { scene, level, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
+  }
+
+  const selected = new Set(selectedIds)
+  arrows.forEach((arrow) => {
+    if (!selected.has(arrow.id)) return
+    selected.add(arrow.from)
+    selected.add(arrow.to)
+  })
+  const groups = scene.groups ?? []
+  const groupById = new Map(groups.map((group) => [group.id, group]))
+  const memberCount = new Map<string, number>()
+  const containsSelection = new Set<string>()
+  boxes.forEach((item) => {
+    let groupId = item.groupId
+    const visited = new Set<string>()
+    while (groupId && !visited.has(groupId)) {
+      visited.add(groupId)
+      memberCount.set(groupId, (memberCount.get(groupId) ?? 0) + 1)
+      if (selected.has(item.id)) containsSelection.add(groupId)
+      groupId = groupById.get(groupId)?.parentId
+    }
+  })
+
+  const eligible = level === 'regions'
+    ? new Set(groups.flatMap((group) => {
+        if (group.collapsed || containsSelection.has(group.id)) return []
+        const count = memberCount.get(group.id) ?? 0
+        const semanticBoundary = group.kind === 'boundary' || Boolean(group.c4Type) || count >= 6
+        return semanticBoundary && count >= 3 ? [group.id] : []
+      }))
+    : new Set<string>()
+
+  // Prefer the highest eligible ancestor so nested Container/Domain structures
+  // become one stable region summary instead of several overlapping summaries.
+  const autoCollapsed = new Set<string>()
+  for (const id of eligible) {
+    let parentId = groupById.get(id)?.parentId
+    let hasEligibleAncestor = false
+    while (parentId) {
+      if (eligible.has(parentId)) {
+        hasEligibleAncestor = true
+        break
+      }
+      parentId = groupById.get(parentId)?.parentId
+    }
+    if (!hasEligibleAncestor) autoCollapsed.add(id)
+  }
+  const projectedGroups = autoCollapsed.size
+    ? groups.map((group) => autoCollapsed.has(group.id) ? { ...group, collapsed: true } : group)
+    : scene.groups
+  let projected: CanvasScene = projectedGroups ? { ...scene, groups: projectedGroups } : scene
+  const owners = canvasCollapsedOwners(projected)
+  const collapsedNodeIds = new Set(owners.keys())
+  const candidates = boxes.filter((item) => !collapsedNodeIds.has(item.id))
+  const limit = semanticLodNodeLimit(level, boxes.length)
+  let visibleNodeIds = new Set(candidates.map((item) => item.id))
+
+  if (candidates.length > limit) {
+    const degree = new Map<string, number>(boxes.map((item) => [item.id, 0]))
+    arrows.forEach((arrow) => {
+      degree.set(arrow.from, (degree.get(arrow.from) ?? 0) + 1)
+      degree.set(arrow.to, (degree.get(arrow.to) ?? 0) + 1)
+    })
+    const mustKeep = new Set<string>()
+    candidates.forEach((item) => {
+      if (selected.has(item.id) || item.emphasis === 'primary') mustKeep.add(item.id)
+    })
+    arrows.forEach((arrow) => {
+      if (collapsedNodeIds.has(arrow.from) && !collapsedNodeIds.has(arrow.to)) mustKeep.add(arrow.to)
+      if (collapsedNodeIds.has(arrow.to) && !collapsedNodeIds.has(arrow.from)) mustKeep.add(arrow.from)
+    })
+    const buckets = new Map<string, Array<CanvasNode | CanvasNote>>()
+    candidates.forEach((item) => {
+      const key = item.laneId ? `lane:${item.laneId}` : item.groupId ? `group:${item.groupId}` : ''
+      if (!key) return
+      buckets.set(key, [...(buckets.get(key) ?? []), item])
+    })
+    buckets.forEach((members) => {
+      const representative = members.slice().sort((left, right) => semanticLodNodeScore(right, degree) - semanticLodNodeScore(left, degree) || left.id.localeCompare(right.id))[0]
+      if (representative) mustKeep.add(representative.id)
+    })
+    const trimmed = new Set(mustKeep)
+    candidates
+      .filter((item) => !trimmed.has(item.id))
+      .sort((left, right) => semanticLodNodeScore(right, degree) - semanticLodNodeScore(left, degree) || left.id.localeCompare(right.id))
+      .slice(0, Math.max(0, limit - trimmed.size))
+      .forEach((item) => trimmed.add(item.id))
+    visibleNodeIds = trimmed
+
+    const aggregationNodeIds = collapsedNodeIds
+    projected = {
+      ...projected,
+      elements: projected.elements.filter((item) => {
+        if (item.type !== 'arrow') return aggregationNodeIds.has(item.id) || visibleNodeIds.has(item.id)
+        if (aggregationNodeIds.has(item.from) || aggregationNodeIds.has(item.to)) return true
+        return visibleNodeIds.has(item.from) && visibleNodeIds.has(item.to)
+      }),
+    }
+  }
+
+  const explicitVisibleNodes = candidates.filter((item) => visibleNodeIds.has(item.id)).length
+  const explicitVisibleArrows = arrows.filter((arrow) => !collapsedNodeIds.has(arrow.from) && !collapsedNodeIds.has(arrow.to) && visibleNodeIds.has(arrow.from) && visibleNodeIds.has(arrow.to)).length
+  return {
+    scene: projected,
+    level,
+    autoCollapsedGroupIds: [...autoCollapsed],
+    hiddenNodes: Math.max(0, boxes.length - explicitVisibleNodes),
+    hiddenArrows: Math.max(0, arrows.length - explicitVisibleArrows),
+  }
+}
+
+function semanticLodNodeLimit(level: CanvasSemanticLodLevel, nodeCount: number): number {
+  if (level === 'overview') {
+    if (nodeCount >= 3000) return 640
+    if (nodeCount >= 1200) return 480
+    if (nodeCount >= 500) return 360
+    return 260
+  }
+  if (nodeCount >= 3000) return 220
+  if (nodeCount >= 1200) return 180
+  if (nodeCount >= 500) return 150
+  return 120
+}
+
+function semanticLodNodeScore(item: CanvasNode | CanvasNote, degree: Map<string, number>): number {
+  let score = (degree.get(item.id) ?? 0) * 24
+  if (item.emphasis === 'primary') score += 20_000
+  else if (item.emphasis === 'secondary') score += 2_000
+  else if (item.emphasis === 'muted') score -= 600
+  if (item.c4Type === 'person' || item.c4Type === 'software-system') score += 1_400
+  else if (item.c4Type === 'container') score += 900
+  if (item.icon === 'gateway' || item.icon === 'api' || item.icon === 'queue' || item.icon === 'database' || item.icon === 'external') score += 520
+  if (item.stencil) score += 120
+  if (item.description) score += 40
+  return score
 }
 
 export function resolveCanvasArchitectureDensity(

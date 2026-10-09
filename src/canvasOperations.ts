@@ -546,6 +546,27 @@ export function updateCanvasGroup(scene: CanvasScene, groupId: string, patch: Pa
   return { ...scene, groups: upsertCanvasGroup(scene.groups, { id: groupId, ...patch }) }
 }
 
+export type CanvasC4CollapseLevel = 'expanded' | 'container' | 'system'
+
+export function setCanvasC4CollapseLevel(scene: CanvasScene, level: CanvasC4CollapseLevel): CanvasScene {
+  if (!scene.groups?.length) return scene
+  return {
+    ...scene,
+    groups: scene.groups.map((group) => {
+      if (!group.c4Type) return group
+      const collapsed = level === 'system'
+        ? group.c4Type === 'software-system'
+        : level === 'container'
+          ? group.c4Type === 'container'
+          : false
+      if (collapsed) return { ...group, collapsed: true }
+      if (!group.collapsed) return group
+      const { collapsed: _collapsed, ...rest } = group
+      return rest
+    }),
+  }
+}
+
 export function setCanvasGroupParent(scene: CanvasScene, groupId: string, parentId?: string): CanvasScene {
   if (parentId === groupId) return scene
   const groups = scene.groups ?? []

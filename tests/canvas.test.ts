@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasSceneToSvg, createCanvasSource, parseCanvasScene, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -240,4 +240,90 @@ test('architecture node focus keeps a bounded neighborhood and group breadcrumbs
   assert.deepEqual(projection.breadcrumbs.map((item) => item.label), ['System', 'Runtime', 'B'])
   assert.deepEqual(projection.scene.elements.filter((item) => item.type !== 'arrow').map((item) => item.id).sort(), ['a', 'b', 'c'])
   assert.ok(!projection.scene.elements.some((item) => item.id === 'd'))
+})
+
+test('semantic LOD becomes more aggressive for large scenes at the same zoom', () => {
+  assert.equal(resolveCanvasSemanticLod(0.7, 40), 'compact')
+  assert.equal(resolveCanvasSemanticLod(0.7, 1400), 'overview')
+  assert.equal(resolveCanvasSemanticLod(0.34, 40), 'regions')
+})
+
+test('region LOD temporarily collapses semantic boundaries without mutating source state', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'LOD',
+    width: 1800,
+    height: 1000,
+    groups: [
+      { id: 'system', label: 'Platform', kind: 'boundary', c4Type: 'software-system' },
+      { id: 'runtime', label: 'Runtime', kind: 'boundary', c4Type: 'container', parentId: 'system' },
+    ],
+    elements: [
+      { id: 'web', type: 'node', x: 120, y: 180, width: 180, height: 80, text: 'Web', groupId: 'runtime' },
+      { id: 'api', type: 'node', x: 420, y: 180, width: 180, height: 80, text: 'API', groupId: 'runtime' },
+      { id: 'worker', type: 'node', x: 720, y: 180, width: 180, height: 80, text: 'Worker', groupId: 'runtime' },
+      { id: 'db', type: 'node', x: 1020, y: 180, width: 180, height: 80, text: 'DB', groupId: 'system' },
+      { id: 'a', type: 'arrow', from: 'web', to: 'api' },
+      { id: 'b', type: 'arrow', from: 'api', to: 'worker' },
+      { id: 'c', type: 'arrow', from: 'worker', to: 'db' },
+    ],
+  }
+  const before = serializeCanvasScene(scene)
+  const projection = canvasSemanticLodProjection(scene, 0.3)
+  assert.equal(projection.level, 'regions')
+  assert.deepEqual(projection.autoCollapsedGroupIds, ['system'])
+  assert.equal(projection.scene.groups?.find((group) => group.id === 'system')?.collapsed, true)
+  assert.ok(projection.hiddenNodes >= 4)
+  assert.equal(serializeCanvasScene(scene), before)
+})
+
+test('region LOD keeps the selected region expanded', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'LOD selection',
+    width: 1200,
+    height: 700,
+    groups: [{ id: 'runtime', label: 'Runtime', kind: 'boundary', c4Type: 'container' }],
+    elements: [
+      { id: 'a', type: 'node', x: 100, y: 100, width: 160, height: 80, text: 'A', groupId: 'runtime' },
+      { id: 'b', type: 'node', x: 340, y: 100, width: 160, height: 80, text: 'B', groupId: 'runtime' },
+      { id: 'c', type: 'node', x: 580, y: 100, width: 160, height: 80, text: 'C', groupId: 'runtime' },
+    ],
+  }
+  const projection = canvasSemanticLodProjection(scene, 0.25, ['b'])
+  assert.deepEqual(projection.autoCollapsedGroupIds, [])
+  assert.equal(projection.scene.groups?.[0].collapsed, undefined)
+})
+
+test('semantic LOD samples very large ungrouped canvases while preserving selected nodes', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Huge canvas',
+    width: 12000,
+    height: 8000,
+    elements: Array.from({ length: 5000 }, (_, index) => ({
+      id: `node-${index}`,
+      type: 'node' as const,
+      x: (index % 100) * 110,
+      y: Math.floor(index / 100) * 110,
+      width: 90,
+      height: 70,
+      text: `Node ${index}`,
+      ...(index === 0 ? { emphasis: 'primary' as const } : {}),
+    })),
+  }
+  const before = serializeCanvasScene(scene)
+  const overview = canvasSemanticLodProjection(scene, 0.7, ['node-4999'])
+  const overviewNodes = overview.scene.elements.filter((item) => item.type !== 'arrow')
+  assert.equal(overview.level, 'overview')
+  assert.ok(overviewNodes.length <= 640)
+  assert.ok(overviewNodes.some((item) => item.id === 'node-0'))
+  assert.ok(overviewNodes.some((item) => item.id === 'node-4999'))
+  const regions = canvasSemanticLodProjection(scene, 0.3, ['node-4999'])
+  assert.equal(regions.level, 'regions')
+  assert.ok(regions.scene.elements.filter((item) => item.type !== 'arrow').length <= 220)
+  assert.equal(serializeCanvasScene(scene), before)
 })
