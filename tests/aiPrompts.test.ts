@@ -11,6 +11,7 @@ test('builds a Canvas-specific generation contract without Mermaid instructions'
   })
   assert.match(prompt, /type=codex-diagram-canvas/)
   assert.match(prompt, /node、note、arrow/)
+  assert.match(prompt, /labelPosition/)
   assert.match(prompt, /不要写 Mermaid 语法/)
   assert.match(prompt, /src\//)
 })

@@ -72,6 +72,85 @@ export function deleteCanvasSelection(scene: CanvasScene, ids: string[]): Canvas
   }
 }
 
+export function reconnectCanvasArrow(
+  scene: CanvasScene,
+  arrowId: string,
+  endpoint: 'from' | 'to',
+  nodeId: string,
+  anchor?: CanvasArrow['fromAnchor'],
+): CanvasScene {
+  const nodes = new Set(scene.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+  if (!nodes.has(nodeId)) return scene
+  const arrow = scene.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === arrowId)
+  if (!arrow) return scene
+  if (endpoint === 'from' && arrow.to === nodeId) return scene
+  if (endpoint === 'to' && arrow.from === nodeId) return scene
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type !== 'arrow' || item.id !== arrowId) return item
+      const next: CanvasArrow = {
+        ...item,
+        ...(endpoint === 'from' ? { from: nodeId, fromAnchor: anchor } : { to: nodeId, toAnchor: anchor }),
+        points: undefined,
+        labelPosition: undefined,
+        bundleKey: undefined,
+      }
+      return next
+    }),
+  }
+}
+
+export function reverseCanvasArrow(scene: CanvasScene, arrowId: string): CanvasScene {
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type !== 'arrow' || item.id !== arrowId) return item
+      return {
+        ...item,
+        from: item.to,
+        to: item.from,
+        fromAnchor: item.toAnchor,
+        toAnchor: item.fromAnchor,
+        points: item.points?.slice().reverse(),
+        bundleKey: undefined,
+      }
+    }),
+  }
+}
+
+export function insertCanvasNodeOnArrow(scene: CanvasScene, nodeId: string, arrowId: string): { scene: CanvasScene; newArrowId?: string } {
+  const node = scene.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === nodeId)
+  const arrow = scene.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === arrowId)
+  if (!node || !arrow || arrow.from === nodeId || arrow.to === nodeId) return { scene }
+  const newArrowId = nextCanvasElementId('arrow', scene.elements)
+  const first: CanvasArrow = {
+    ...arrow,
+    to: nodeId,
+    toAnchor: undefined,
+    points: undefined,
+    bundleKey: undefined,
+    labelPosition: undefined,
+  }
+  const second: CanvasArrow = {
+    ...arrow,
+    id: newArrowId,
+    from: nodeId,
+    fromAnchor: undefined,
+    label: undefined,
+    labelPosition: undefined,
+    points: undefined,
+    bundleKey: undefined,
+  }
+  return {
+    scene: {
+      ...scene,
+      elements: scene.elements.flatMap((item) => item.id === arrowId ? [first, second] : [item]),
+    },
+    newArrowId,
+  }
+}
+
 export function alignCanvasSelection(scene: CanvasScene, ids: string[], axis: 'x' | 'y', grid = 16): CanvasScene {
   const chosen = scene.elements.filter((item): item is CanvasNode | CanvasNote => ids.includes(item.id) && item.type !== 'arrow' && !item.locked)
   if (chosen.length < 2) return scene
@@ -116,6 +195,61 @@ export function distributeCanvasSelection(scene: CanvasScene, ids: string[], axi
       return axis === 'x'
         ? { ...item, x: clamp(next, 0, scene.width - item.width) }
         : { ...item, y: clamp(next, 0, scene.height - item.height) }
+    }),
+  }
+}
+
+export function separateCanvasSelection(scene: CanvasScene, ids: string[], padding = 24, grid = 16): CanvasScene {
+  const selected = new Set(ids)
+  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const positions = new Map(boxes.map((item) => [item.id, { x: item.x, y: item.y }]))
+  const movable = boxes.filter((item) => selected.has(item.id) && !item.locked)
+  if (!movable.length) return scene
+
+  for (let pass = 0; pass < 6; pass += 1) {
+    let changed = false
+    for (const item of movable) {
+      const position = positions.get(item.id)!
+      for (const other of boxes) {
+        if (other.id === item.id) continue
+        const otherPosition = positions.get(other.id)!
+        const left = position.x
+        const right = position.x + item.width
+        const top = position.y
+        const bottom = position.y + item.height
+        const otherLeft = otherPosition.x
+        const otherRight = otherPosition.x + other.width
+        const otherTop = otherPosition.y
+        const otherBottom = otherPosition.y + other.height
+        if (right + padding <= otherLeft || left >= otherRight + padding || bottom + padding <= otherTop || top >= otherBottom + padding) continue
+
+        const candidates = [
+          { axis: 'x' as const, delta: otherLeft - padding - right },
+          { axis: 'x' as const, delta: otherRight + padding - left },
+          { axis: 'y' as const, delta: otherTop - padding - bottom },
+          { axis: 'y' as const, delta: otherBottom + padding - top },
+        ].sort((a, b) => Math.abs(a.delta) - Math.abs(b.delta))
+
+        const choice = candidates.find((candidate) => {
+          const nextX = candidate.axis === 'x' ? position.x + candidate.delta : position.x
+          const nextY = candidate.axis === 'y' ? position.y + candidate.delta : position.y
+          return nextX >= 0 && nextY >= 0 && nextX + item.width <= scene.width && nextY + item.height <= scene.height
+        })
+        if (!choice) continue
+        if (choice.axis === 'x') position.x = snap(position.x + choice.delta, grid)
+        else position.y = snap(position.y + choice.delta, grid)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type === 'arrow' || !selected.has(item.id) || item.locked) return item
+      const position = positions.get(item.id)
+      return position ? { ...item, x: clamp(position.x, 0, scene.width - item.width), y: clamp(position.y, 0, scene.height - item.height) } : item
     }),
   }
 }

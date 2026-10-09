@@ -61,6 +61,28 @@ test('places relationship labels on routed segments without stacking them at the
   assert.notDeepEqual({ x: persist.x, y: persist.y }, { x: query.x, y: query.y })
 })
 
+test('round-trips and honors a manually positioned relationship label', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Manual label',
+    width: 1000,
+    height: 600,
+    elements: [
+      { id: 'a', type: 'node', x: 100, y: 200, width: 180, height: 90, text: 'A' },
+      { id: 'b', type: 'node', x: 700, y: 200, width: 180, height: 90, text: 'B' },
+      { id: 'edge', type: 'arrow', from: 'a', to: 'b', label: 'custom', labelPosition: { x: 510, y: 140 } },
+    ],
+  }
+  const parsed = parseCanvasScene(serializeCanvasScene(scene))
+  const arrow = parsed.elements.find((item) => item.id === 'edge')
+  assert.ok(arrow && arrow.type === 'arrow')
+  assert.deepEqual(arrow.labelPosition, { x: 510, y: 140 })
+  const layout = canvasArrowLabelLayouts(parsed).get('edge')
+  assert.ok(layout)
+  assert.deepEqual({ x: layout.x, y: layout.y }, { x: 510, y: 140 })
+})
+
 test('renders presentation title, legend and architecture card metadata in SVG export', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',

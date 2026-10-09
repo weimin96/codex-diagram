@@ -510,6 +510,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: 10px;
   backdrop-filter: blur(10px);
 }
+.freeform-status .is-action { color: var(--accent); font-weight: 650; }
 .freeform-zoom-controls {
   position: absolute;
   z-index: 6;
@@ -551,6 +552,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-bundle-trunk.emphasis-primary { stroke: color-mix(in srgb, var(--accent) 58%, var(--border-strong)); stroke-width: 7; opacity: .22; }
 .freeform-bundle-trunk.emphasis-muted { stroke-width: 4.5; opacity: .08; }
 .freeform-arrow.is-selected path { stroke: var(--accent); stroke-width: 3; }
+.freeform-arrow.is-insert-target .freeform-arrow-line { stroke: var(--accent); stroke-width: 3.4; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 24%, transparent)); }
 .freeform-arrow.is-traced path { stroke: var(--accent); stroke-width: 3; }
 .freeform-arrow.is-trace-dimmed { opacity: .16; }
 .freeform-arrow.is-dashed path { stroke-dasharray: 10 7; }
@@ -559,12 +561,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-arrow text { fill: var(--text-secondary); font-size: 13px; font-family: var(--font-sans); paint-order: stroke; stroke: var(--surface-panel); stroke-width: 5px; stroke-linejoin: round; }
 .freeform-arrow-label rect { fill: color-mix(in srgb, var(--surface-panel) 94%, transparent); stroke: color-mix(in srgb, var(--border-strong) 34%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-arrow .freeform-arrow-label text { fill: var(--text-secondary); font-size: 12px; font-weight: 600; paint-order: normal; stroke: none; }
+.freeform-arrow.is-selected .freeform-arrow-label { cursor: move; }
+.freeform-arrow-label.is-manual rect { stroke: color-mix(in srgb, var(--accent) 46%, var(--border)); }
 .freeform-arrow-head { fill: var(--border-strong); }
 .freeform-arrow-point { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; cursor: move; vector-effect: non-scaling-stroke; }
 .freeform-arrow .freeform-arrow-hit-path { fill: none !important; stroke: transparent !important; stroke-width: 16 !important; stroke-dasharray: none !important; filter: none !important; animation: none !important; pointer-events: stroke; cursor: pointer; }
 .freeform-arrow .freeform-arrow-line { transition: stroke .12s ease, stroke-width .12s ease, opacity .12s ease; }
 .freeform-arrow:not(.is-selected):not(.is-trace-dimmed):hover .freeform-arrow-line { stroke: color-mix(in srgb, var(--accent) 58%, var(--border-strong)); stroke-width: 2.9; }
 .freeform-arrow-endpoint { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.freeform-arrow.is-selected .freeform-arrow-endpoint { pointer-events: all; cursor: crosshair; }
+.freeform-arrow-reconnect-preview path { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 8 6; vector-effect: non-scaling-stroke; }
+.freeform-arrow-reconnect-preview circle { fill: var(--surface-panel); stroke: var(--accent); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.freeform-box.is-reconnect-target > rect:first-of-type { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 24%, transparent)); }
+.freeform-box.is-collision > rect:first-of-type { stroke: var(--danger); stroke-width: 2.6; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--danger) 22%, transparent)); }
 .freeform-lane .freeform-lane-body { fill: color-mix(in srgb, var(--text-tertiary) 4%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 26%, transparent); stroke-width: 1; stroke-dasharray: 5 7; vector-effect: non-scaling-stroke; }
 .freeform-lane .freeform-lane-head { fill: color-mix(in srgb, var(--text-tertiary) 9%, transparent); stroke: none; }
 .freeform-lane .freeform-lane-head.is-navigable { cursor: zoom-in; }
@@ -712,6 +721,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-snap-guide { fill: none; stroke: color-mix(in srgb, var(--accent) 78%, transparent); stroke-width: 1; stroke-dasharray: 5 5; pointer-events: none; vector-effect: non-scaling-stroke; }
 .freeform-connect-preview path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 6; vector-effect: non-scaling-stroke; }
 .freeform-connect-preview circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-panel)); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.freeform-insert-target circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-panel)); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.freeform-insert-target path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.freeform-insert-target text { fill: var(--accent); font-size: 10px; font-weight: 700; paint-order: stroke; stroke: var(--surface-panel); stroke-width: 4px; }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
 .freeform-anchor-points { opacity: 0; pointer-events: none; transition: opacity .1s ease; }
 .freeform-box.is-selected .freeform-anchor-points,

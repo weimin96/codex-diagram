@@ -111,6 +111,7 @@ export interface CanvasArrow {
   fromAnchor?: CanvasAnchor
   toAnchor?: CanvasAnchor
   points?: CanvasPoint[]
+  labelPosition?: CanvasPoint
   emphasis?: CanvasEmphasis
   bundleKey?: string
 }
@@ -645,6 +646,12 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
 
     const width = Math.min(220, Math.max(48, 18 + Array.from(arrow.label).length * 7))
     const height = 24
+    if (arrow.labelPosition) {
+      const placed = { id: arrow.id, x: arrow.labelPosition.x, y: arrow.labelPosition.y, width, height }
+      occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
+      result.set(arrow.id, placed)
+      continue
+    }
     let placed: CanvasArrowLabelLayout | undefined
     for (const segment of segments) {
       const mid = { x: (segment.point.x + segment.next.x) / 2, y: (segment.point.y + segment.next.y) / 2 }
@@ -919,6 +926,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.fromAnchor ?? '') ? { fromAnchor: item.fromAnchor } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.toAnchor ?? '') ? { toAnchor: item.toAnchor } : {}),
       ...(Array.isArray(item.points) ? { points: item.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({ x: point.x, y: point.y })) } : {}),
+      ...(item.labelPosition && Number.isFinite(item.labelPosition.x) && Number.isFinite(item.labelPosition.y) ? { labelPosition: { x: item.labelPosition.x, y: item.labelPosition.y } } : {}),
       ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
       ...(typeof item.bundleKey === 'string' && item.bundleKey.trim() ? { bundleKey: item.bundleKey.trim().slice(0, 120) } : {}),
     }

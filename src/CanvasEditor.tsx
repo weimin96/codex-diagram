@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { beautifyArchitectureScene, routeArchitectureEdges, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reorderCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -37,6 +37,8 @@ type Viewport = { x: number; y: number; zoom: number }
 type SelectionRect = { x1: number; y1: number; x2: number; y2: number }
 type ContextMenuState = { x: number; y: number }
 type SnapGuides = { x?: number; y?: number }
+type InsertTarget = { arrowId: string; point: CanvasPoint }
+type GestureVisualDraft = { positions: Record<string, CanvasPoint>; guides: SnapGuides; insertTarget: InsertTarget | null }
 type PlaybackState = {
   active: boolean
   visibleIds: string[]
@@ -76,6 +78,8 @@ type DragState =
   | { kind: 'marquee'; pointerId: number; startX: number; startY: number }
   | { kind: 'resize'; pointerId: number; id: string; startX: number; startY: number; width: number; height: number; before: string }
   | { kind: 'arrow-point'; pointerId: number; id: string; index: number; before: string }
+  | { kind: 'arrow-endpoint'; pointerId: number; id: string; endpoint: 'from' | 'to'; before: string }
+  | { kind: 'arrow-label'; pointerId: number; id: string; before: string }
 
 const GRID = 16
 const MIN_ZOOM = 0.45
@@ -98,9 +102,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [connectFromAnchor, setConnectFromAnchor] = useState<CanvasAnchor>('auto')
   const [connectPreviewPoint, setConnectPreviewPoint] = useState<CanvasPoint | null>(null)
+  const [arrowEndpointPreview, setArrowEndpointPreview] = useState<{ id: string; endpoint: 'from' | 'to'; fixedPoint: CanvasPoint; point: CanvasPoint; targetId?: string; targetAnchor?: Exclude<CanvasAnchor, 'auto'> } | null>(null)
+  const [insertTarget, setInsertTarget] = useState<InsertTarget | null>(null)
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({})
+  const [gesturePositionOverrides, setGesturePositionOverrides] = useState<Record<string, CanvasPoint> | null>(null)
+  const [resizeDraft, setResizeDraft] = useState<{ id: string; width: number; height: number } | null>(null)
+  const [arrowPointDraft, setArrowPointDraft] = useState<{ id: string; points: CanvasPoint[] } | null>(null)
+  const [arrowLabelDraft, setArrowLabelDraft] = useState<{ id: string; position: CanvasPoint } | null>(null)
   const [spacePanning, setSpacePanning] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
@@ -127,6 +137,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackRun = useRef(0)
   const playbackCursor = useRef<CanvasPoint>({ x: 72, y: 72 })
   const viewportRef = useRef(viewport)
+  const arrowEndpointPreviewRef = useRef<typeof arrowEndpointPreview>(null)
+  const insertTargetRef = useRef<typeof insertTarget>(null)
+  const gesturePositionOverridesRef = useRef<typeof gesturePositionOverrides>(null)
+  const resizeDraftRef = useRef<typeof resizeDraft>(null)
+  const arrowPointDraftRef = useRef<typeof arrowPointDraft>(null)
+  const arrowLabelDraftRef = useRef<typeof arrowLabelDraft>(null)
+  const gestureVisualFrameRef = useRef<number | null>(null)
+  const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
+  const geometryDraftFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     sourceRef.current = source
@@ -154,6 +173,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     viewportRef.current = viewport
   }, [viewport])
 
+  useEffect(() => () => {
+    if (gestureVisualFrameRef.current !== null) window.cancelAnimationFrame(gestureVisualFrameRef.current)
+    if (geometryDraftFrameRef.current !== null) window.cancelAnimationFrame(geometryDraftFrameRef.current)
+  }, [])
+
   useEffect(() => {
     if (!connectFrom) {
       setConnectPreviewPoint(null)
@@ -170,6 +194,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setSelectedIds([])
     setSelectedGroupTarget(null)
     setTraceDirection(null)
+    arrowEndpointPreviewRef.current = null
+    setArrowEndpointPreview(null)
+    clearGestureVisual()
+    clearGeometryDrafts()
   }, [playback?.active])
 
   useEffect(() => {
@@ -248,6 +276,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           setInspectorMenuOpen(false)
           return
         }
+        if (drag.current || connectFrom || tool !== 'select') {
+          cancelGesture()
+          setConnectFrom(null)
+          setConnectPreviewPoint(null)
+          setConnectFromAnchor('auto')
+          setTool('select')
+          return
+        }
         if (architectureScope) {
           setArchitectureScope(null)
           setViewport({ x: 0, y: 0, zoom: 1 })
@@ -259,6 +295,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         setTraceDirection(null)
         setConnectFrom(null)
         setConnectFromAnchor('auto')
+        arrowEndpointPreviewRef.current = null
+        setArrowEndpointPreview(null)
+        clearGestureVisual()
+        clearGeometryDrafts()
         setTool('select')
         return
       }
@@ -981,7 +1021,33 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         hiddenArrows: scopedArchitectureProjection.hiddenArrows,
       }
     : baseArchitectureProjection
-  const renderScene = architectureProjection.scene
+  const renderSceneBase = architectureProjection.scene
+  const renderScene = gesturePositionOverrides
+    ? {
+        ...renderSceneBase,
+        elements: renderSceneBase.elements.map((item) => {
+          if (item.type === 'arrow') return arrowPointDraft?.id === item.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item
+          const position = gesturePositionOverrides[item.id]
+          const size = resizeDraft?.id === item.id ? resizeDraft : null
+          if (!position && !size) return item
+          return {
+            ...item,
+            ...(position ? { x: position.x, y: position.y } : {}),
+            ...(size ? { width: size.width, height: size.height } : {}),
+          }
+        }),
+      }
+    : resizeDraft
+      ? {
+          ...renderSceneBase,
+          elements: renderSceneBase.elements.map((item) => {
+            if (item.type === 'arrow') return arrowPointDraft?.id === item.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item
+            return item.id === resizeDraft.id ? { ...item, width: resizeDraft.width, height: resizeDraft.height } : item
+          }),
+        }
+      : arrowPointDraft
+        ? { ...renderSceneBase, elements: renderSceneBase.elements.map((item) => item.type === 'arrow' && item.id === arrowPointDraft.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item) }
+        : renderSceneBase
   const architectureBreadcrumbs = scopedArchitectureProjection?.breadcrumbs ?? []
   const projectedBoxes = renderScene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const projectedArrows = renderScene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
@@ -1005,6 +1071,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const collapsedMemberIds = new Set(collapsedOwners.keys())
   const renderBoxes = projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
   const renderArrows = projectedArrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
+  const dragCollisionIds = new Set<string>()
+  if (gesturePositionOverrides) {
+    const movingIds = new Set(Object.keys(gesturePositionOverrides))
+    for (const item of renderBoxes) {
+      if (!movingIds.has(item.id)) continue
+      if (renderBoxes.some((other) => other.id !== item.id && !movingIds.has(other.id) && rectanglesOverlapWithPadding(item, other, 8))) dragCollisionIds.add(item.id)
+    }
+  }
+  const selectedHasOverlap = selectedBoxes.some((item) => boxes.some((other) => other.id !== item.id && rectanglesOverlapWithPadding(item, other, 8)))
   const minimapViewBounds = (() => {
     if (!architectureScope) return { x: 0, y: 0, width: scene.width, height: scene.height }
     const rects = [
@@ -1062,7 +1137,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackGhostElements = playback?.ghostElements ?? []
   const playbackGhostBoxes = playbackGhostElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...boxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
+  const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...projectedBoxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
   const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
   const connectSourceBox = connectFrom ? boxes.find((item) => item.id === connectFrom) : undefined
   const connectPreviewStart = connectSourceBox && connectPreviewPoint
@@ -1089,6 +1164,68 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function commit(next: CanvasScene, record = true) {
     sceneRef.current = next
     emitSource(serializeCanvasScene(next), record)
+  }
+
+  function scheduleGestureVisual(draft: GestureVisualDraft) {
+    pendingGestureVisualRef.current = draft
+    if (gestureVisualFrameRef.current !== null) return
+    gestureVisualFrameRef.current = window.requestAnimationFrame(() => {
+      gestureVisualFrameRef.current = null
+      const pending = pendingGestureVisualRef.current
+      pendingGestureVisualRef.current = null
+      if (!pending) return
+      setGesturePositionOverrides(pending.positions)
+      setSnapGuides(pending.guides)
+      setInsertTarget(pending.insertTarget)
+    })
+  }
+
+  function clearGestureVisual() {
+    if (gestureVisualFrameRef.current !== null) {
+      window.cancelAnimationFrame(gestureVisualFrameRef.current)
+      gestureVisualFrameRef.current = null
+    }
+    pendingGestureVisualRef.current = null
+    gesturePositionOverridesRef.current = null
+    insertTargetRef.current = null
+    setGesturePositionOverrides(null)
+    setSnapGuides({})
+    setInsertTarget(null)
+  }
+
+  function clearGeometryDrafts() {
+    if (geometryDraftFrameRef.current !== null) {
+      window.cancelAnimationFrame(geometryDraftFrameRef.current)
+      geometryDraftFrameRef.current = null
+    }
+    resizeDraftRef.current = null
+    arrowPointDraftRef.current = null
+    arrowLabelDraftRef.current = null
+    setResizeDraft(null)
+    setArrowPointDraft(null)
+    setArrowLabelDraft(null)
+  }
+
+  function scheduleGeometryDraftRender() {
+    if (geometryDraftFrameRef.current !== null) return
+    geometryDraftFrameRef.current = window.requestAnimationFrame(() => {
+      geometryDraftFrameRef.current = null
+      setResizeDraft(resizeDraftRef.current)
+      setArrowPointDraft(arrowPointDraftRef.current)
+      setArrowLabelDraft(arrowLabelDraftRef.current)
+    })
+  }
+
+  function commitGeometry(next: CanvasScene, record = true) {
+    commit(next.architecture ? routeArchitectureEdges(next) : next, record)
+  }
+
+  function routeArrowIds(scene: CanvasScene, ids: string[]): CanvasScene {
+    const chosen = new Set(ids)
+    if (!chosen.size) return scene
+    const routed = routeArchitectureEdges(scene)
+    const byId = new Map(routed.elements.filter((item): item is CanvasArrow => item.type === 'arrow' && chosen.has(item.id)).map((item) => [item.id, item]))
+    return { ...scene, elements: scene.elements.map((item) => item.type === 'arrow' && chosen.has(item.id) ? byId.get(item.id) ?? item : item) }
   }
 
   function beautifyArchitecture() {
@@ -1216,11 +1353,56 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function alignSelection(axis: 'x' | 'y') {
-    commit(alignCanvasSelection(currentScene(), selectedIds, axis, GRID))
+    commitGeometry(alignCanvasSelection(currentScene(), selectedIds, axis, GRID))
   }
 
   function distributeSelection(axis: 'x' | 'y') {
-    commit(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID))
+    commitGeometry(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID))
+  }
+
+  function separateSelection() {
+    commitGeometry(separateCanvasSelection(currentScene(), selectedIds, 24, GRID))
+  }
+
+  function reverseSelectedArrow(arrowId: string) {
+    const next = reverseCanvasArrow(currentScene(), arrowId)
+    commit(next.architecture ? routeArrowIds(next, [arrowId]) : next)
+  }
+
+  function rerouteSelectedArrow(arrowId: string) {
+    commit(routeArrowIds(currentScene(), [arrowId]))
+  }
+
+  function insertNodeIntoArrow(arrow: CanvasArrow) {
+    const live = currentScene()
+    const from = live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from)
+    const to = live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to)
+    if (!from || !to) return
+    const fromCenter = center(from)
+    const toCenter = center(to)
+    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const midpoint = polylineMidpoint(canvasArrowRoutePoints(start, end, arrow))
+    const nodeId = nextCanvasElementId('node', live.elements)
+    const node: CanvasNode = {
+      id: nodeId,
+      type: 'node',
+      x: clamp(snap(midpoint.x - 110), 0, Math.max(0, live.width - 220)),
+      y: clamp(snap(midpoint.y - 48), 0, Math.max(0, live.height - 96)),
+      width: 220,
+      height: 96,
+      text: '新节点',
+      ...(from.groupId && from.groupId === to.groupId ? { groupId: from.groupId } : {}),
+      ...(from.laneId && from.laneId === to.laneId ? { laneId: from.laneId } : {}),
+    }
+    let next = { ...live, elements: [...live.elements, node] }
+    const inserted = insertCanvasNodeOnArrow(next, nodeId, arrow.id)
+    next = inserted.scene
+    if (next.architecture) next = routeArrowIds(next, [arrow.id, ...(inserted.newArrowId ? [inserted.newArrowId] : [])])
+    commit(next)
+    setSelectedIds([nodeId])
+    setSelectedGroupTarget(null)
+    window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
   }
 
   function groupSelection() {
@@ -1265,7 +1447,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function applyLayout(mode: CanvasLayoutMode) {
-    commit(layoutCanvasScene(currentScene(), mode, GRID))
+    commitGeometry(layoutCanvasScene(currentScene(), mode, GRID))
     fit()
   }
 
@@ -1274,7 +1456,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       ? groupBounds.find((group) => group.id === selectedGroupId)?.memberIds ?? selectedIds
       : selectedIds
     if (ids.length < 2) return
-    commit(layoutCanvasSelection(currentScene(), ids, mode, GRID))
+    commitGeometry(layoutCanvasSelection(currentScene(), ids, mode, GRID))
     focusBoxes(ids)
   }
 
@@ -1431,7 +1613,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       }
       const live = currentScene()
       const exists = live.elements.some((item) => item.type === 'arrow' && item.from === connectFrom && item.to === id)
-      if (!exists) commit({ ...live, elements: [...live.elements, { id: nextCanvasElementId('arrow', live.elements), type: 'arrow', from: connectFrom, to: id, ...(connectFromAnchor !== 'auto' ? { fromAnchor: connectFromAnchor } : {}) }] })
+      if (!exists) {
+        const arrowId = nextCanvasElementId('arrow', live.elements)
+        let next: CanvasScene = { ...live, elements: [...live.elements, { id: arrowId, type: 'arrow', from: connectFrom, to: id, ...(connectFromAnchor !== 'auto' ? { fromAnchor: connectFromAnchor } : {}) }] }
+        if (next.architecture) next = routeArrowIds(next, [arrowId])
+        commit(next)
+      }
       setConnectFrom(null)
       setConnectPreviewPoint(null)
       setConnectFromAnchor('auto')
@@ -1460,23 +1647,62 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     const exists = live.elements.some((item) => item.type === 'arrow' && item.from === connectFrom && item.to === id)
     if (!exists) {
-      commit({
+      const arrowId = nextCanvasElementId('arrow', live.elements)
+      let next: CanvasScene = {
         ...live,
         elements: [...live.elements, {
-          id: nextCanvasElementId('arrow', live.elements),
+          id: arrowId,
           type: 'arrow',
           from: connectFrom,
           to: id,
           ...(connectFromAnchor !== 'auto' ? { fromAnchor: connectFromAnchor } : {}),
           toAnchor: anchor,
         }],
-      })
+      }
+      if (next.architecture) next = routeArrowIds(next, [arrowId])
+      commit(next)
     }
     setConnectFrom(null)
     setConnectPreviewPoint(null)
     setConnectFromAnchor('auto')
     setSelectedIds([id])
     setTool('select')
+  }
+
+  function completeConnectionOnBlank(point: CanvasPoint) {
+    if (!connectFrom) return false
+    const live = currentScene()
+    const sourceNode = live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === connectFrom)
+    if (!sourceNode) return false
+    const nodeId = nextCanvasElementId('node', live.elements)
+    const node: CanvasNode = {
+      id: nodeId,
+      type: 'node',
+      x: clamp(snap(point.x - 110), 0, Math.max(0, live.width - 220)),
+      y: clamp(snap(point.y - 48), 0, Math.max(0, live.height - 96)),
+      width: 220,
+      height: 96,
+      text: '新节点',
+      ...(sourceNode.groupId ? { groupId: sourceNode.groupId } : {}),
+      ...(sourceNode.laneId ? { laneId: sourceNode.laneId } : {}),
+    }
+    const arrow: CanvasArrow = {
+      id: nextCanvasElementId('arrow', [...live.elements, node]),
+      type: 'arrow',
+      from: connectFrom,
+      to: nodeId,
+      ...(connectFromAnchor !== 'auto' ? { fromAnchor: connectFromAnchor } : {}),
+    }
+    let next: CanvasScene = { ...live, elements: [...live.elements, node, arrow] }
+    if (next.architecture) next = routeArrowIds(next, [arrow.id])
+    commit(next)
+    setConnectFrom(null)
+    setConnectPreviewPoint(null)
+    setConnectFromAnchor('auto')
+    setSelectedIds([nodeId])
+    setTool('select')
+    window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
+    return true
   }
 
   function startMove(event: React.PointerEvent<SVGGElement>, item: CanvasNode | CanvasNote) {
@@ -1552,36 +1778,128 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         guides.y = ySnap.target
       }
     }
-    setSnapGuides(guides)
-    commit({
-      ...live,
-      elements: live.elements.map((candidate) => {
-        if (candidate.type === 'arrow') return candidate
-        const origin = active.positions.get(candidate.id)
-        if (!origin) return candidate
-        return {
-          ...candidate,
-          x: clamp(origin.x + dx, 0, live.width - candidate.width),
-          y: clamp(origin.y + dy, 0, live.height - candidate.height),
-        }
-      }),
-    }, false)
+    let insertCandidate: InsertTarget | null = null
+    if (active.positions.size === 1) {
+      const movingItem = moving[0]
+      const origin = movingItem ? active.positions.get(movingItem.id) : undefined
+      const candidateCenter = movingItem && origin
+        ? { x: origin.x + dx + movingItem.width / 2, y: origin.y + dy + movingItem.height / 2 }
+        : undefined
+      insertCandidate = candidateCenter
+        ? nearestArrowTarget(live, candidateCenter, movingIds, Math.max(12, 22 / Math.max(viewport.zoom, 0.5)))
+        : null
+    }
+    const overrides: Record<string, CanvasPoint> = {}
+    for (const candidate of moving) {
+      const origin = active.positions.get(candidate.id)
+      if (!origin) continue
+      overrides[candidate.id] = {
+        x: clamp(origin.x + dx, 0, live.width - candidate.width),
+        y: clamp(origin.y + dy, 0, live.height - candidate.height),
+      }
+    }
+    gesturePositionOverridesRef.current = overrides
+    insertTargetRef.current = insertCandidate
+    scheduleGestureVisual({ positions: overrides, guides, insertTarget: insertCandidate })
   }
 
   function finishGesture(event: React.PointerEvent) {
     const active = drag.current
     if (!active || active.pointerId !== event.pointerId) return
     if (active.kind === 'move') {
-      if (currentScene().architecture) commit(routeArchitectureEdges(currentScene()), false)
+      let next = currentScene()
+      const overrides = gesturePositionOverridesRef.current
+      if (overrides) {
+        next = {
+          ...next,
+          elements: next.elements.map((item) => {
+            if (item.type === 'arrow') return item
+            const position = overrides[item.id]
+            return position ? { ...item, x: position.x, y: position.y } : item
+          }),
+        }
+      }
+      const dropTarget = insertTargetRef.current
+      if (dropTarget && active.positions.size === 1) {
+        const nodeId = active.positions.keys().next().value as string | undefined
+        if (nodeId) next = insertCanvasNodeOnArrow(next, nodeId, dropTarget.arrowId).scene
+      }
+      if (next.architecture) next = routeArchitectureEdges(next)
+      if (overrides || dropTarget || next.architecture) commit(next, false)
       recordGesture(active.before)
-      setSnapGuides({})
-    } else if (active.kind === 'resize' || active.kind === 'arrow-point') recordGesture(active.before)
+      clearGestureVisual()
+    } else if (active.kind === 'resize') {
+      const draft = resizeDraftRef.current
+      if (draft) {
+        let next: CanvasScene = {
+          ...currentScene(),
+          elements: currentScene().elements.map((item) => item.type !== 'arrow' && item.id === draft.id ? { ...item, width: draft.width, height: draft.height } : item),
+        }
+        if (next.architecture) next = routeArchitectureEdges(next)
+        commit(next, false)
+        recordGesture(active.before)
+      }
+      clearGeometryDrafts()
+    } else if (active.kind === 'arrow-point') {
+      const draft = arrowPointDraftRef.current
+      if (draft) {
+        const next: CanvasScene = {
+          ...currentScene(),
+          elements: currentScene().elements.map((item) => item.type === 'arrow' && item.id === draft.id ? { ...item, points: draft.points, bundleKey: undefined } : item),
+        }
+        commit(next, false)
+        recordGesture(active.before)
+      }
+      clearGeometryDrafts()
+    } else if (active.kind === 'arrow-label') {
+      const draft = arrowLabelDraftRef.current
+      if (draft) {
+        const next: CanvasScene = {
+          ...currentScene(),
+          elements: currentScene().elements.map((item) => item.type === 'arrow' && item.id === draft.id ? { ...item, labelPosition: draft.position } : item),
+        }
+        commit(next, false)
+        recordGesture(active.before)
+      }
+      clearGeometryDrafts()
+    }
+    else if (active.kind === 'arrow-endpoint') {
+      const preview = arrowEndpointPreviewRef.current
+      if (preview?.targetId && preview.targetAnchor) {
+        let next = reconnectCanvasArrow(currentScene(), active.id, active.endpoint, preview.targetId, preview.targetAnchor)
+        if (next.architecture) next = routeArrowIds(next, [active.id])
+        commit(next, false)
+        recordGesture(active.before)
+      }
+      arrowEndpointPreviewRef.current = null
+      setArrowEndpointPreview(null)
+    }
     if (active.kind === 'marquee' && selectionRect) {
       const rect = normalizeRect(selectionRect)
       const live = currentScene()
       setSelectedIds(live.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && intersects(rect, item)).map((item) => item.id))
       setSelectionRect(null)
     }
+    drag.current = null
+  }
+
+  function cancelGesture() {
+    const active = drag.current
+    if (!active) {
+      clearGestureVisual()
+      clearGeometryDrafts()
+      arrowEndpointPreviewRef.current = null
+      setArrowEndpointPreview(null)
+      setSelectionRect(null)
+      return
+    }
+    if (active.kind === 'move') clearGestureVisual()
+    if (active.kind === 'resize' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
+    if (active.kind === 'arrow-endpoint') {
+      arrowEndpointPreviewRef.current = null
+      setArrowEndpointPreview(null)
+    }
+    if (active.kind === 'marquee') setSelectionRect(null)
     drag.current = null
   }
 
@@ -1638,6 +1956,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
     drag.current = { kind: 'resize', pointerId: event.pointerId, id: item.id, startX: point.x, startY: point.y, width: item.width, height: item.height, before: sourceRef.current }
+    const draft = { id: item.id, width: item.width, height: item.height }
+    resizeDraftRef.current = draft
+    setResizeDraft(draft)
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
@@ -1646,16 +1967,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!active || active.kind !== 'resize' || active.pointerId !== event.pointerId) return
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    updateElement(active.id, (item) => item.type === 'arrow' ? item : {
-      ...item,
+    const draft = {
+      id: active.id,
       width: Math.max(100, snap(active.width + point.x - active.startX)),
       height: Math.max(60, snap(active.height + point.y - active.startY)),
-    }, false)
+    }
+    resizeDraftRef.current = draft
+    scheduleGeometryDraftRender()
   }
 
   function beginArrowPointDrag(event: React.PointerEvent<SVGCircleElement>, arrow: CanvasArrow, index: number) {
     event.stopPropagation()
     drag.current = { kind: 'arrow-point', pointerId: event.pointerId, id: arrow.id, index, before: sourceRef.current }
+    const draft = { id: arrow.id, points: [...(arrow.points ?? [])] }
+    arrowPointDraftRef.current = draft
+    setArrowPointDraft(draft)
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
@@ -1664,12 +1990,58 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!active || active.kind !== 'arrow-point' || active.pointerId !== event.pointerId) return
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    updateElement(active.id, (item) => {
-      if (item.type !== 'arrow') return item
-      const points = [...(item.points ?? [])]
-      points[active.index] = { x: snap(point.x), y: snap(point.y) }
-      return { ...item, points }
-    }, false)
+    const source = live.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === active.id)
+    if (!source) return
+    const points = [...(source.points ?? [])]
+    points[active.index] = { x: snap(point.x), y: snap(point.y) }
+    const draft = { id: active.id, points }
+    arrowPointDraftRef.current = draft
+    scheduleGeometryDraftRender()
+  }
+
+  function beginArrowEndpointDrag(event: React.PointerEvent<SVGCircleElement>, arrow: CanvasArrow, endpoint: 'from' | 'to', fixedPoint: CanvasPoint, point: CanvasPoint) {
+    event.stopPropagation()
+    setSelectedIds([arrow.id])
+    const preview = { id: arrow.id, endpoint, fixedPoint, point }
+    arrowEndpointPreviewRef.current = preview
+    setArrowEndpointPreview(preview)
+    drag.current = { kind: 'arrow-endpoint', pointerId: event.pointerId, id: arrow.id, endpoint, before: sourceRef.current }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveArrowEndpoint(event: React.PointerEvent<SVGCircleElement>) {
+    const active = drag.current
+    if (!active || active.kind !== 'arrow-endpoint' || active.pointerId !== event.pointerId) return
+    const live = currentScene()
+    const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
+    const arrow = live.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === active.id)
+    const currentPreview = arrowEndpointPreviewRef.current
+    if (!arrow || !currentPreview) return
+    const excluded = new Set([active.endpoint === 'from' ? arrow.to : arrow.from])
+    const target = nearestNodeAnchor(live, point, excluded, Math.max(18, 30 / Math.max(viewport.zoom, 0.5)))
+    const nextPreview = {
+      ...currentPreview,
+      point: target?.point ?? point,
+      ...(target ? { targetId: target.nodeId, targetAnchor: target.anchor } : { targetId: undefined, targetAnchor: undefined }),
+    }
+    arrowEndpointPreviewRef.current = nextPreview
+    setArrowEndpointPreview(nextPreview)
+  }
+
+  function beginArrowLabelDrag(event: React.PointerEvent<SVGGElement>, arrow: CanvasArrow) {
+    event.stopPropagation()
+    setSelectedIds([arrow.id])
+    drag.current = { kind: 'arrow-label', pointerId: event.pointerId, id: arrow.id, before: sourceRef.current }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveArrowLabel(event: React.PointerEvent<SVGGElement>) {
+    const active = drag.current
+    if (!active || active.kind !== 'arrow-label' || active.pointerId !== event.pointerId) return
+    const point = scenePoint(event.clientX, event.clientY, svgRef.current!, currentScene(), viewport)
+    const draft = { id: active.id, position: { x: snap(point.x), y: snap(point.y) } }
+    arrowLabelDraftRef.current = draft
+    scheduleGeometryDraftRender()
   }
 
   function addArrowPoint(arrow: CanvasArrow) {
@@ -1745,7 +2117,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   const viewWidth = scene.width / viewport.zoom
   const viewHeight = scene.height / viewport.zoom
-  const multiSelectionToolbarPosition = selectedBoxes.length > 1 ? (() => {
+  const multiSelectionToolbarPosition = selectedBoxes.length > 1 && !gesturePositionOverrides ? (() => {
     const left = Math.min(...selectedBoxes.map((item) => item.x))
     const top = Math.min(...selectedBoxes.map((item) => item.y))
     const right = Math.max(...selectedBoxes.map((item) => item.x + item.width))
@@ -2000,7 +2372,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <button type="button" title="更多操作" aria-label="更多操作" aria-expanded={inspectorMenuOpen} onClick={() => setInspectorMenuOpen((value) => !value)}>⋯</button>
                   {inspectorMenuOpen ? (
                     <div className="freeform-inspector-more-menu" role="menu">
-                      {selectedIds.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setInspectorMenuOpen(false) }}>复制一份</button> : null}
+                      {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setInspectorMenuOpen(false) }}>复制一份</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { toggleSelectionLock(); setInspectorMenuOpen(false) }}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { reorderSelection('front'); setInspectorMenuOpen(false) }}>移到最前</button> : null}
                       {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { reorderSelection('back'); setInspectorMenuOpen(false) }}>移到最后</button> : null}
@@ -2031,6 +2403,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <button type="button" onClick={() => addArrowPoint(selectedSingle)}>添加折点</button>
                   <button type="button" disabled={!selectedSingle.points?.length} onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, points: undefined } : item)}>清除折点</button>
                 </div>
+                <div className="freeform-align-row">
+                  <button type="button" onClick={() => reverseSelectedArrow(selectedSingle.id)}>反转方向</button>
+                  <button type="button" onClick={() => rerouteSelectedArrow(selectedSingle.id)}>重新路由</button>
+                </div>
+                <button type="button" onClick={() => insertNodeIntoArrow(selectedSingle)}>插入中间节点</button>
+                {selectedSingle.labelPosition ? <button type="button" onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item)}>标签恢复自动位置</button> : null}
               </>
             ) : null}
             {selectedBox ? (
@@ -2246,11 +2624,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           onPointerDown={beginBackgroundPointer}
           onPointerMove={moveBackgroundPointer}
           onPointerUp={finishGesture}
-          onPointerCancel={(event) => { finishGesture(event); setSelectionRect(null) }}
+          onPointerCancel={cancelGesture}
           onClick={(event) => {
             if (event.target !== event.currentTarget) return
             if (drag.current) return
             const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+            if (connectFrom && completeConnectionOnBlank(point)) return
             if (tool === 'node' || tool === 'note') addBox(tool, point.x, point.y)
           }}
         >
@@ -2386,7 +2765,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             )
           })}
           {visibleRenderArrows.map((arrow) => {
-            const displayArrow = playback?.arrowOverrides?.[arrow.id] ?? arrow
+            const gestureArrow = arrowPointDraft?.id === arrow.id ? { ...arrow, points: arrowPointDraft.points } : arrow
+            const displayArrow = playback?.arrowOverrides?.[arrow.id] ?? gestureArrow
             const fromRaw = playbackBoxLookup.get(displayArrow.from)
             const toRaw = playbackBoxLookup.get(displayArrow.to)
             const from = fromRaw ? playbackBoxPosition(fromRaw) : undefined
@@ -2399,20 +2779,37 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const path = canvasArrowPath(start, end, displayArrow)
             const overridden = Boolean(playback?.arrowOverrides?.[arrow.id])
             const fallbackLabelPoint = pathLabelPoint(start, end, displayArrow.points)
-            const labelLayout = overridden && displayArrow.label
+            const automaticLabelLayout = overridden && displayArrow.label
               ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - 10, width: Math.max(46, Math.min(220, displayArrow.label.length * 7 + 20)), height: 22 }
               : relationLabelLayouts.get(arrow.id)
+            const labelLayout = arrowLabelDraft?.id === arrow.id && displayArrow.label
+              ? {
+                  id: arrow.id,
+                  x: arrowLabelDraft.position.x,
+                  y: arrowLabelDraft.position.y,
+                  width: automaticLabelLayout?.width ?? Math.max(46, Math.min(220, displayArrow.label.length * 7 + 20)),
+                  height: automaticLabelLayout?.height ?? 22,
+                }
+              : automaticLabelLayout
             return (
-              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path className="freeform-arrow-hit-path" d={path} />
                 <path className="freeform-arrow-line" d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
                 {displayArrow.label && labelLayout ? (
-                  <g className="freeform-arrow-label" pointerEvents="none">
+                  <g
+                    className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
+                    pointerEvents={selectedIds.includes(arrow.id) ? 'all' : 'none'}
+                    onPointerDown={selectedIds.includes(arrow.id) ? (event) => beginArrowLabelDrag(event, arrow) : undefined}
+                    onPointerMove={selectedIds.includes(arrow.id) ? moveArrowLabel : undefined}
+                    onPointerUp={selectedIds.includes(arrow.id) ? finishGesture : undefined}
+                    onPointerCancel={selectedIds.includes(arrow.id) ? cancelGesture : undefined}
+                    onDoubleClick={selectedIds.includes(arrow.id) ? (event) => { event.stopPropagation(); updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item) } : undefined}
+                  >
                     <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={labelLayout.height / 2} />
                     <text x={labelLayout.x} y={labelLayout.y + 4} textAnchor="middle">{truncate(displayArrow.label, 30)}</text>
                   </g>
                 ) : null}
-                {selectedIds.includes(arrow.id) ? arrow.points?.map((point, index) => (
+                {selectedIds.includes(arrow.id) ? displayArrow.points?.map((point, index) => (
                   <circle
                     key={`${arrow.id}-point-${index}`}
                     className="freeform-arrow-point"
@@ -2422,7 +2819,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     onPointerDown={(event) => beginArrowPointDrag(event, arrow, index)}
                     onPointerMove={moveArrowPoint}
                     onPointerUp={finishGesture}
-                    onPointerCancel={finishGesture}
+                    onPointerCancel={cancelGesture}
                     onDoubleClick={(event) => {
                       event.stopPropagation()
                       updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, points: item.points?.filter((_, pointIndex) => pointIndex !== index) } : item)
@@ -2430,8 +2827,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   />
                 )) : null}
                 {selectedIds.includes(arrow.id) ? <>
-                  <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="6" />
-                  <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="6" />
+                  <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'from', end, start)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
+                  <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'to', start, end)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
                 </> : null}
               </g>
             )
@@ -2454,6 +2851,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <g className="freeform-connect-preview" pointerEvents="none">
               <path d={`M ${connectPreviewStart.x} ${connectPreviewStart.y} L ${connectPreviewPoint.x} ${connectPreviewPoint.y}`} />
               <circle cx={connectPreviewPoint.x} cy={connectPreviewPoint.y} r="6" />
+            </g>
+          ) : null}
+          {arrowEndpointPreview ? (
+            <g className="freeform-arrow-reconnect-preview" pointerEvents="none">
+              <path d={arrowEndpointPreview.endpoint === 'from'
+                ? `M ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y} L ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y}`
+                : `M ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y} L ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y}`} />
+              <circle cx={arrowEndpointPreview.point.x} cy={arrowEndpointPreview.point.y} r="7" />
             </g>
           ) : null}
           {playbackGhostBoxes.map((item) => (
@@ -2481,7 +2886,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -2498,7 +2903,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               }}
               onPointerMove={(event) => moveSelection(event, item)}
               onPointerUp={finishGesture}
-              onPointerCancel={finishGesture}
+              onPointerCancel={cancelGesture}
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
               <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : 14} />
@@ -2536,11 +2941,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   onPointerDown={(event) => beginResize(event, item)}
                   onPointerMove={moveResize}
                   onPointerUp={finishGesture}
-                  onPointerCancel={finishGesture}
+                  onPointerCancel={cancelGesture}
                 />
               ) : null}
             </g>
           )})}
+          {insertTarget ? (
+            <g className="freeform-insert-target" transform={`translate(${insertTarget.point.x} ${insertTarget.point.y})`} pointerEvents="none">
+              <circle r="11" />
+              <path d="M -4 0 H 4 M 0 -4 V 4" />
+              <text x="16" y="4">释放插入关系</text>
+            </g>
+          ) : null}
           {selectionRect ? (() => {
             const rect = normalizeRect(selectionRect)
             return <rect className="freeform-marquee" x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
@@ -2602,6 +3014,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <button type="button" title="水平对齐" aria-label="水平对齐" onClick={() => alignSelection('y')}>─</button>
             <button type="button" title="水平等距分布" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>↔</button>
             <button type="button" title="垂直等距分布" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>↕</button>
+            {selectedHasOverlap ? <button type="button" title="自动避让重叠节点" aria-label="自动避让" onClick={separateSelection}>避让</button> : null}
             <span />
             <button type="button" title="组合选中元素" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
           </div>
@@ -2642,7 +3055,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
         {contextMenu ? (
           <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-            <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button>
+            {selectedSingle?.type === 'arrow' ? <>
+              <button type="button" role="menuitem" onClick={() => { insertNodeIntoArrow(selectedSingle); setContextMenu(null) }}>插入中间节点</button>
+              <button type="button" role="menuitem" onClick={() => { reverseSelectedArrow(selectedSingle.id); setContextMenu(null) }}>反转关系方向</button>
+              <button type="button" role="menuitem" onClick={() => { rerouteSelectedArrow(selectedSingle.id); setContextMenu(null) }}>重新路由</button>
+              {selectedSingle.labelPosition ? <button type="button" role="menuitem" onClick={() => { updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item); setContextMenu(null) }}>标签恢复自动位置</button> : null}
+              <span />
+            </> : null}
+            {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button> : null}
             {selectedBox?.sourcePaths?.[0] && onOpenSource ? <button type="button" role="menuitem" onClick={() => { onOpenSource(selectedBox.sourcePaths![0]); setContextMenu(null) }}>打开关联源码</button> : null}
             {selectedBoxes.length > 1 ? <button type="button" role="menuitem" onClick={() => { groupSelection(); setContextMenu(null) }}>组合</button> : null}
             {selectedGroupIds.length > 0 ? <button type="button" role="menuitem" onClick={() => { ungroupSelection(); setContextMenu(null) }}>取消组合</button> : null}
@@ -2656,7 +3076,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
         <div className="freeform-status">
           <span>{scene.elements.length} 个元素</span>
-          {selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span>Space 拖动画布 · ⇧ 多选</span>}
+          {insertTarget ? <span className="is-action">释放后插入关系</span>
+            : arrowEndpointPreview?.targetId ? <span className="is-action">释放后重挂到 {truncate(boxes.find((item) => item.id === arrowEndpointPreview.targetId)?.text ?? arrowEndpointPreview.targetId, 18)}</span>
+              : arrowEndpointPreview ? <span className="is-action">拖到节点锚点以重挂端点</span>
+                : connectFrom ? <span className="is-action">连接中 · 点击节点，或点击空白创建新节点</span>
+                  : selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span>Space 拖动画布 · ⇧ 多选</span>}
         </div>
         <div className="freeform-zoom-controls" aria-label="画布缩放">
           <button type="button" aria-label="缩小画布" onClick={() => zoomAt(viewport.zoom / 1.15)}>−</button>
@@ -3199,6 +3623,17 @@ function intersects(rect: { x: number; y: number; width: number; height: number 
   return item.x < rect.x + rect.width && item.x + item.width > rect.x && item.y < rect.y + rect.height && item.y + item.height > rect.y
 }
 
+function rectanglesOverlapWithPadding(
+  left: Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>,
+  right: Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>,
+  padding: number,
+) {
+  return left.x < right.x + right.width + padding
+    && left.x + left.width + padding > right.x
+    && left.y < right.y + right.height + padding
+    && left.y + left.height + padding > right.y
+}
+
 function nearestSnap(sources: number[], targets: number[], threshold: number): { delta: number; target: number } | null {
   let best: { delta: number; target: number; distance: number } | null = null
   for (const source of sources) {
@@ -3210,6 +3645,84 @@ function nearestSnap(sources: number[], targets: number[], threshold: number): {
     }
   }
   return best ? { delta: best.delta, target: best.target } : null
+}
+
+function nearestNodeAnchor(
+  scene: CanvasScene,
+  point: CanvasPoint,
+  excludedIds: Set<string>,
+  threshold: number,
+): { nodeId: string; anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint } | null {
+  let best: { nodeId: string; anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint; distance: number } | null = null
+  for (const node of scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !excludedIds.has(item.id))) {
+    const anchors: Array<{ anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint }> = [
+      { anchor: 'top', point: { x: node.x + node.width / 2, y: node.y } },
+      { anchor: 'right', point: { x: node.x + node.width, y: node.y + node.height / 2 } },
+      { anchor: 'bottom', point: { x: node.x + node.width / 2, y: node.y + node.height } },
+      { anchor: 'left', point: { x: node.x, y: node.y + node.height / 2 } },
+    ]
+    for (const candidate of anchors) {
+      const distance = Math.hypot(candidate.point.x - point.x, candidate.point.y - point.y)
+      if (distance > threshold || (best && distance >= best.distance)) continue
+      best = { nodeId: node.id, anchor: candidate.anchor, point: candidate.point, distance }
+    }
+  }
+  return best ? { nodeId: best.nodeId, anchor: best.anchor, point: best.point } : null
+}
+
+function nearestArrowTarget(scene: CanvasScene, point: CanvasPoint, excludedNodeIds: Set<string>, threshold: number): { arrowId: string; point: CanvasPoint } | null {
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  let best: { arrowId: string; point: CanvasPoint; distance: number } | null = null
+  for (const arrow of scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')) {
+    if (excludedNodeIds.has(arrow.from) || excludedNodeIds.has(arrow.to)) continue
+    const from = boxes.get(arrow.from)
+    const to = boxes.get(arrow.to)
+    if (!from || !to) continue
+    const fromCenter = center(from)
+    const toCenter = center(to)
+    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const route = canvasArrowRoutePoints(start, end, arrow)
+    for (let index = 0; index < route.length - 1; index += 1) {
+      const closest = closestPointOnSegment(point, route[index], route[index + 1])
+      const distance = Math.hypot(closest.x - point.x, closest.y - point.y)
+      if (distance > threshold || (best && distance >= best.distance)) continue
+      best = { arrowId: arrow.id, point: closest, distance }
+    }
+  }
+  return best ? { arrowId: best.arrowId, point: best.point } : null
+}
+
+function closestPointOnSegment(point: CanvasPoint, start: CanvasPoint, end: CanvasPoint): CanvasPoint {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const lengthSq = dx * dx + dy * dy
+  if (lengthSq <= 0.0001) return start
+  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq, 0, 1)
+  return { x: start.x + dx * t, y: start.y + dy * t }
+}
+
+function polylineMidpoint(points: CanvasPoint[]): CanvasPoint {
+  if (points.length === 0) return { x: 0, y: 0 }
+  if (points.length === 1) return points[0]
+  const segments = points.slice(0, -1).map((point, index) => {
+    const next = points[index + 1]
+    return { point, next, length: Math.hypot(next.x - point.x, next.y - point.y) }
+  })
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0)
+  if (total <= 0.0001) return points[0]
+  let remaining = total / 2
+  for (const segment of segments) {
+    if (remaining <= segment.length) {
+      const ratio = segment.length <= 0.0001 ? 0 : remaining / segment.length
+      return {
+        x: segment.point.x + (segment.next.x - segment.point.x) * ratio,
+        y: segment.point.y + (segment.next.y - segment.point.y) * ratio,
+      }
+    }
+    remaining -= segment.length
+  }
+  return points.at(-1)!
 }
 
 function snap(value: number) {
