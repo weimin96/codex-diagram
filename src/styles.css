@@ -709,6 +709,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes freeform-ai-final-line { 0% { stroke: var(--accent); stroke-width: 3.4; } 100% { } }
 @keyframes freeform-ai-selection-pulse { from { stroke-opacity: .58; } to { stroke-opacity: 1; } }
 @keyframes freeform-ai-delete { 0% { opacity: .55; } 100% { opacity: 0; } }
+.freeform-snap-guide { fill: none; stroke: color-mix(in srgb, var(--accent) 78%, transparent); stroke-width: 1; stroke-dasharray: 5 5; pointer-events: none; vector-effect: non-scaling-stroke; }
+.freeform-connect-preview path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 6; vector-effect: non-scaling-stroke; }
+.freeform-connect-preview circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-panel)); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .freeform-box.is-connect-source rect { stroke: var(--accent); stroke-dasharray: 7 5; stroke-width: 3; }
 .freeform-anchor-points { opacity: 0; pointer-events: none; transition: opacity .1s ease; }
 .freeform-box.is-selected .freeform-anchor-points,
@@ -724,6 +727,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-context-menu button.is-danger { color: var(--danger); }
 .freeform-context-menu button:disabled { opacity: .45; }
 .freeform-context-menu > span { display: block; height: 1px; margin: 4px; background: var(--border); }
+.freeform-selection-toolbar { position: absolute; z-index: 9; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface-panel) 96%, transparent); box-shadow: 0 10px 26px rgba(0,0,0,.12); backdrop-filter: blur(10px); transform: translate(-50%, calc(-100% - 10px)); }
+.freeform-selection-toolbar button { min-width: 27px; height: 26px; padding: 0 7px; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 10px; }
+.freeform-selection-toolbar button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.freeform-selection-toolbar button:disabled { opacity: .35; }
+.freeform-selection-toolbar > span { width: 1px; height: 16px; margin: 0 2px; background: var(--border); }
 .freeform-minimap { position: absolute; z-index: 5; left: 12px; bottom: 42px; width: 132px; height: 82px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface-panel) 94%, transparent); box-shadow: 0 6px 22px rgba(0,0,0,.08); cursor: crosshair; }
 .freeform-minimap.is-scoped { border-color: color-mix(in srgb, var(--accent) 46%, var(--border)); box-shadow: 0 6px 22px rgba(0,0,0,.08), 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent); }
 .freeform-minimap-bg { fill: var(--surface-panel); }

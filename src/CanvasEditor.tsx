@@ -36,6 +36,7 @@ interface CanvasEditorProps {
 type Viewport = { x: number; y: number; zoom: number }
 type SelectionRect = { x1: number; y1: number; x2: number; y2: number }
 type ContextMenuState = { x: number; y: number }
+type SnapGuides = { x?: number; y?: number }
 type PlaybackState = {
   active: boolean
   visibleIds: string[]
@@ -96,8 +97,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [connectFromAnchor, setConnectFromAnchor] = useState<CanvasAnchor>('auto')
+  const [connectPreviewPoint, setConnectPreviewPoint] = useState<CanvasPoint | null>(null)
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 })
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null)
+  const [snapGuides, setSnapGuides] = useState<SnapGuides>({})
   const [spacePanning, setSpacePanning] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
@@ -150,6 +153,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   useEffect(() => {
     viewportRef.current = viewport
   }, [viewport])
+
+  useEffect(() => {
+    if (!connectFrom) {
+      setConnectPreviewPoint(null)
+      setConnectFromAnchor('auto')
+    }
+  }, [connectFrom])
 
   useEffect(() => {
     if (!playback?.active) return
@@ -1054,6 +1064,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...boxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
   const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
+  const connectSourceBox = connectFrom ? boxes.find((item) => item.id === connectFrom) : undefined
+  const connectPreviewStart = connectSourceBox && connectPreviewPoint
+    ? anchorPoint(connectSourceBox, connectFromAnchor, connectPreviewPoint)
+    : null
 
   function currentScene(): CanvasScene {
     if (!sceneRef.current) throw new Error('Canvas scene unavailable')
@@ -1419,6 +1433,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       const exists = live.elements.some((item) => item.type === 'arrow' && item.from === connectFrom && item.to === id)
       if (!exists) commit({ ...live, elements: [...live.elements, { id: nextCanvasElementId('arrow', live.elements), type: 'arrow', from: connectFrom, to: id, ...(connectFromAnchor !== 'auto' ? { fromAnchor: connectFromAnchor } : {}) }] })
       setConnectFrom(null)
+      setConnectPreviewPoint(null)
       setConnectFromAnchor('auto')
       setSelectedIds([id])
       setTool('select')
@@ -1458,6 +1473,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       })
     }
     setConnectFrom(null)
+    setConnectPreviewPoint(null)
     setConnectFromAnchor('auto')
     setSelectedIds([id])
     setTool('select')
@@ -1502,8 +1518,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!active || active.kind !== 'move' || active.pointerId !== event.pointerId || !active.positions.has(item.id)) return
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    const dx = point.x - active.startX
-    const dy = point.y - active.startY
+    const rawDx = point.x - active.startX
+    const rawDy = point.y - active.startY
+    const movingIds = new Set(active.positions.keys())
+    const moving = live.elements.filter((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && movingIds.has(candidate.id))
+    const others = live.elements.filter((candidate): candidate is CanvasNode | CanvasNote => candidate.type !== 'arrow' && !movingIds.has(candidate.id))
+    const referenceOrigin = active.positions.values().next().value as { x: number; y: number } | undefined
+    let dx = event.altKey || !referenceOrigin ? rawDx : snap(referenceOrigin.x + rawDx) - referenceOrigin.x
+    let dy = event.altKey || !referenceOrigin ? rawDy : snap(referenceOrigin.y + rawDy) - referenceOrigin.y
+    let guides: SnapGuides = {}
+    if (!event.altKey && moving.length && others.length) {
+      const originRects = moving.map((candidate) => {
+        const origin = active.positions.get(candidate.id)!
+        return { x: origin.x, y: origin.y, width: candidate.width, height: candidate.height }
+      })
+      const left = Math.min(...originRects.map((rect) => rect.x)) + rawDx
+      const top = Math.min(...originRects.map((rect) => rect.y)) + rawDy
+      const right = Math.max(...originRects.map((rect) => rect.x + rect.width)) + rawDx
+      const bottom = Math.max(...originRects.map((rect) => rect.y + rect.height)) + rawDy
+      const horizontal = [left, (left + right) / 2, right]
+      const vertical = [top, (top + bottom) / 2, bottom]
+      const targetHorizontal = others.flatMap((candidate) => [candidate.x, candidate.x + candidate.width / 2, candidate.x + candidate.width])
+      const targetVertical = others.flatMap((candidate) => [candidate.y, candidate.y + candidate.height / 2, candidate.y + candidate.height])
+      const threshold = Math.max(4, 8 / Math.max(viewport.zoom, 0.5))
+      const xSnap = nearestSnap(horizontal, targetHorizontal, threshold)
+      const ySnap = nearestSnap(vertical, targetVertical, threshold)
+      if (xSnap) {
+        dx = rawDx + xSnap.delta
+        guides.x = xSnap.target
+      }
+      if (ySnap) {
+        dy = rawDy + ySnap.delta
+        guides.y = ySnap.target
+      }
+    }
+    setSnapGuides(guides)
     commit({
       ...live,
       elements: live.elements.map((candidate) => {
@@ -1512,8 +1561,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         if (!origin) return candidate
         return {
           ...candidate,
-          x: clamp(event.altKey ? origin.x + dx : snap(origin.x + dx), 0, live.width - candidate.width),
-          y: clamp(event.altKey ? origin.y + dy : snap(origin.y + dy), 0, live.height - candidate.height),
+          x: clamp(origin.x + dx, 0, live.width - candidate.width),
+          y: clamp(origin.y + dy, 0, live.height - candidate.height),
         }
       }),
     }, false)
@@ -1522,7 +1571,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function finishGesture(event: React.PointerEvent) {
     const active = drag.current
     if (!active || active.pointerId !== event.pointerId) return
-    if (active.kind === 'move' || active.kind === 'resize' || active.kind === 'arrow-point') recordGesture(active.before)
+    if (active.kind === 'move') {
+      if (currentScene().architecture) commit(routeArchitectureEdges(currentScene()), false)
+      recordGesture(active.before)
+      setSnapGuides({})
+    } else if (active.kind === 'resize' || active.kind === 'arrow-point') recordGesture(active.before)
     if (active.kind === 'marquee' && selectionRect) {
       const rect = normalizeRect(selectionRect)
       const live = currentScene()
@@ -1556,6 +1609,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   function moveBackgroundPointer(event: React.PointerEvent<SVGSVGElement>) {
     const active = drag.current
+    if (!active && connectFrom) {
+      setConnectPreviewPoint(scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport))
+      return
+    }
     if (!active || active.pointerId !== event.pointerId) return
     const live = currentScene()
     if (active.kind === 'pan') {
@@ -1688,6 +1745,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   const viewWidth = scene.width / viewport.zoom
   const viewHeight = scene.height / viewport.zoom
+  const multiSelectionToolbarPosition = selectedBoxes.length > 1 ? (() => {
+    const left = Math.min(...selectedBoxes.map((item) => item.x))
+    const top = Math.min(...selectedBoxes.map((item) => item.y))
+    const right = Math.max(...selectedBoxes.map((item) => item.x + item.width))
+    return {
+      left: `${clamp(((left + right) / 2 - viewport.x) / viewWidth * 100, 8, 92)}%`,
+      top: `${clamp((top - viewport.y) / viewHeight * 100, 12, 92)}%`,
+    }
+  })() : null
   const playbackBubbleOffsetX = playback?.intent && playback.cursor.x > viewport.x + viewWidth * 0.7
     ? -playbackBubbleWidth - 24
     : 26
@@ -2198,6 +2264,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </defs>
           <rect width={scene.width} height={scene.height} className="freeform-background" pointerEvents="none" />
           <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
+          {snapGuides.x !== undefined ? <path className="freeform-snap-guide" d={`M ${snapGuides.x} 0 V ${scene.height}`} /> : null}
+          {snapGuides.y !== undefined ? <path className="freeform-snap-guide" d={`M 0 ${snapGuides.y} H ${scene.width}`} /> : null}
           {architectureHeader ? (
             <g className="freeform-architecture-header" pointerEvents="none">
               <rect width={scene.width} height={architectureHeader.height} />
@@ -2382,6 +2450,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </g>
             )
           })}
+          {connectPreviewStart && connectPreviewPoint ? (
+            <g className="freeform-connect-preview" pointerEvents="none">
+              <path d={`M ${connectPreviewStart.x} ${connectPreviewStart.y} L ${connectPreviewPoint.x} ${connectPreviewPoint.y}`} />
+              <circle cx={connectPreviewPoint.x} cy={connectPreviewPoint.y} r="6" />
+            </g>
+          ) : null}
           {playbackGhostBoxes.map((item) => (
             <g
               key={`ghost-${item.id}`}
@@ -2445,14 +2519,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               </text>
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureCard ? 16 : displayItem.width / 2} y={displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
               {displayItem.sourcePaths?.length ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
-              {(tool === 'connect' || selectedIds.includes(item.id)) ? (
-                <g className="freeform-anchor-points">
+              <g className="freeform-anchor-points">
                   <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
                   <circle cx={displayItem.width} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'right')} />
                   <circle cx={displayItem.width / 2} cy={displayItem.height} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'bottom')} />
                   <circle cx={0} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'left')} />
-                </g>
-              ) : null}
+              </g>
               {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? (
                 <rect
                   className="freeform-resize-handle"
@@ -2523,6 +2595,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             </g>
           ) : null}
         </svg>
+
+        {multiSelectionToolbarPosition && !playback?.active ? (
+          <div className="freeform-selection-toolbar" style={multiSelectionToolbarPosition} aria-label="多选快捷操作">
+            <button type="button" title="垂直对齐" aria-label="垂直对齐" onClick={() => alignSelection('x')}>│</button>
+            <button type="button" title="水平对齐" aria-label="水平对齐" onClick={() => alignSelection('y')}>─</button>
+            <button type="button" title="水平等距分布" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>↔</button>
+            <button type="button" title="垂直等距分布" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>↕</button>
+            <span />
+            <button type="button" title="组合选中元素" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
+          </div>
+        ) : null}
 
         {playback?.active ? (
           <div className="freeform-playback-status" role="status" aria-live="polite">
@@ -3114,6 +3197,19 @@ function normalizeRect(value: SelectionRect) {
 
 function intersects(rect: { x: number; y: number; width: number; height: number }, item: CanvasNode | CanvasNote) {
   return item.x < rect.x + rect.width && item.x + item.width > rect.x && item.y < rect.y + rect.height && item.y + item.height > rect.y
+}
+
+function nearestSnap(sources: number[], targets: number[], threshold: number): { delta: number; target: number } | null {
+  let best: { delta: number; target: number; distance: number } | null = null
+  for (const source of sources) {
+    for (const target of targets) {
+      const delta = target - source
+      const distance = Math.abs(delta)
+      if (distance > threshold || (best && distance >= best.distance)) continue
+      best = { delta, target, distance }
+    }
+  }
+  return best ? { delta: best.delta, target: best.target } : null
 }
 
 function snap(value: number) {
