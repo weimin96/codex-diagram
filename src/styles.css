@@ -826,6 +826,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .change-review-actions button.primary-button { border-color: var(--accent); background: var(--accent); color: white; }
 .proposal-review-panel { display: flex; flex-direction: column; }
 .proposal-review-panel .change-review-diff { flex: 1 1 auto; }
+.proposal-branch-compare { flex: 0 0 auto; padding: 9px 10px 10px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 2%, var(--surface-panel)); }
+.proposal-branch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.proposal-branch-head strong { font-size: 11px; }
+.proposal-branch-head span { color: var(--text-tertiary); font-size: 10px; }
+.proposal-branch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 6px; }
+.proposal-branch-grid > button { min-width: 0; display: grid; gap: 3px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--app-bg); color: var(--text-secondary); text-align: left; }
+.proposal-branch-grid > button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--surface-raised); }
+.proposal-branch-grid > button.is-active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface-panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
+.proposal-branch-grid strong { overflow: hidden; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.proposal-branch-grid span { font-size: 10px; }
+.proposal-branch-grid small { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .proposal-review-reason { padding: 8px 12px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, #7c3aed 5%, var(--surface-panel)); color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
 .impact-review-panel { grid-template-rows: auto auto minmax(0, 1fr) auto; }
 .impact-review-body { min-height: 0; overflow: auto; padding: 10px 12px 18px; display: grid; gap: 16px; background: var(--app-bg); }

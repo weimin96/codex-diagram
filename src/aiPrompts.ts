@@ -66,6 +66,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       '4. 如果本次只涉及有限节点/关系，优先调用 diagram.proposeSubgraphPatch：elementIds 只放允许修改的已有 id，updates 只发送真正变化的字段，adds 只发送新增元素，removeIds 只发送删除项。不要把未变化的 x/y/width/height、arrow.points、labelPosition 重复发送。只有修改标题/画布尺寸/Group/Lane 元数据或确实需要整图重构时才调用 diagram.proposeUpdate。',
       '5. 合理使用 C4 person/software-system/container/component 语义，以及 icon 标明运行角色、stencil 标明真实技术栈；不要为了装饰给所有节点重复相同图标或技术标签。',
       '6. diagram.proposeSubgraphPatch 的 layout 默认 preserve；只有用户明确要求整理/重排当前局部结构时才用 local。服务端会保留未声明的人工布局和 Label，并自动计算受影响关系。不要把 Mermaid 语法写进自由画布文件。Proposal 不会直接覆盖文件，等待用户在右侧 Diagram 接受或拒绝。',
+      '7. 默认只提交一个候选。只有用户明确要求多个方案、A/B 对比或备选实现时，才对同一 base revision 分别调用 diagram.proposeSubgraphPatch，并为每个候选设置不同 branchLabel（例如“保守方案”“重构方案”）；不要为了显得丰富自动制造分支。',
     ].join('\n')
   }
   return [
@@ -98,5 +99,6 @@ export function buildSubgraphModificationPrompt(workspacePath: string, diagram: 
     '4. 新增元素放在 adds 中并使用新的稳定 id。新增 node/note 可以省略 x/y，由服务端在当前子图附近寻找位置；当当前 scope 的 group/lane 唯一且明确时，服务端也会继承该上下文。新增 arrow 必须提供 from/to。删除已有元素放在 removeIds。',
     '5. layout 默认 preserve；只有用户明确要求当前子图重新布局/整理时才使用 local。服务端会计算关系重路由、删除节点的连带关系等自动影响，并在 Proposal 中单独显示。',
     '6. 不要直接调用 diagram.update，也不要优先使用旧的 diagram.proposeSubgraphUpdate。等待用户在右侧 Diagram 审查并接受/拒绝。',
+    '7. 默认只提交一个候选。只有用户明确要求多个方案、A/B 对比或备选实现时，才在相同 base revision 上分别提交带不同 branchLabel 的 diagram.proposeSubgraphPatch，让右侧进行候选对比；不要自动生成无意义分支。',
   ].join('\n')
 }

@@ -63,7 +63,7 @@ interface DiagramThreadStateResult {
   activeDiagramPath?: string
   focusElementIds?: string[]
   trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
-  activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo'; path: string; key: string; modifiedAt?: string }
+  activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo' | 'history-redo'; path: string; key: string; modifiedAt?: string }
   proposal?: DiagramProposalSummary
   gitImpact?: { path: string; updatedAt: string; fileCount: number; directCount: number; affectedCount: number; unmatchedCount: number }
   updatedAt?: string
@@ -78,6 +78,9 @@ interface DiagramProposalSummary {
   newElementIds?: string[]
   impactElementIds?: string[]
   automaticElementIds?: string[]
+  branchId?: string
+  branchLabel?: string
+  branchGroupId?: string
   rebaseable?: boolean
   patchSummary?: {
     updated: number
@@ -87,12 +90,19 @@ interface DiagramProposalSummary {
   }
 }
 
+interface DiagramProposalBranchSet {
+  groupId: string
+  activeBranchId: string
+  branches: DiagramProposalSummary[]
+}
+
 interface DiagramProposalSourceResult {
   kind: 'diagram-proposal-source'
   workspacePath: string
   proposal: DiagramProposalSummary
   before: DiagramDocument
   candidateSource: string
+  branchSet?: DiagramProposalBranchSet
 }
 
 interface DiagramProposalRefreshResult {
@@ -124,8 +134,13 @@ interface DiagramPatchHistoryEntry {
   acceptedElementIds?: string[]
   scopeElementIds: string[]
   automaticElementIds: string[]
+  proposalBranchId?: string
+  proposalBranchLabel?: string
+  proposalBranchGroupId?: string
   undoneAt?: string
   undoEventId?: string
+  redoneAt?: string
+  redoEventId?: string
   counts: { updated: number; added: number; removed: number; automatic: number }
   changes: DiagramPatchHistoryChange[]
 }
@@ -144,6 +159,15 @@ interface DiagramPatchHistoryUndoResult {
   historyId: string
   undoEventId: string
   revertedElementIds: string[]
+}
+
+interface DiagramPatchHistoryRedoResult {
+  kind: 'diagram-patch-history-redo'
+  workspacePath: string
+  diagram: DiagramDocument
+  historyId: string
+  redoEventId: string
+  reappliedElementIds: string[]
 }
 
 interface DiagramGitImpactResult {
@@ -321,11 +345,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [gitImpactReport, setGitImpactReport] = useState<DiagramGitImpactResult | null>(null)
   const [gitImpactOpen, setGitImpactOpen] = useState(false)
   const [aiProposal, setAiProposal] = useState<{ summary: DiagramProposalSummary; before: DiagramDocument; after: DiagramDocument } | null>(null)
+  const [proposalBranchSet, setProposalBranchSet] = useState<DiagramProposalBranchSet | null>(null)
   const [proposalReviewOpen, setProposalReviewOpen] = useState(false)
   const [patchHistoryOpen, setPatchHistoryOpen] = useState(false)
   const [patchHistoryEntries, setPatchHistoryEntries] = useState<DiagramPatchHistoryEntry[]>([])
   const [patchHistoryLoading, setPatchHistoryLoading] = useState(false)
   const [patchHistoryUndoingId, setPatchHistoryUndoingId] = useState<string | null>(null)
+  const [patchHistoryRedoingId, setPatchHistoryRedoingId] = useState<string | null>(null)
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
@@ -377,6 +403,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setGitImpactReport(null)
     setGitImpactOpen(false)
     setAiProposal(null)
+    setProposalBranchSet(null)
     setProposalReviewOpen(false)
     setPatchHistoryOpen(false)
     setPatchHistoryEntries([])
@@ -442,6 +469,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   source: proposal.candidateSource,
                 }
                 setAiProposal({ summary: proposal.proposal, before: proposal.before, after })
+                setProposalBranchSet(proposal.branchSet ?? null)
                 setProposalReviewOpen(true)
                 setNotice(proposal.proposal.patchSummary
                   ? `Codex 提交增量候选：${proposal.proposal.patchSummary.updated} 修改 · ${proposal.proposal.patchSummary.added} 新增 · ${proposal.proposal.patchSummary.removed} 删除`
@@ -452,6 +480,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             }
           } else if (!state.proposal && aiProposal) {
             setAiProposal(null)
+            setProposalBranchSet(null)
             setProposalReviewOpen(false)
           }
           if (state.gitImpact && state.gitImpact.updatedAt !== gitImpactReport?.updatedAt) {
@@ -894,6 +923,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       if (result.kind === 'diagram-proposal-refresh') {
         const after: DiagramDocument = { ...result.before, source: result.candidateSource }
         setAiProposal({ summary: result.proposal, before: result.before, after })
+        setProposalBranchSet(null)
         setProposalReviewOpen(true)
         setSelected(result.before)
         setSource(result.before.source)
@@ -918,6 +948,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSource(result.diagram.source)
       setExternalChange(false)
       setAiProposal(null)
+      setProposalBranchSet(null)
       setProposalReviewOpen(false)
       onSnapshot({
         ...snapshot,
@@ -939,10 +970,35 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     try {
       await callTool<{ kind: 'diagram-proposal-dismissed' }>('diagram.dismissProposal', {})
       setAiProposal(null)
+      setProposalBranchSet(null)
       setProposalReviewOpen(false)
       setNotice('已拒绝 Codex 候选修改，当前文件未改变')
     } catch (cause) {
       setError(errorMessage(cause))
+    }
+  }
+
+  async function selectProposalBranch(branchId: string) {
+    if (!aiProposal || saving || proposalBranchSet?.activeBranchId === branchId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await callTool<DiagramProposalSourceResult>('diagram.selectProposalBranch', { branchId })
+      const after: DiagramDocument = { ...result.before, source: result.candidateSource }
+      setAiProposal({ summary: result.proposal, before: result.before, after })
+      setProposalBranchSet(result.branchSet ?? null)
+      setProposalReviewOpen(true)
+      if (result.proposal.impactElementIds?.length && result.before.type === 'canvas') {
+        const candidate = parseCanvasScene(result.candidateSource)
+        const nodeIds = new Set(candidate.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.proposal.impactElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `proposal-branch:${branchId}:${Date.now()}` })
+      }
+      setNotice(`已切换到候选 ${result.proposal.branchLabel ?? '方案'}`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -972,7 +1028,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   async function undoPatchHistory(entry: DiagramPatchHistoryEntry) {
-    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId) return
+    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId || patchHistoryRedoingId) return
     if (dirty && externalChange) {
       setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
       return
@@ -1032,6 +1088,70 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     } finally {
       setSaving(false)
       setPatchHistoryUndoingId(null)
+    }
+  }
+
+  async function redoPatchHistory(entry: DiagramPatchHistoryEntry) {
+    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId || patchHistoryRedoingId) return
+    if (dirty && externalChange) {
+      setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
+      return
+    }
+    setSaving(true)
+    setPatchHistoryRedoingId(entry.id)
+    setError(null)
+    try {
+      let beforeSource = source
+      if (dirty) {
+        const savedDraft = await callTool<DiagramResult>('diagram.update', {
+          workspacePath,
+          path: selected.path,
+          source,
+          expectedModifiedAt: selected.modifiedAt,
+          animate: false,
+        })
+        setSelected(savedDraft.diagram)
+        setSource(savedDraft.diagram.source)
+        beforeSource = savedDraft.diagram.source
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
+        })
+      }
+      const result = await callTool<DiagramPatchHistoryRedoResult>('diagram.redoPatchHistory', {
+        workspacePath,
+        historyId: entry.id,
+      })
+      if (isThread && result.diagram.type === 'canvas') {
+        setCanvasPlayback({
+          key: `history-redo:${entry.id}:${result.diagram.modifiedAt}`,
+          path: result.diagram.path,
+          mode: 'update',
+          fromSource: beforeSource,
+          label: '正在重做 AI 修改',
+        })
+      }
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      if (result.diagram.type === 'canvas' && result.reappliedElementIds.length) {
+        const reapplied = parseCanvasScene(result.diagram.source)
+        const nodeIds = new Set(reapplied.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.reappliedElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `history-redo-focus:${entry.id}:${result.diagram.modifiedAt}` })
+      }
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      await loadPatchHistory(result.diagram.path)
+      setNotice(`已重做这次 AI 修改 · ${result.reappliedElementIds.length} 个元素重新应用`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+      setPatchHistoryRedoingId(null)
     }
   }
 
@@ -1547,15 +1667,15 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         {aiProposal ? (
           <div className="proposal-banner" role="status">
             <div>
-              <strong>{aiProposal.summary.patchSummary ? 'Codex 增量候选修改' : aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
+              <strong>{proposalBranchSet?.branches.length && proposalBranchSet.branches.length > 1 ? `Codex 候选分支 · ${proposalBranchSet.branches.length}` : aiProposal.summary.patchSummary ? 'Codex 增量候选修改' : aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
               <span>{aiProposal.summary.patchSummary
-                ? `${aiProposal.summary.patchSummary.updated} 修改 · ${aiProposal.summary.patchSummary.added} 新增 · ${aiProposal.summary.patchSummary.removed} 删除${aiProposal.summary.automaticElementIds?.length ? ` · ${aiProposal.summary.automaticElementIds.length} 自动影响` : ''}`
+                ? `${aiProposal.summary.branchLabel ? `${aiProposal.summary.branchLabel} · ` : ''}${aiProposal.summary.patchSummary.updated} 修改 · ${aiProposal.summary.patchSummary.added} 新增 · ${aiProposal.summary.patchSummary.removed} 删除${aiProposal.summary.automaticElementIds?.length ? ` · ${aiProposal.summary.automaticElementIds.length} 自动影响` : ''}`
                 : aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
             </div>
             <div className="proposal-banner-actions">
               <button type="button" onClick={() => setProposalReviewOpen(true)}>查看</button>
-              <button type="button" onClick={() => void dismissAiProposal()}>拒绝</button>
-              <button className="primary-button compact" type="button" disabled={saving} onClick={() => void acceptAiProposal()}>接受</button>
+              <button type="button" onClick={() => void dismissAiProposal()}>{proposalBranchSet?.branches.length && proposalBranchSet.branches.length > 1 ? '拒绝全部' : '拒绝'}</button>
+              <button className="primary-button compact" type="button" disabled={saving} onClick={() => void acceptAiProposal()}>{proposalBranchSet?.branches.length && proposalBranchSet.branches.length > 1 ? '接受当前' : '接受'}</button>
             </div>
           </div>
         ) : null}
@@ -1770,10 +1890,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             automaticElementIds={aiProposal.summary.automaticElementIds}
             rebaseable={aiProposal.summary.rebaseable}
             patchSummary={aiProposal.summary.patchSummary}
+            branches={proposalBranchSet?.branches}
+            activeBranchId={proposalBranchSet?.activeBranchId}
             applying={saving}
             onClose={() => setProposalReviewOpen(false)}
             onAccept={(elementIds) => void acceptAiProposal(elementIds)}
             onReject={() => void dismissAiProposal()}
+            onSelectBranch={(branchId) => void selectProposalBranch(branchId)}
           />
         ) : null}
         {selected?.type === 'canvas' && patchHistoryOpen ? (
@@ -1782,9 +1905,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             entries={patchHistoryEntries}
             loading={patchHistoryLoading}
             undoingId={patchHistoryUndoingId}
+            redoingId={patchHistoryRedoingId}
             onClose={() => setPatchHistoryOpen(false)}
             onRefresh={() => void loadPatchHistory(selected.path)}
             onUndo={(entry) => void undoPatchHistory(entry)}
+            onRedo={(entry) => void redoPatchHistory(entry)}
             onFocus={(ids) => {
               const live = parseCanvasScene(source)
               const nodeIds = new Set(live.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
@@ -1832,14 +1957,16 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   )
 }
 
-function PatchHistoryPanel({ path, entries, loading, undoingId, onClose, onRefresh, onUndo, onFocus }: {
+function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClose, onRefresh, onUndo, onRedo, onFocus }: {
   path: string
   entries: DiagramPatchHistoryEntry[]
   loading: boolean
   undoingId: string | null
+  redoingId: string | null
   onClose: () => void
   onRefresh: () => void
   onUndo: (entry: DiagramPatchHistoryEntry) => void
+  onRedo: (entry: DiagramPatchHistoryEntry) => void
   onFocus: (ids: string[]) => void
 }) {
   return (
@@ -1869,8 +1996,10 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, onClose, onRefre
               <div className="patch-history-badges">
                 {entry.rebased ? <span>已 Rebase</span> : null}
                 {entry.partial ? <span>部分接受</span> : null}
+                {entry.proposalBranchLabel ? <span>{entry.proposalBranchLabel}</span> : null}
                 <span>{entry.layout === 'local' ? '局部布局' : '保持布局'}</span>
                 {entry.undoneAt ? <span className="is-undone">已撤销</span> : null}
+                {entry.redoneAt ? <span>已重做</span> : null}
               </div>
             </div>
             <div className="patch-history-counts">
@@ -1893,9 +2022,14 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, onClose, onRefre
             <div className="patch-history-entry-actions">
               <button type="button" disabled={entry.changes.length === 0} onClick={() => onFocus(entry.changes.map((item) => item.id))}>定位影响</button>
               {entry.undoneAt ? (
-                <span>撤销于 {formatPatchHistoryTime(entry.undoneAt)}</span>
+                <>
+                  <span>撤销于 {formatPatchHistoryTime(entry.undoneAt)}</span>
+                  <button type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onRedo(entry)}>
+                    {redoingId === entry.id ? '重做中…' : '重做这次修改'}
+                  </button>
+                </>
               ) : (
-                <button className="is-danger" type="button" disabled={Boolean(undoingId)} onClick={() => onUndo(entry)}>
+                <button className="is-danger" type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onUndo(entry)}>
                   {undoingId === entry.id ? '撤销中…' : '撤销这次修改'}
                 </button>
               )}
@@ -2009,7 +2143,7 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
   )
 }
 
-function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, rebaseable, patchSummary, applying, onClose, onAccept, onReject }: {
+function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, rebaseable, patchSummary, branches, activeBranchId, applying, onClose, onAccept, onReject, onSelectBranch }: {
   before: DiagramDocument
   after: DiagramDocument
   reason?: string
@@ -2019,10 +2153,13 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   automaticElementIds?: string[]
   rebaseable?: boolean
   patchSummary?: DiagramProposalSummary['patchSummary']
+  branches?: DiagramProposalSummary[]
+  activeBranchId?: string
   applying: boolean
   onClose: () => void
   onAccept: (elementIds?: string[]) => void
   onReject: () => void
+  onSelectBranch: (branchId: string) => void
 }) {
   const diff = useMemo(() => buildLineDiff(before.source, after.source), [after.source, before.source])
   const added = diff.filter((line) => line.kind === 'add').length
@@ -2030,6 +2167,20 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   const canvasChanges = useMemo(() => buildCanvasProposalChanges(before, after), [after, before])
   const canvasDependencies = useMemo(() => buildCanvasProposalDependencies(before, after), [after, before])
   const automaticIds = useMemo(() => new Set(automaticElementIds ?? []), [automaticElementIds])
+  const branchComparison = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const branch of branches ?? []) {
+      for (const id of new Set(branch.impactElementIds ?? [])) counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    return new Map((branches ?? []).flatMap((branch) => {
+      if (!branch.branchId) return []
+      const ids = [...new Set(branch.impactElementIds ?? [])]
+      return [[branch.branchId, {
+        unique: ids.filter((id) => counts.get(id) === 1).length,
+        shared: ids.filter((id) => (counts.get(id) ?? 0) > 1).length,
+      }] as const]
+    }))
+  }, [branches])
   const partialSelectionAllowed = patchSummary?.layout !== 'local'
   const [selectedChangeIds, setSelectedChangeIds] = useState<string[]>([])
   useEffect(() => {
@@ -2046,6 +2197,36 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
         <button type="button" onClick={onClose}>关闭</button>
       </div>
       <div className="change-review-path">{after.path}</div>
+      {branches && branches.length > 1 ? (
+        <div className="proposal-branch-compare" aria-label="AI 候选分支">
+          <div className="proposal-branch-head">
+            <strong>候选分支</strong>
+            <span>{branches.length} 个方案 · 共享同一基线</span>
+          </div>
+          <div className="proposal-branch-grid">
+            {branches.map((branch, index) => (
+              <button
+                key={branch.branchId ?? `${index}`}
+                type="button"
+                className={branch.branchId === activeBranchId ? 'is-active' : ''}
+                disabled={applying || !branch.branchId}
+                onClick={() => branch.branchId && onSelectBranch(branch.branchId)}
+              >
+                <strong>{branch.branchLabel || `方案 ${index + 1}`}</strong>
+                {branch.patchSummary ? (
+                  <span>{branch.patchSummary.updated} 改 · {branch.patchSummary.added} 增 · {branch.patchSummary.removed} 删</span>
+                ) : <span>整图候选</span>}
+                <small>
+                  {branch.branchId && branchComparison.get(branch.branchId)?.unique ? `${branchComparison.get(branch.branchId)!.unique} 独有` : '无独有'}
+                  {branch.branchId && branchComparison.get(branch.branchId)?.shared ? ` · ${branchComparison.get(branch.branchId)!.shared} 共同` : ''}
+                  {branch.automaticElementIds?.length ? ` · ${branch.automaticElementIds.length} 自动` : ''}
+                  {branch.patchSummary?.layout === 'local' ? ' · 局部布局' : ''}
+                </small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {scopeElementIds?.length ? (
         <div className="proposal-scope-summary">
           <strong>SUBGRAPH</strong>
@@ -2115,9 +2296,9 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
         </div>
       )}
       <div className="change-review-actions">
-        <button type="button" disabled={applying} onClick={onReject}>拒绝</button>
+        <button type="button" disabled={applying} onClick={onReject}>{branches && branches.length > 1 ? '拒绝全部' : '拒绝'}</button>
         {canvasChanges?.length && partialSelectionAllowed ? <button type="button" disabled={applying || selectedChangeIds.length === 0 || selectedChangeIds.length === canvasChanges.length} onClick={() => onAccept(selectedChangeIds)}>{applying ? '应用中…' : `仅应用已选 (${selectedChangeIds.length})`}</button> : null}
-        <button className="primary-button" type="button" disabled={applying} onClick={() => onAccept()}>{applying ? '应用中…' : '全部接受'}</button>
+        <button className="primary-button" type="button" disabled={applying} onClick={() => onAccept()}>{applying ? '应用中…' : branches && branches.length > 1 ? '接受当前方案' : '全部接受'}</button>
       </div>
     </aside>
   )
@@ -2639,6 +2820,7 @@ function playbackActivityLabel(kind: NonNullable<DiagramThreadStateResult['activ
   if (kind === 'source-sync') return 'Codex 正在同步源码节点'
   if (kind === 'proposal') return 'Codex 正在应用候选修改'
   if (kind === 'history-undo') return '正在撤销 AI 修改'
+  if (kind === 'history-redo') return '正在重做 AI 修改'
   return 'Codex 正在更新画板'
 }
 

@@ -73,8 +73,10 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 增量 Canvas Proposal 支持字段级并发 rebase：Proposal 生成后如果用户或另一个 Agent 又改了无关字段/节点，接受时会在最新 revision 上重放 patch 并保留并发修改；同字段冲突、删除目标变化、人工路由冲突会明确拒绝。若 rebase 导致自动布局/路由或新增节点位置与已审查候选不同，会刷新 Proposal 要求再次审查，而不是直接写盘
 - 增量 Canvas Proposal 的部分接受使用 element-id 语义并做依赖校验：新增关系必须同时接受缺失的新端点；删除节点会安全清理悬空关系；架构节点几何只应用一部分时，会根据最终节点位置重新计算必要关系路由，避免留下指向旧位置的折点
 - Proposal 出现后仍可继续手工编辑 Canvas：接受增量 Proposal 时，插件会先保存本地 dirty 草稿，再通过字段级 rebase 合并；整图 Proposal 无法安全合并本地草稿时会阻止覆盖
+- 当用户明确要求多个方案 / A-B 对比时，`diagram.proposeSubgraphPatch` 可通过 `branchLabel` 在同一 base revision 上保留最多 6 个候选；右侧 Proposal 面板会并排显示每个方案的修改/新增/删除、自动影响以及独有/共同影响元素，切换候选不会写文件，接受时只应用当前方案
 - 已应用的增量 AI Patch 会进入当前图的“历史”时间线，记录修改原因、直接修改、自动影响、部分接受和并发 Rebase 状态；历史数据保存在用户本机的 `~/.codex-diagram/history/`，不会向项目仓库写入额外文件
 - “撤销这次修改”按子图事务做反向三方合并：只恢复该 AI Patch 真正拥有的字段，保留后来对其它字段的人工修改；如果同一字段后来又被编辑、AI 新增节点已被后续关系依赖等，则拒绝危险撤销并明确提示冲突
+- 已撤销的 AI Patch 可以安全 Redo；Redo 与 Undo 使用同一套字段所有权和结构依赖检查，后续无关字段修改会保留，同字段修改、新关系依赖或 ID 复用会阻止覆盖。接受 A/B 候选后，Timeline 也会保留实际采用的分支标签
 - AI Patch History 只持久化受影响元素的 before/after 快照，不复制整张 Canvas；5000 节点画布中单元素事务仍保持稀疏历史记录
 - 右侧可直接“调整选中”，该操作会显式携带当前 element ids 和选区结构，让 Codex 只修改当前选区，不需要常驻聊天上下文
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
@@ -146,10 +148,12 @@ pnpm plugin:install:desktop
 | `diagram.proposeSubgraphPatch` | 提交增量 Canvas 子图 patch；只发送 updates/adds/removeIds，服务端计算候选、影响范围与局部路由 |
 | `diagram.proposeSubgraphUpdate` | 兼容旧版完整 Canvas 子图候选修改，不再作为首选 |
 | `diagram.proposal` | UI 内部读取当前聊天待审查 Proposal |
+| `diagram.selectProposalBranch` | UI 内部切换同一 base revision 上的 AI A/B Patch 候选，不写入图表文件 |
 | `diagram.applyProposal` | UI 内部接受 Proposal；Canvas 可指定 element ids 部分应用，增量 patch 支持字段级并发 rebase 与候选漂移二次审查 |
 | `diagram.dismissProposal` | UI 内部拒绝 Proposal，不修改文件 |
 | `diagram.patchHistory` | UI 内部读取当前 Canvas 已应用的 AI 增量 Patch 时间线 |
 | `diagram.undoPatchHistory` | UI 内部安全撤销一次 AI Patch；只反转该事务拥有的字段并检测后续冲突 |
+| `diagram.redoPatchHistory` | UI 内部安全重做一次已撤销 AI Patch；保留后续无关修改并拒绝覆盖同字段/新依赖 |
 | `diagram.rename` | 重命名图表 |
 | `diagram.duplicate` | 复制图表 |
 | `diagram.delete` | 删除图表 |

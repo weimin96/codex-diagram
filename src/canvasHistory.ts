@@ -32,6 +32,9 @@ export interface CanvasPatchHistoryEntry {
   scopeElementIds: string[]
   declaredElementIds: string[]
   automaticElementIds: string[]
+  proposalBranchId?: string
+  proposalBranchLabel?: string
+  proposalBranchGroupId?: string
   changes: CanvasHistoryElementChange[]
 }
 
@@ -47,16 +50,35 @@ export interface CanvasPatchHistoryUndoEvent {
   afterModifiedAt: string
 }
 
-type CanvasHistoryEvent = CanvasPatchHistoryEntry | CanvasPatchHistoryUndoEvent
+export interface CanvasPatchHistoryRedoEvent {
+  kind: 'redo'
+  version: 1
+  id: string
+  workspacePath: string
+  path: string
+  appliedAt: string
+  targetId: string
+  beforeModifiedAt: string
+  afterModifiedAt: string
+}
+
+type CanvasHistoryEvent = CanvasPatchHistoryEntry | CanvasPatchHistoryUndoEvent | CanvasPatchHistoryRedoEvent
 
 export interface CanvasPatchHistorySummary extends CanvasPatchHistoryEntry {
   undoneAt?: string
   undoEventId?: string
+  redoneAt?: string
+  redoEventId?: string
 }
 
 export interface CanvasHistoryUndoResult {
   scene: CanvasScene
   revertedElementIds: string[]
+}
+
+export interface CanvasHistoryRedoResult {
+  scene: CanvasScene
+  reappliedElementIds: string[]
 }
 
 export function buildCanvasPatchHistoryEntry(input: {
@@ -73,6 +95,9 @@ export function buildCanvasPatchHistoryEntry(input: {
   scopeElementIds?: string[]
   declaredElementIds?: string[]
   automaticElementIds?: string[]
+  proposalBranchId?: string
+  proposalBranchLabel?: string
+  proposalBranchGroupId?: string
   appliedAt?: string
   id?: string
 }): CanvasPatchHistoryEntry {
@@ -107,6 +132,9 @@ export function buildCanvasPatchHistoryEntry(input: {
     scopeElementIds: [...new Set(input.scopeElementIds ?? [])],
     declaredElementIds: [...new Set(input.declaredElementIds ?? [])],
     automaticElementIds: [...new Set(input.automaticElementIds ?? [])],
+    proposalBranchId: input.proposalBranchId,
+    proposalBranchLabel: input.proposalBranchLabel,
+    proposalBranchGroupId: input.proposalBranchGroupId,
     changes,
   }
 }
@@ -200,6 +228,99 @@ export function undoCanvasPatchHistory(current: CanvasScene, entry: CanvasPatchH
   return { scene: normalize({ ...normalized, elements }), revertedElementIds: [...reverted] }
 }
 
+/**
+ * Reapply one previously undone AI patch transaction. This is the mirror of
+ * undoCanvasPatchHistory: fields owned by the original transaction may only be
+ * changed when they still match the pre-patch value. Later edits to unrelated
+ * fields survive, while later edits to owned fields are conflicts.
+ */
+export function redoCanvasPatchHistory(current: CanvasScene, entry: CanvasPatchHistoryEntry): CanvasHistoryRedoResult {
+  const normalized = normalize(current)
+  const byId = new Map(normalized.elements.map((item) => [item.id, item]))
+  const conflicts: string[] = []
+  const reapplied = new Set<string>()
+
+  for (const change of entry.changes.filter((item) => item.kind === 'update')) {
+    if (!change.before || !change.after) continue
+    const currentItem = byId.get(change.id)
+    if (!currentItem) {
+      conflicts.push(`${change.id} 已被后续删除`)
+      continue
+    }
+    if (currentItem.type !== change.before.type) {
+      conflicts.push(`${change.id}.type`)
+      continue
+    }
+    const next = { ...currentItem } as unknown as Record<string, unknown>
+    let elementConflict = false
+    for (const key of changedKeys(change.before, change.after)) {
+      const currentValue = (currentItem as unknown as Record<string, unknown>)[key]
+      const beforeValue = (change.before as unknown as Record<string, unknown>)[key]
+      const afterValue = (change.after as unknown as Record<string, unknown>)[key]
+      if (deepEqual(currentValue, afterValue)) continue
+      if (!deepEqual(currentValue, beforeValue)) {
+        conflicts.push(`${change.id}.${key}`)
+        elementConflict = true
+        continue
+      }
+      if (afterValue === undefined) delete next[key]
+      else next[key] = afterValue
+    }
+    if (!elementConflict) {
+      byId.set(change.id, next as unknown as CanvasElement)
+      reapplied.add(change.id)
+    }
+  }
+
+  // Recreate additions after updates. Existing ids are only acceptable when
+  // they already exactly equal the transaction result (idempotent retry).
+  for (const change of entry.changes.filter((item) => item.kind === 'add')) {
+    if (!change.after) continue
+    const currentItem = byId.get(change.id)
+    if (currentItem) {
+      if (!deepEqual(currentItem, change.after)) conflicts.push(`${change.id} 已被后续复用或修改`)
+      continue
+    }
+    byId.set(change.id, change.after)
+    reapplied.add(change.id)
+  }
+
+  // Remove arrows before nodes. A node cannot be removed if a later relation
+  // outside this transaction now depends on it.
+  const removals = entry.changes
+    .filter((item) => item.kind === 'remove' && item.before)
+    .sort((left, right) => Number(left.before?.type !== 'arrow') - Number(right.before?.type !== 'arrow'))
+  const removalIds = new Set(removals.map((item) => item.id))
+  for (const change of removals) {
+    if (!change.before) continue
+    const currentItem = byId.get(change.id)
+    if (!currentItem) continue
+    if (!deepEqual(currentItem, change.before)) {
+      conflicts.push(`${change.id} 已被后续修改`)
+      continue
+    }
+    if (currentItem.type !== 'arrow') {
+      const laterReferences = [...byId.values()].filter((item) => item.type === 'arrow'
+        && !removalIds.has(item.id)
+        && (item.from === change.id || item.to === change.id))
+      if (laterReferences.length) {
+        conflicts.push(`${change.id} 已被后续关系 ${laterReferences.slice(0, 3).map((item) => item.id).join('、')} 引用`)
+        continue
+      }
+    }
+    byId.delete(change.id)
+    reapplied.add(change.id)
+  }
+
+  if (conflicts.length) {
+    throw new Error(`无法安全重做该 AI 修改，以下内容后来又发生了变化：${[...new Set(conflicts)].slice(0, 12).join('、')}${conflicts.length > 12 ? '…' : ''}`)
+  }
+  const order = new Map(normalized.elements.map((item, index) => [item.id, index]))
+  const transactionOrder = new Map(entry.changes.flatMap((change, index) => change.after ? [[change.after.id, normalized.elements.length + index] as const] : []))
+  const elements = [...byId.values()].sort((left, right) => (order.get(left.id) ?? transactionOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? transactionOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER))
+  return { scene: normalize({ ...normalized, elements }), reappliedElementIds: [...reapplied] }
+}
+
 export class CanvasPatchHistoryStore {
   constructor(readonly workspacePath: string) {}
 
@@ -220,18 +341,32 @@ export class CanvasPatchHistoryStore {
     return event
   }
 
+  async appendRedo(input: Omit<CanvasPatchHistoryRedoEvent, 'kind' | 'version' | 'id' | 'workspacePath' | 'appliedAt'>): Promise<CanvasPatchHistoryRedoEvent> {
+    const event: CanvasPatchHistoryRedoEvent = {
+      kind: 'redo',
+      version: 1,
+      id: randomUUID(),
+      workspacePath: this.workspacePath,
+      appliedAt: new Date().toISOString(),
+      ...input,
+    }
+    await this.append(event)
+    return event
+  }
+
   async list(diagramPath?: string, limit = 80): Promise<CanvasPatchHistorySummary[]> {
     const events = await this.readEvents()
-    const undone = new Map<string, CanvasPatchHistoryUndoEvent>()
-    for (const event of events) if (event.kind === 'undo') undone.set(event.targetId, event)
+    const state = historyState(events)
     return events
       .filter((event): event is CanvasPatchHistoryEntry => event.kind === 'apply' && (!diagramPath || event.path === diagramPath))
       .slice()
       .reverse()
       .slice(0, Math.max(1, Math.min(200, limit)))
       .map((entry) => {
-        const undo = undone.get(entry.id)
-        return undo ? { ...entry, undoneAt: undo.appliedAt, undoEventId: undo.id } : entry
+        const current = state.get(entry.id)
+        if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id }
+        if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id }
+        return entry
       })
   }
 
@@ -239,8 +374,10 @@ export class CanvasPatchHistoryStore {
     const events = await this.readEvents()
     const entry = events.find((event): event is CanvasPatchHistoryEntry => event.kind === 'apply' && event.id === id)
     if (!entry) return undefined
-    const undo = events.find((event): event is CanvasPatchHistoryUndoEvent => event.kind === 'undo' && event.targetId === id)
-    return undo ? { ...entry, undoneAt: undo.appliedAt, undoEventId: undo.id } : entry
+    const current = historyState(events).get(id)
+    if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id }
+    if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id }
+    return entry
   }
 
   private async append(event: CanvasHistoryEvent): Promise<void> {
@@ -258,12 +395,20 @@ export class CanvasPatchHistoryStore {
       if (!line.trim()) return []
       try {
         const parsed = JSON.parse(line) as CanvasHistoryEvent
-        return parsed?.version === 1 && (parsed.kind === 'apply' || parsed.kind === 'undo') ? [parsed] : []
+        return parsed?.version === 1 && (parsed.kind === 'apply' || parsed.kind === 'undo' || parsed.kind === 'redo') ? [parsed] : []
       } catch {
         return []
       }
     })
   }
+}
+
+function historyState(events: CanvasHistoryEvent[]): Map<string, CanvasPatchHistoryUndoEvent | CanvasPatchHistoryRedoEvent> {
+  const state = new Map<string, CanvasPatchHistoryUndoEvent | CanvasPatchHistoryRedoEvent>()
+  for (const event of events) {
+    if (event.kind === 'undo' || event.kind === 'redo') state.set(event.targetId, event)
+  }
+  return state
 }
 
 function historyFile(workspacePath: string): string {
