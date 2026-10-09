@@ -52,6 +52,33 @@ test('round-trips every built-in architecture visual theme', () => {
   }
 })
 
+test('round-trips a visual icon override without changing node role or technology semantics', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Icon override',
+    width: 960,
+    height: 620,
+    architecture: { theme: 'enterprise' },
+    elements: [
+      { id: 'api', type: 'node', x: 180, y: 220, width: 188, height: 80, text: 'Spring API', icon: 'service', stencil: 'spring', iconRef: 'lucide:server' },
+    ],
+  }
+
+  const parsed = parseCanvasScene(serializeCanvasScene(scene))
+  const node = parsed.elements.find((item) => item.id === 'api')
+  assert.ok(node && node.type === 'node')
+  assert.equal(node.icon, 'service')
+  assert.equal(node.stencil, 'spring')
+  assert.equal(node.iconRef, 'lucide:server')
+  assert.match(canvasSceneToSvg(parsed), /width="20" height="8"/)
+
+  const invalid = parseCanvasScene(JSON.stringify({ ...scene, elements: [{ ...scene.elements[0], iconRef: 'lucide:not-real' }] }))
+  const invalidNode = invalid.elements.find((item) => item.id === 'api')
+  assert.ok(invalidNode && invalidNode.type === 'node')
+  assert.equal(invalidNode.iconRef, undefined)
+})
+
 test('architecture themes produce distinct SVG treatments without changing node semantics', () => {
   const base: Omit<CanvasScene, 'architecture'> = {
     type: 'codex-diagram-canvas',

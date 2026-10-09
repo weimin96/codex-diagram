@@ -1,21 +1,15 @@
 import {
-  siApachekafka,
-  siDocker,
-  siElasticsearch,
-  siKubernetes,
-  siMinio,
-  siMongodb,
-  siMysql,
-  siNginx,
-  siOpensearch,
-  siPostgresql,
-  siQdrant,
-  siRabbitmq,
-  siReact,
-  siRedis,
-  siSpringboot,
-  siVuedotjs,
-} from 'simple-icons'
+  CANVAS_ROLE_ICON_IDS,
+  CANVAS_STENCIL_IDS,
+  canvasIconRefLabel as registryIconRefLabel,
+  canvasLucideIcon,
+  canvasSimpleIcon,
+  isCanvasIconRef,
+  type CanvasIconRef as RegistryIconRef,
+  type CanvasLucideIconId,
+  type CanvasRoleIconId,
+  type CanvasStencilId,
+} from './iconRegistry.js'
 
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
@@ -29,8 +23,9 @@ export type CanvasArchitectureView = 'overview' | 'detail'
 export type CanvasArchitectureDensity = 'auto' | 'comfortable' | 'compact' | 'dense'
 export type CanvasArchitectureCardKind = 'actor' | 'entry' | 'compute' | 'messaging' | 'data' | 'external' | 'generic'
 export type CanvasArchitectureScopeKind = 'group' | 'lane' | 'node'
-export type CanvasIcon = 'user' | 'web' | 'api' | 'gateway' | 'service' | 'worker' | 'database' | 'cache' | 'queue' | 'search' | 'vector' | 'cloud' | 'file' | 'auth' | 'ai' | 'mcp' | 'scheduler' | 'external'
-export type CanvasStencil = 'spring' | 'react' | 'vue' | 'postgres' | 'mysql' | 'redis' | 'kafka' | 'rabbitmq' | 'docker' | 'kubernetes' | 'qdrant' | 'opensearch' | 'elasticsearch' | 'mongodb' | 'minio' | 'nginx' | 'grpc' | 'oidc' | 'openai' | 'mcp'
+export type CanvasIcon = CanvasRoleIconId
+export type CanvasStencil = CanvasStencilId
+export type CanvasIconRef = RegistryIconRef
 export type CanvasGroupKind = 'group' | 'boundary'
 export type CanvasLaneAxis = 'horizontal' | 'vertical'
 export type CanvasC4Type = 'person' | 'software-system' | 'container' | 'component'
@@ -88,6 +83,7 @@ export interface CanvasNode {
   sourcePaths?: string[]
   icon?: CanvasIcon
   stencil?: CanvasStencil
+  iconRef?: CanvasIconRef
   subtitle?: string
   description?: string
   tags?: string[]
@@ -111,6 +107,7 @@ export interface CanvasNote {
   sourcePaths?: string[]
   icon?: CanvasIcon
   stencil?: CanvasStencil
+  iconRef?: CanvasIconRef
   subtitle?: string
   description?: string
   tags?: string[]
@@ -346,7 +343,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = architectureMode
       ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
       : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
-    const architectureCard = item.type === 'node' && Boolean(item.icon || item.stencil || item.c4Type)
+    const architectureCard = item.type === 'node' && Boolean(item.iconRef || item.icon || item.stencil || item.c4Type)
     if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme)
     const cardTemplate = canvasArchitectureCardTemplate(item)
     const showSubtitle = Boolean(item.subtitle && (!architectureCard || projection.density !== 'dense'))
@@ -356,9 +353,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       ? `<text x="${item.x + 16}" y="${item.y + (showSubtitle ? 55 : Math.max(54, item.height / 2 + 5))}" font-size="15" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(lines.join(' '), cardTitleLimit))}</text>`
       : lines.map((line, index) => `<text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + (index - (lines.length - 1) / 2) * 19}" text-anchor="middle" dominant-baseline="middle" font-size="15" fill="${escapeXml(palette.text)}">${escapeXml(line)}</text>`).join('')
     const rolePaths = item.icon ? canvasIconPaths(item.icon) : []
-    const icon = rolePaths.length ? `<g transform="translate(${item.x + 8} ${item.y + 8})"><circle cx="10" cy="10" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.10" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.38"/><g transform="translate(3 3) scale(.5833)" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${rolePaths.map((d) => `<path d="${d}"/>`).join('')}</g></g>` : ''
-    const cardMeta = item.stencil ? canvasStencilLabel(item.stencil) : architectureCard ? cardTemplate.label : item.icon ? canvasIconLabel(item.icon) : ''
-    const stencil = cardMeta ? `<text x="${item.x + (item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" letter-spacing="0.3" fill="${escapeXml(palette.stroke)}">${escapeXml(cardMeta)}</text>` : ''
+    const icon = item.iconRef
+      ? `<g transform="translate(${item.x + 8} ${item.y + 8}) scale(.8333)">${canvasIconRefMarkup(item.iconRef, hexLuminance(palette.text) > 0.62, palette.stroke)}</g>`
+      : rolePaths.length ? `<g transform="translate(${item.x + 8} ${item.y + 8})"><circle cx="10" cy="10" r="10" fill="${escapeXml(palette.stroke)}" fill-opacity="0.10" stroke="${escapeXml(palette.stroke)}" stroke-opacity="0.38"/><g transform="translate(3 3) scale(.5833)" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${rolePaths.map((d) => `<path d="${d}"/>`).join('')}</g></g>` : ''
+    const cardMeta = item.iconRef ? canvasIconRefLabel(item.iconRef) : item.stencil ? canvasStencilLabel(item.stencil) : architectureCard ? cardTemplate.label : item.icon ? canvasIconLabel(item.icon) : ''
+    const stencil = cardMeta ? `<text x="${item.x + (item.iconRef || item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" letter-spacing="0.3" fill="${escapeXml(palette.stroke)}">${escapeXml(cardMeta)}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = showSubtitle ? `<text x="${architectureCard ? item.x + 16 : item.x + item.width / 2}" y="${item.y + item.height - 16}"${architectureCard ? '' : ' text-anchor="middle"'} font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(truncateCanvasText(item.subtitle!, 34))}</text>` : ''
     const strokeWidth = item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5
@@ -1212,7 +1211,7 @@ function renderArchitectureCanvasNode(
 ): string {
   const profile = canvasArchitectureThemeProfile(theme)
   const compact = density === 'dense'
-  const baseIconSize = item.stencil ? compact ? 32 : 40 : compact ? 28 : 34
+  const baseIconSize = item.iconRef || item.stencil ? compact ? 32 : 40 : compact ? 28 : 34
   const iconSize = baseIconSize * profile.iconScale
   const iconX = item.x + (compact ? 10 : 12)
   const iconY = item.y + (item.height - iconSize) / 2
@@ -1222,16 +1221,19 @@ function renderArchitectureCanvasNode(
   const titleSize = compact ? 12 : density === 'compact' ? 12.5 : 13
   const subtitleSize = compact ? 9 : 9.5
   const opacity = item.emphasis === 'muted' ? '0.68' : '1'
-  const mark = item.stencil
-    ? architectureStencilMark(item.stencil, iconX, iconY, iconSize, palette.stroke, hexLuminance(palette.text) > 0.62)
-    : item.icon
-      ? architectureRoleMark(item.icon, iconX, iconY, iconSize, palette.stroke)
-      : ''
+  const darkSurface = hexLuminance(palette.text) > 0.62
+  const mark = item.iconRef
+    ? architectureIconRefMark(item.iconRef, iconX, iconY, iconSize, palette.text, darkSurface)
+    : item.stencil
+      ? architectureStencilMark(item.stencil, iconX, iconY, iconSize, palette.stroke, darkSurface)
+      : item.icon
+        ? architectureRoleMark(item.icon, iconX, iconY, iconSize, palette.stroke)
+        : ''
   const fontFamily = profile.fontFamily ? ` font-family="${profile.fontFamily}"` : ''
   const subtitle = item.subtitle
     ? `<text x="${textX}" y="${subtitleY}" font-size="${subtitleSize}" fill="${escapeXml(palette.text)}" opacity="${profile.subtitleOpacity}"${fontFamily}>${escapeXml(truncateCanvasText(item.subtitle, compact ? 20 : 26))}</text>`
     : ''
-  if (item.stencil || isArchitectureTechnicalRole(item.icon)) {
+  if (item.iconRef || item.stencil || isArchitectureTechnicalRole(item.icon)) {
     const plate = profile.nodePlateOpacity > 0
       ? `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${profile.nodeRadius}" fill="${escapeXml(palette.fill)}" fill-opacity="${profile.nodePlateOpacity}" stroke="${escapeXml(palette.stroke)}" stroke-opacity="${profile.nodeStrokeOpacity}" stroke-width="${profile.nodeStrokeWidth}"${profile.sketchEdges ? ' stroke-dasharray="6 5"' : ''}/>`
       : ''
@@ -1270,10 +1272,42 @@ export function canvasArchitectureRelationLabelVisible(arrow: CanvasArrow): bool
   return /\b(?:https?|rest|sse|grpc|websocket|oidc|oauth|sql|mcp|tcp|udp)\b|异步|事件|消息/i.test(arrow.label)
 }
 
+export function canvasIconRefLabel(ref: CanvasIconRef): string {
+  return registryIconRefLabel(ref)
+}
+
+export function canvasIconRefMarkup(ref: CanvasIconRef, darkSurface = false, fallbackColor = 'currentColor'): string {
+  const [source, id] = ref.split(':', 2)
+  if (source === 'role') {
+    const paths = canvasIconPaths(id as CanvasIcon)
+    return `<g fill="none" stroke="${escapeXml(fallbackColor)}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths.map((d) => `<path d="${d}"/>`).join('')}</g>`
+  }
+  if (source === 'simple') {
+    const icon = canvasSimpleIcon(id as CanvasStencil)
+    if (!icon) return ''
+    const original = `#${icon.hex}`
+    const color = darkSurface && hexLuminance(original) < 0.07 ? '#d1d5db' : original
+    return `<path d="${icon.path}" fill="${color}" data-icon-ref="${escapeXml(ref)}"/>`
+  }
+  const node = canvasLucideIcon(id as CanvasLucideIconId)
+  const children = node.map(([tag, attrs]) => {
+    const attributes = Object.entries(attrs)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}="${escapeXml(String(value))}"`)
+      .join(' ')
+    return `<${tag}${attributes ? ` ${attributes}` : ''}/>`
+  }).join('')
+  return `<g fill="none" stroke="${escapeXml(fallbackColor)}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${children}</g>`
+}
+
 function architectureRoleMark(icon: CanvasIcon, x: number, y: number, size: number, color: string): string {
   const paths = canvasIconPaths(icon)
   const scale = size / 24
   return `<g transform="translate(${x} ${y})"><rect width="${size}" height="${size}" rx="${Math.max(5, size * 0.22)}" fill="${escapeXml(color)}" fill-opacity="0.08" stroke="${escapeXml(color)}" stroke-opacity="0.18"/><g transform="scale(${scale})" fill="none" stroke="${escapeXml(color)}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths.map((d) => `<path d="${d}"/>`).join('')}</g></g>`
+}
+
+function architectureIconRefMark(ref: CanvasIconRef, x: number, y: number, size: number, fallback: string, darkSurface: boolean): string {
+  return `<g transform="translate(${x} ${y}) scale(${size / 24})">${canvasIconRefMarkup(ref, darkSurface, fallback)}</g>`
 }
 
 function architectureStencilMark(stencil: CanvasStencil, x: number, y: number, size: number, fallback: string, darkSurface: boolean): string {
@@ -1304,25 +1338,7 @@ function architectureStencilMark(stencil: CanvasStencil, x: number, y: number, s
 }
 
 function architectureSimpleIcon(stencil: CanvasStencil): { path: string; hex: string } | undefined {
-  const icons: Partial<Record<CanvasStencil, { path: string; hex: string }>> = {
-    spring: siSpringboot,
-    react: siReact,
-    vue: siVuedotjs,
-    postgres: siPostgresql,
-    mysql: siMysql,
-    redis: siRedis,
-    kafka: siApachekafka,
-    rabbitmq: siRabbitmq,
-    docker: siDocker,
-    kubernetes: siKubernetes,
-    qdrant: siQdrant,
-    opensearch: siOpensearch,
-    elasticsearch: siElasticsearch,
-    mongodb: siMongodb,
-    minio: siMinio,
-    nginx: siNginx,
-  }
-  return icons[stencil]
+  return canvasSimpleIcon(stencil)
 }
 
 export function canvasStencilVisual(stencil: CanvasStencil, darkSurface = false): { path?: string; color: string; label: string } {
@@ -1442,8 +1458,8 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
   const emphases: CanvasEmphasis[] = ['primary', 'secondary', 'muted']
   const shapes: CanvasShape[] = ['rounded', 'square', 'pill']
-  const icons: CanvasIcon[] = ['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']
-  const stencils: CanvasStencil[] = ['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']
+  const icons: readonly CanvasIcon[] = CANVAS_ROLE_ICON_IDS
+  const stencils: readonly CanvasStencil[] = CANVAS_STENCIL_IDS
   const c4Types: CanvasC4Type[] = ['person', 'software-system', 'container', 'component']
   return {
     id: item.id,
@@ -1460,6 +1476,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(Array.isArray(item.sourcePaths) ? { sourcePaths: item.sourcePaths.filter((path) => typeof path === 'string' && path.trim()).map((path) => path.trim()).slice(0, 12) } : {}),
     ...(item.icon && icons.includes(item.icon) ? { icon: item.icon } : {}),
     ...(item.stencil && stencils.includes(item.stencil) ? { stencil: item.stencil } : {}),
+    ...(isCanvasIconRef(item.iconRef) ? { iconRef: item.iconRef } : {}),
     ...(typeof item.subtitle === 'string' && item.subtitle.trim() ? { subtitle: item.subtitle.trim().slice(0, 120) } : {}),
     ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim().slice(0, 1000) } : {}),
     ...(Array.isArray(item.tags) ? { tags: item.tags.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim()).slice(0, 12) } : {}),

@@ -12,8 +12,9 @@ import { assessCanvasVisualQuality } from './canvasQuality.js'
 import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch, type CanvasSubgraphPatchInput } from './canvasPatch.js'
 import { buildCanvasPatchHistoryEntry, CanvasPatchHistoryStore, redoCanvasPatchHistory, undoCanvasPatchHistory, type CanvasPatchHistorySummary } from './canvasHistory.js'
 import { loadDiagramIcons, diagramGlobalEntrypoint } from './icons.js'
-import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
+import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasIcon, type CanvasIconRef, type CanvasNode, type CanvasNote, type CanvasScene, type CanvasStencil } from './canvas.js'
 import { nextCanvasElementId, traceCanvasGraph } from './canvasOperations.js'
+import { isCanvasIconRef } from './iconRegistry.js'
 import { DiagramStore } from './store.js'
 import { readGitChanges } from './gitChanges.js'
 import { encodeToolResultFallback } from './toolResult.js'
@@ -82,6 +83,7 @@ const server = new McpServer(
 const appOnly = { ui: { visibility: ['app'] as const } }
 const readonly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
 const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+const canvasIconRefSchema = z.string().refine(isCanvasIconRef, '不支持的 iconRef')
 const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
@@ -605,12 +607,13 @@ server.registerTool('diagram.upsertSourceNode', {
     tags: z.array(z.string().min(1).max(80)).max(12).optional(),
     icon: z.enum(['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']).optional(),
     stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']).optional(),
+    iconRef: canvasIconRefSchema.optional(),
     c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
     groupId: z.string().min(1).optional(),
     laneId: z.string().min(1).optional(),
   }),
   annotations: write,
-}, async ({ workspacePath, path: diagramPath, sourcePath, elementId, text, subtitle, description, tags, icon, stencil, c4Type, groupId, laneId }, extra) => {
+}, async ({ workspacePath, path: diagramPath, sourcePath, elementId, text, subtitle, description, tags, icon, stencil, iconRef, c4Type, groupId, laneId }, extra) => {
   const threadId = toolThreadId(extra._meta)
   const store = await resolveStore(workspacePath, threadId)
   const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
@@ -653,6 +656,7 @@ server.registerTool('diagram.upsertSourceNode', {
         ...(cleanTags ? { tags: cleanTags.length ? cleanTags : undefined } : {}),
         ...(icon ? { icon: icon as CanvasIcon } : {}),
         ...(stencil ? { stencil: stencil as CanvasStencil } : {}),
+        ...(iconRef ? { iconRef: iconRef as CanvasIconRef } : {}),
         ...(c4Type ? { c4Type: c4Type as CanvasC4Type } : {}),
         ...(groupId ? { groupId } : {}),
         ...(laneId ? { laneId } : {}),
@@ -681,6 +685,7 @@ server.registerTool('diagram.upsertSourceNode', {
       ...(cleanTags?.length ? { tags: cleanTags } : {}),
       ...(icon ? { icon: icon as CanvasIcon } : {}),
       ...(stencil ? { stencil: stencil as CanvasStencil } : {}),
+      ...(iconRef ? { iconRef: iconRef as CanvasIconRef } : {}),
       ...(c4Type ? { c4Type: c4Type as CanvasC4Type } : {}),
       ...(groupId ? { groupId } : {}),
       ...(laneId ? { laneId } : {}),
@@ -710,6 +715,7 @@ server.registerTool('diagram.upsertSourceNodes', {
       tags: z.array(z.string().min(1).max(80)).max(12).optional(),
       icon: z.enum(['user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external']).optional(),
       stencil: z.enum(['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp']).optional(),
+      iconRef: canvasIconRefSchema.optional(),
       c4Type: z.enum(['person', 'software-system', 'container', 'component']).optional(),
       groupId: z.string().min(1).optional(),
       laneId: z.string().min(1).optional(),
@@ -984,7 +990,7 @@ server.registerTool('diagram.proposeSubgraphPatch', {
     elementIds: z.array(z.string().min(1)).max(120).default([]).describe('Existing Canvas element ids that this patch is allowed to modify or remove.'),
     updates: z.array(z.object({
       id: z.string().min(1),
-      changes: canvasPatchPropertiesSchema.describe('Only fields that actually change. node/note: x,y,width,height,text,tone,shape,locked,groupId,sourcePaths,icon,stencil,subtitle,description,tags,laneId,c4Type,emphasis. arrow: from,to,label,lineStyle,routing,fromAnchor,toAnchor,points,labelPosition,emphasis,bundleKey. Use null only to clear optional fields.'),
+      changes: canvasPatchPropertiesSchema.describe('Only fields that actually change. node/note: x,y,width,height,text,tone,shape,locked,groupId,sourcePaths,icon,stencil,iconRef,subtitle,description,tags,laneId,c4Type,emphasis. iconRef is visual-only and must not replace icon/stencil semantics. arrow: from,to,label,lineStyle,routing,fromAnchor,toAnchor,points,labelPosition,emphasis,bundleKey. Use null only to clear optional fields.'),
     })).max(120).optional(),
     adds: z.array(z.object({
       id: z.string().min(1),
@@ -1856,6 +1862,7 @@ interface SourceNodeSpec {
   tags?: string[]
   icon?: CanvasIcon
   stencil?: CanvasStencil
+  iconRef?: CanvasIconRef
   c4Type?: CanvasC4Type
   groupId?: string
   laneId?: string
@@ -1883,6 +1890,7 @@ function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spe
         ...(cleanTags ? { tags: cleanTags.length ? cleanTags : undefined } : {}),
         ...(spec.icon ? { icon: spec.icon } : {}),
         ...(spec.stencil ? { stencil: spec.stencil } : {}),
+        ...(spec.iconRef ? { iconRef: spec.iconRef } : {}),
         ...(spec.c4Type ? { c4Type: spec.c4Type } : {}),
         ...(spec.groupId ? { groupId: spec.groupId } : {}),
         ...(spec.laneId ? { laneId: spec.laneId } : {}),
@@ -1912,6 +1920,7 @@ function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spe
     ...(cleanTags?.length ? { tags: cleanTags } : {}),
     ...(spec.icon ? { icon: spec.icon } : {}),
     ...(spec.stencil ? { stencil: spec.stencil } : {}),
+    ...(spec.iconRef ? { iconRef: spec.iconRef } : {}),
     ...(spec.c4Type ? { c4Type: spec.c4Type } : {}),
     ...(spec.groupId ? { groupId: spec.groupId } : {}),
     ...(spec.laneId ? { laneId: spec.laneId } : {}),
@@ -2083,7 +2092,7 @@ function canvasHistoryFieldLabel(field: string): string {
   return ({
     text: '文字', subtitle: '副标题', description: '说明', tags: '标签', x: 'X', y: 'Y', width: '宽度', height: '高度',
     from: '起点', to: '终点', points: '折点', label: '关系文字', labelPosition: '标签位置', routing: '路由', fromAnchor: '起点锚点', toAnchor: '终点锚点',
-    groupId: '边界', laneId: '泳道', c4Type: 'C4', icon: '角色', stencil: '技术栈', emphasis: '强调', sourcePaths: '源码', tone: '色调', shape: '形状', locked: '锁定', bundleKey: '关系通道', lineStyle: '线型',
+    groupId: '边界', laneId: '泳道', c4Type: 'C4', icon: '角色', stencil: '技术栈', iconRef: '显示图标', emphasis: '强调', sourcePaths: '源码', tone: '色调', shape: '形状', locked: '锁定', bundleKey: '关系通道', lineStyle: '线型',
   } as Record<string, string>)[field] ?? field
 }
 

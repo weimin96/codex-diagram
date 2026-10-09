@@ -136,6 +136,21 @@ test('rejects invalid semantic values instead of silently normalizing them away'
     scopeElementIds: ['api-db'],
     updates: [{ id: 'api-db', changes: { fromAnchor: 'center' } }],
   }), /字段值无效/)
+  assert.throws(() => buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { iconRef: 'lucide:not-real' } }],
+  }), /字段值无效/)
+})
+
+test('applies a visual icon override without changing semantic role fields', () => {
+  const result = buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { iconRef: 'lucide:server' } }],
+  })
+  const node = result.scene.elements.find((item) => item.id === 'api')
+  assert.ok(node && node.type === 'node')
+  assert.equal(node.icon, 'api')
+  assert.equal(node.iconRef, 'lucide:server')
 })
 
 test('new nodes must provide both coordinates or let the patch engine place them', () => {

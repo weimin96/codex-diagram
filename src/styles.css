@@ -459,6 +459,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-inspector select { width: 100%; height: 28px; min-width: 0; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font-size: 11px; }
 .freeform-inspector textarea { width: 100%; min-height: 60px; resize: vertical; padding: 6px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font: 11px/1.45 var(--font-sans); }
 .freeform-inspector input:disabled, .freeform-inspector select:disabled, .freeform-inspector textarea:disabled { opacity: .58; cursor: not-allowed; }
+.freeform-icon-field { position: relative; display: grid; gap: 4px; color: var(--text-tertiary); font-size: 10px; }
+.freeform-inspector .freeform-icon-field-trigger { width: 100%; height: 30px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 0 7px; background: var(--app-bg); text-align: left; }
+.freeform-icon-field-trigger svg { width: 18px; height: 18px; overflow: visible; color: var(--text-secondary); }
+.freeform-icon-field-trigger i.is-auto { width: 18px; height: 18px; display: grid; place-items: center; border: 1px dashed var(--border-strong); border-radius: 5px; color: var(--text-tertiary); font: 650 9px var(--font-mono); font-style: normal; }
+.freeform-icon-field-trigger strong { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 10px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-icon-field-trigger b { color: var(--text-tertiary); font-size: 9px; font-weight: 500; }
+.freeform-icon-picker { display: grid; gap: 6px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface-raised) 98%, transparent); box-shadow: 0 12px 28px rgba(0,0,0,.12); }
+.freeform-icon-picker-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.freeform-icon-picker-search input { height: 26px; }
+.freeform-inspector .freeform-icon-picker-search button { height: 26px; min-width: 42px; }
+.freeform-icon-source-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+.freeform-inspector .freeform-icon-source-tabs button { height: 24px; padding: 0 4px; border-color: transparent; color: var(--text-tertiary); font-size: 9px; }
+.freeform-inspector .freeform-icon-source-tabs button.is-selected { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 9%, var(--surface-panel)); color: var(--text-primary); }
+.freeform-icon-grid { max-height: 190px; overflow: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; padding-right: 2px; }
+.freeform-inspector .freeform-icon-grid button { height: 52px; min-width: 0; display: grid; place-items: center; align-content: center; gap: 3px; padding: 4px 2px; border-color: transparent; }
+.freeform-inspector .freeform-icon-grid button:hover { border-color: var(--border); }
+.freeform-inspector .freeform-icon-grid button.is-selected { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-panel)); }
+.freeform-icon-grid svg { width: 20px; height: 20px; overflow: visible; color: var(--text-secondary); }
+.freeform-icon-grid span { width: 100%; overflow: hidden; color: var(--text-tertiary); font-size: 8px; line-height: 1.1; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-icon-grid p { grid-column: 1 / -1; margin: 0; padding: 12px 4px; color: var(--text-tertiary); font-size: 10px; text-align: center; }
 .freeform-size-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .freeform-size-row label { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 4px; }
 .freeform-property-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -698,10 +718,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-node-role-symbol { fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .freeform-node-role.is-architecture-role > rect { fill: color-mix(in srgb, var(--text-secondary) 7%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 20%, transparent); stroke-width: 1; }
+.freeform-icon-ref { color: var(--text-secondary); }
+.freeform-editor.is-architecture-mode .freeform-icon-ref { color: color-mix(in srgb, var(--text-primary) 82%, transparent); }
+.freeform-box.tone-accent .freeform-icon-ref { color: #6366f1; }
+.freeform-box.tone-success .freeform-icon-ref { color: #059669; }
+.freeform-box.tone-warning .freeform-icon-ref { color: #b45309; }
 .freeform-stencil-logo > rect { fill: color-mix(in srgb, var(--text-secondary) 7%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 18%, transparent); stroke-width: 1; }
 .freeform-stencil-logo > text { fill: var(--text-secondary); font: 700 9px var(--font-mono); }
 :root[data-theme='dark'] .freeform-stencil-logo path[data-stencil='kafka'],
-:root[data-theme='dark'] .freeform-asset-grid path[data-stencil='kafka'] { fill: #d4d4d8 !important; }
+:root[data-theme='dark'] .freeform-asset-grid path[data-stencil='kafka'],
+:root[data-theme='dark'] .freeform-icon-ref path[data-icon-ref='simple:kafka'],
+:root[data-theme='dark'] .freeform-icon-grid path[data-icon-ref='simple:kafka'] { fill: #d4d4d8 !important; }
 .freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark > rect:first-of-type { fill: transparent; stroke: transparent; filter: none; }
 .freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark:hover > rect:first-of-type { fill: color-mix(in srgb, var(--surface-raised) 36%, transparent); stroke: color-mix(in srgb, var(--accent) 34%, transparent); stroke-width: 1; }
 .freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark.is-selected > rect:first-of-type { fill: color-mix(in srgb, var(--accent) 5%, transparent); stroke: var(--accent); stroke-width: 2; }

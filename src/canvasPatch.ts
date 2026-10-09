@@ -1,6 +1,7 @@
 import { routeArchitectureArrowIds, routeArchitectureEdgesIncremental } from './architectureDesign.js'
 import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasElement, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasScene } from './canvas.js'
 import { layoutCanvasNeighborhood } from './canvasOperations.js'
+import { isCanvasIconRef } from './iconRegistry.js'
 
 export interface CanvasPatchUpdateInput {
   id: string
@@ -51,7 +52,7 @@ export interface CanvasSubgraphContext {
 }
 
 const boxFields = new Set([
-  'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil',
+  'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
   'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis',
 ])
 const arrowFields = new Set([
@@ -710,6 +711,10 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
     }
     if (key === 'stencil') {
       if (!['spring', 'react', 'vue', 'postgres', 'mysql', 'redis', 'kafka', 'rabbitmq', 'docker', 'kubernetes', 'qdrant', 'opensearch', 'elasticsearch', 'mongodb', 'minio', 'nginx', 'grpc', 'oidc', 'openai', 'mcp'].includes(String(value))) fail()
+      return
+    }
+    if (key === 'iconRef') {
+      if (!isCanvasIconRef(value)) fail()
       return
     }
     if (key === 'subtitle') {

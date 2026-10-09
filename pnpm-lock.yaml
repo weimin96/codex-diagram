@@ -35,6 +35,9 @@ importers:
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2
+      lucide:
+        specifier: ^1.54.0
+        version: 1.54.0
       mermaid:
         specifier: ^11.12.0
         version: 11.17.2
@@ -1036,6 +1039,9 @@ packages:
 
   lodash-es@4.18.1:
     resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
+
+  lucide@1.54.0:
+    resolution: {integrity: sha512-2N2brA+7NYLDlxG2QNcmGej5Qhw3pYMPN9MLktTNkQfs7Sk/2g2e8s0CUWibLz5lPVKMYesxm+k/ndDB7E1JjQ==}
 
   marked@16.3.0:
     resolution: {integrity: sha512-K3UxuKu6l6bmA5FUwYho8CfJBlsUWAooKtdGgMcERSpF7gcBUrCGsLH7wDaaNOzwq18JzSUDyoEb/YsrqMac3w==}
@@ -2243,6 +2249,8 @@ snapshots:
   layout-base@2.0.1: {}
 
   lodash-es@4.18.1: {}
+
+  lucide@1.54.0: {}
 
   marked@16.3.0: {}
 
