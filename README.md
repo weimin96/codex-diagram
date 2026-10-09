@@ -6,9 +6,13 @@ v0.16 起 Mermaid 不再走单一通用生成 Prompt；v0.17 进一步扩展到 
 
 v0.18 增加 Visual Quality Gate 与可重复压力基准。`pnpm visual:benchmark` 会在真实 Chrome 中以 light/dark 两套主题渲染复杂 Flowchart、Sequence、ER、Kanban、Sankey、Mindmap、Requirement、Treemap 等固定样例，同时检查尺寸、文字越界、节点重叠和关系标签重叠。结构复杂度超过单图可读上限时不会继续靠缩小字体硬塞，而是在预览左上角显示轻量“建议拆图”提示；例如 20+ 节点/多决策 Flowchart、10+ participant 或 24+ message Sequence、过大的 Class 图会进入拆图建议。Dense Treemap 会隐藏渲染层数值标签以避免小块越界，但源数据保持不变；Flowchart 的 `<br/>` 仅在渲染输入中规范为空格，源码不会被静默改写。
 
+v0.19 增加固定画布的 Pixel Visual Regression。`pnpm visual:regression` 会把同一批复杂样例以 1400×1000、固定 48px 边距和 light/dark 两套主题渲染成 golden view，再同时比较显著像素变化、平均色差与 20px macro-cell 结构差异。少量抗锯齿抖动不会直接失败，但整体间距、配色、节点形态或布局明显变化会阻断回归。基线存放在 `tests/fixtures/visual-baseline/`；只有显式运行 `pnpm visual:regression:update` 才会重建。失败时会把 baseline/current/diff 三张诊断图写到 `test-results/visual-regression/`。`pnpm visual:verify` 会串行执行模板浏览器 smoke、复杂几何 benchmark 与像素 golden regression。
+
 开发回归除 `pnpm test` / `pnpm smoke` 外，还可运行 `pnpm visual:smoke`：它使用本机 Chrome/Chromium 在真实浏览器中按 light/dark 两套 Visual Grammar 渲染全部正式 Mermaid 模板，并检查渲染失败与异常超大 SVG，用于捕获 Node 单测难以发现的 Mermaid lexer、DOMPurify 和浏览器渲染兼容问题。
 
 复杂视觉回归运行 `pnpm visual:benchmark`。该命令使用仓库内 `tests/fixtures/visual-stress/` 压力集，并把“样式/几何回归”和“内容本身应该拆图”区分开：前者直接失败，后者输出 split recommendation 而不是鼓励继续压缩字体。
+
+需要检查“没有越界，但视觉是否被改丑”时运行 `pnpm visual:regression`；只有确认视觉改动是预期行为后才运行 `pnpm visual:regression:update` 更新 golden。日常完整视觉验收直接运行 `pnpm visual:verify`。
 
 当前支持：
 

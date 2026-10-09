@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "viewport": {
+    "width": 1400,
+    "height": 1000,
+    "padding": 48
+  },
+  "cases": [
+    {
+      "mode": "light",
+      "type": "class",
+      "name": "class/12-services",
+      "diagramWidth": 2665,
+      "diagramHeight": 541
+    },
+    {
+      "mode": "light",
+      "type": "er",
+      "name": "er/15-entities",
+      "diagramWidth": 1478,
+      "diagramHeight": 916
+    },
+    {
+      "mode": "light",
+      "type": "flowchart",
+      "name": "flowchart/over-limit",
+      "diagramWidth": 638,
+      "diagramHeight": 1936
+    },
+    {
+      "mode": "light",
+      "type": "ishikawa",
+      "name": "ishikawa/dense",
+      "diagramWidth": 674,
+      "diagramHeight": 580
+    },
+    {
+      "mode": "light",
+      "type": "kanban",
+      "name": "kanban/30-cards",
+      "diagramWidth": 998,
+      "diagramHeight": 325
+    },
+    {
+      "mode": "light",
+      "type": "mindmap",
+      "name": "mindmap/50-nodes",
+      "diagramWidth": 923,
+      "diagramHeight": 602
+    },
+    {
+      "mode": "light",
+      "type": "requirement",
+      "name": "requirement/20-items",
+      "diagramWidth": 1888,
+      "diagramHeight": 300
+    },
+    {
+      "mode": "light",
+      "type": "sankey",
+      "name": "sankey/30-flows",
+      "diagramWidth": 853,
+      "diagramHeight": 460
+    },
+    {
+      "mode": "light",
+      "type": "sequence",
+      "name": "sequence/dense",
+      "diagramWidth": 1522,
+      "diagramHeight": 1349
+    },
+    {
+      "mode": "light",
+      "type": "sequence",
+      "name": "sequence/over-limit",
+      "diagramWidth": 1674,
+      "diagramHeight": 1441
+    },
+    {
+      "mode": "light",
+      "type": "state",
+      "name": "state/long-labels",
+      "diagramWidth": 900,
+      "diagramHeight": 874
+    },
+    {
+      "mode": "light",
+      "type": "treemap",
+      "name": "treemap/dense",
+      "diagramWidth": 936,
+      "diagramHeight": 351
+    },
+    {
+      "mode": "dark",
+      "type": "class",
+      "name": "class/12-services",
+      "diagramWidth": 2665,
+      "diagramHeight": 541
+    },
+    {
+      "mode": "dark",
+      "type": "er",
+      "name": "er/15-entities",
+      "diagramWidth": 1478,
+      "diagramHeight": 916
+    },
+    {
+      "mode": "dark",
+      "type": "flowchart",
+      "name": "flowchart/over-limit",
+      "diagramWidth": 638,
+      "diagramHeight": 1936
+    },
+    {
+      "mode": "dark",
+      "type": "ishikawa",
+      "name": "ishikawa/dense",
+      "diagramWidth": 674,
+      "diagramHeight": 580
+    },
+    {
+      "mode": "dark",
+      "type": "kanban",
+      "name": "kanban/30-cards",
+      "diagramWidth": 998,
+      "diagramHeight": 325
+    },
+    {
+      "mode": "dark",
+      "type": "mindmap",
+      "name": "mindmap/50-nodes",
+      "diagramWidth": 923,
+      "diagramHeight": 602
+    },
+    {
+      "mode": "dark",
+      "type": "requirement",
+      "name": "requirement/20-items",
+      "diagramWidth": 1888,
+      "diagramHeight": 300
+    },
+    {
+      "mode": "dark",
+      "type": "sankey",
+      "name": "sankey/30-flows",
+      "diagramWidth": 853,
+      "diagramHeight": 460
+    },
+    {
+      "mode": "dark",
+      "type": "sequence",
+      "name": "sequence/dense",
+      "diagramWidth": 1522,
+      "diagramHeight": 1349
+    },
+    {
+      "mode": "dark",
+      "type": "sequence",
+      "name": "sequence/over-limit",
+      "diagramWidth": 1674,
+      "diagramHeight": 1441
+    },
+    {
+      "mode": "dark",
+      "type": "state",
+      "name": "state/long-labels",
+      "diagramWidth": 900,
+      "diagramHeight": 874
+    },
+    {
+      "mode": "dark",
+      "type": "treemap",
+      "name": "treemap/dense",
+      "diagramWidth": 936,
+      "diagramHeight": 351
+    }
+  ]
+}
