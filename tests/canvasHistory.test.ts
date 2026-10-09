@@ -211,3 +211,29 @@ test('history redo refuses to remove a restored node that gained a later relatio
   }
   assert.throws(() => redoCanvasPatchHistory(current, history), /api 已被后续关系 api-db-later 引用/)
 })
+
+test('dependent patch chains round-trip in reverse undo and forward redo order', () => {
+  const base = scene()
+  const first: CanvasScene = {
+    ...base,
+    elements: base.elements.map((item) => item.id === 'api' && item.type === 'node' ? { ...item, text: 'Public API' } : item),
+  }
+  const second: CanvasScene = {
+    ...first,
+    elements: first.elements.map((item) => item.id === 'api' && item.type === 'node' ? { ...item, text: 'Gateway API' } : item),
+  }
+  const root = entry(base, first)
+  const child = { ...entry(first, second), dependsOnIds: [root.id] }
+
+  const afterChildUndo = undoCanvasPatchHistory(second, child).scene
+  const afterRootUndo = undoCanvasPatchHistory(afterChildUndo, root).scene
+  const apiAfterUndo = afterRootUndo.elements.find((item) => item.id === 'api')
+  assert.ok(apiAfterUndo && apiAfterUndo.type === 'node')
+  assert.equal(apiAfterUndo.text, 'API')
+
+  const afterRootRedo = redoCanvasPatchHistory(afterRootUndo, root).scene
+  const afterChildRedo = redoCanvasPatchHistory(afterRootRedo, child).scene
+  const apiAfterRedo = afterChildRedo.elements.find((item) => item.id === 'api')
+  assert.ok(apiAfterRedo && apiAfterRedo.type === 'node')
+  assert.equal(apiAfterRedo.text, 'Gateway API')
+})

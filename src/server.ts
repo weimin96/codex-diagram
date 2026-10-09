@@ -16,6 +16,7 @@ import { DiagramStore } from './store.js'
 import { readGitChanges } from './gitChanges.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { addProposalBranch, selectProposalBranch, type ProposalBranchSet } from './proposalBranches.js'
+import { buildCanvasPatchGraph, canvasPatchDependentClosure, composeCanvasSubgraphPatches, inferCanvasPatchDependencies } from './patchGraph.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
@@ -57,6 +58,7 @@ const server = new McpServer(
       'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put selected existing ids in elementIds; when the user intent explicitly changes a direct relationship, you may also include the relevant id returned in getSubgraph.directRelationshipIds. Treat getSubgraph.contextElementIds as read-only context unless the user clearly asks to expand the edit scope. Send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
       'Create multiple Canvas proposal branches only when the user explicitly asks for alternatives or A/B comparison. In that case call diagram.proposeSubgraphPatch multiple times against the same base revision with distinct branchLabel values. Otherwise omit branchLabel so normal proposal behavior remains single-candidate.',
+      'When the user explicitly asks to combine compatible proposal branches or independent parallel subgraph patches, use diagram.composeProposalBranches. It rejects conflicting writes instead of silently choosing one value; do not use it to merge mutually exclusive A/B alternatives unless the user requests that composition.',
       'Before a finite Canvas patch, prefer diagram.getSubgraph over diagram.get. getSubgraph separates scopeNodeIds, directRelationshipIds and contextElementIds, bounds node/relation counts, and returns only relevant Group/Lane metadata so large-diagram edits do not load the whole document. Use diagram.get only when the task genuinely needs whole-diagram state.',
       'Use diagram.trace for upstream/downstream graph exploration. When the user asks what current code changes affect, use diagram.impactFromGit so real staged/unstaged/untracked Git files are mapped through Canvas sourcePaths instead of guessed.',
       'Use diagram.upsertSourceNode after reading one real source file, or diagram.upsertSourceNodes after analyzing a set of files, when architecture nodes should be refreshed without rewriting the whole Canvas.',
@@ -1034,6 +1036,67 @@ server.registerTool('diagram.selectProposalBranch', {
   }
 })
 
+server.registerTool('diagram.composeProposalBranches', {
+  title: 'Compose AI proposal branches',
+  description: 'Compose multiple compatible Canvas proposal branches that share the same base revision into a new reviewable candidate. Conflicting writes are rejected instead of using last-write-wins.',
+  inputSchema: z.object({
+    branchIds: z.array(z.string().min(1)).min(2).max(6),
+    branchLabel: z.string().min(1).max(80).default('组合方案'),
+  }),
+  annotations: write,
+}, async ({ branchIds, branchLabel }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (!threadId) throw new Error('当前调用没有聊天上下文。')
+  const branches = threadProposalBranches.get(threadId)
+  if (!branches) throw new Error('当前聊天没有可组合的 AI 候选分支。')
+  const selected = [...new Set(branchIds)].map((id) => branches.proposals.find((item) => item.branchId === id))
+  if (selected.some((item) => !item?.canvasPatch)) throw new Error('只能组合同一组中的增量 Canvas Patch 候选。')
+  const proposals = selected as ThreadDiagramProposal[]
+  const composed = composeCanvasSubgraphPatches(proposals.map((item) => item.canvasPatch!))
+  if (composed.conflicts.length) {
+    throw new Error(`这些候选不能安全组合：${composed.conflicts.slice(0, 12).join('、')}${composed.conflicts.length > 12 ? '…' : ''}`)
+  }
+  const base = parseCanvasScene(proposals[0].baseSource)
+  const result = buildCanvasSubgraphPatch(base, composed.patch)
+  const source = serializeCanvasScene(result.scene)
+  const proposalInput: ThreadDiagramProposal = {
+    workspacePath: branches.workspacePath,
+    path: branches.path,
+    source,
+    baseSource: proposals[0].baseSource,
+    reason: `组合：${proposals.map((item) => item.branchLabel ?? item.reason ?? '候选').join(' + ')}`,
+    baseModifiedAt: branches.baseModifiedAt,
+    updatedAt: new Date().toISOString(),
+    scopeElementIds: composed.patch.scopeElementIds,
+    newElementIds: result.addedElementIds,
+    impactElementIds: result.impactElementIds,
+    automaticElementIds: result.automaticElementIds,
+    canvasPatch: composed.patch,
+    patchSummary: {
+      updated: result.changedElementIds.length,
+      added: result.addedElementIds.length,
+      removed: result.removedElementIds.length,
+      layout: composed.patch.layout ?? 'preserve',
+    },
+  }
+  const proposal = setThreadProposalBranch(threadId, proposalInput, branchLabel)
+  const store = await DiagramStore.open(proposal.workspacePath)
+  const current = await store.get(proposal.path)
+  const before = { ...current, source: proposal.baseSource, modifiedAt: proposal.baseModifiedAt }
+  markThreadDiagram(extra._meta, proposal.path, result.impactElementIds.filter((id) => result.scene.elements.find((item) => item.id === id)?.type !== 'arrow'))
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram-proposal-source', path: proposal.path, source: proposal.source }) }],
+    structuredContent: {
+      kind: 'diagram-proposal-source',
+      workspacePath: store.workspacePath,
+      proposal: proposalSummary(proposal),
+      before,
+      candidateSource: proposal.source,
+      branchSet: proposalBranchSummaries(threadId),
+    },
+  }
+})
+
 server.registerTool('diagram.applyProposal', {
   title: 'Apply diagram proposal',
   description: 'Internal app bridge for accepting the pending Diagram proposal after user review. Canvas proposals may pass elementIds to apply only selected nodes/links while preserving the rest of the current document.',
@@ -1123,12 +1186,14 @@ server.registerTool('diagram.applyProposal', {
   let historyEntryId: string | undefined
   let historyRecorded = false
   if (proposal.canvasPatch) {
+    const historyStore = new CanvasPatchHistoryStore(store.workspacePath)
+    const previousHistory = await historyStore.list(proposal.path, 200).catch(() => [])
     const declaredElementIds = [
       ...(proposal.canvasPatch.updates ?? []).map((item) => item.id),
       ...(proposal.canvasPatch.adds ?? []).map((item) => item.id),
       ...(proposal.canvasPatch.removeIds ?? []),
     ]
-    const entry = buildCanvasPatchHistoryEntry({
+    const draftEntry = buildCanvasPatchHistoryEntry({
       workspacePath: store.workspacePath,
       path: proposal.path,
       before: parseCanvasScene(baseSource),
@@ -1146,9 +1211,10 @@ server.registerTool('diagram.applyProposal', {
       proposalBranchLabel: proposal.branchLabel,
       proposalBranchGroupId: proposal.branchGroupId,
     })
+    const entry = { ...draftEntry, dependsOnIds: inferCanvasPatchDependencies(draftEntry, previousHistory) }
     if (entry.changes.length) {
       historyEntryId = entry.id
-      historyRecorded = await new CanvasPatchHistoryStore(store.workspacePath).appendApply(entry).then(() => true).catch(() => false)
+      historyRecorded = await historyStore.appendApply(entry).then(() => true).catch(() => false)
     }
   }
   clearThreadProposals(threadId)
@@ -1197,11 +1263,51 @@ server.registerTool('diagram.patchHistory', {
   const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
   const history = new CanvasPatchHistoryStore(store.workspacePath)
   const entries = await history.list(targetPath, limit)
+  const graph = buildCanvasPatchGraph(entries)
   const payload = {
     kind: 'diagram-patch-history',
     workspacePath: store.workspacePath,
     path: targetPath,
-    entries: entries.map(patchHistorySummary),
+    entries: entries.map((entry) => patchHistorySummary(entry, graph.get(entry.id))),
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
+server.registerTool('diagram.patchGraph', {
+  title: 'Read Canvas AI patch dependency graph',
+  description: 'Read the dependency DAG of applied Canvas AI patches without loading full Canvas documents or element snapshots. Useful for understanding patch ancestry, downstream impact and safe chain operations.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(200).default(100),
+  }),
+  annotations: readonly,
+}, async ({ workspacePath, path: diagramPath, limit }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const targetPath = diagramPath ?? (threadId ? threadSelection.get(threadId)?.path : undefined)
+  if (!targetPath) throw new Error('当前聊天没有活动 Canvas 图，请指定 path。')
+  const entries = await new CanvasPatchHistoryStore(store.workspacePath).list(targetPath, limit)
+  const graph = buildCanvasPatchGraph(entries)
+  const payload = {
+    kind: 'diagram-patch-graph',
+    workspacePath: store.workspacePath,
+    path: targetPath,
+    roots: entries.filter((entry) => !(graph.get(entry.id)?.dependsOnIds.length)).map((entry) => entry.id),
+    nodes: entries.map((entry) => ({
+      id: entry.id,
+      appliedAt: entry.appliedAt,
+      reason: entry.reason,
+      branchLabel: entry.proposalBranchLabel,
+      active: !entry.undoneAt,
+      dependsOnIds: graph.get(entry.id)?.dependsOnIds ?? [],
+      dependentIds: graph.get(entry.id)?.dependentIds ?? [],
+      depth: graph.get(entry.id)?.depth ?? 0,
+      changedElementIds: entry.changes.map((change) => change.id),
+    })),
   }
   return {
     content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
@@ -1225,6 +1331,10 @@ server.registerTool('diagram.undoPatchHistory', {
   const entry = await history.get(historyId)
   if (!entry) throw new Error('找不到这条 AI 修改历史，可能已被清理或属于其他工作空间。')
   if (entry.undoneAt) throw new Error('这条 AI 修改已经撤销过。')
+  const related = await history.list(entry.path, 200)
+  const activeDependents = canvasPatchDependentClosure(related, entry.id)
+    .filter((id) => id !== entry.id && !related.find((item) => item.id === id)?.undoneAt)
+  if (activeDependents.length) throw new Error(`这次修改仍有 ${activeDependents.length} 个活跃下游 Patch，不能单独撤销；请使用“撤销依赖链”。`)
   const current = await store.get(entry.path)
   if (current.type !== 'canvas') throw new Error('AI Patch 历史撤销只支持 Canvas 图。')
   const result = undoCanvasPatchHistory(parseCanvasScene(current.source), entry)
@@ -1252,6 +1362,62 @@ server.registerTool('diagram.undoPatchHistory', {
   }
 })
 
+server.registerTool('diagram.undoPatchHistoryChain', {
+  title: 'Undo AI Canvas patch dependency chain',
+  description: 'Internal app bridge for safely undoing one active Canvas patch and all of its active dependent patches in reverse dependency order.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    historyId: z.string().min(1),
+  }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, historyId }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const history = new CanvasPatchHistoryStore(store.workspacePath)
+  const target = await history.get(historyId)
+  if (!target) throw new Error('找不到这条 AI 修改历史。')
+  if (target.undoneAt) throw new Error('这条 AI 修改已经撤销过。')
+  const entries = await history.list(target.path, 200)
+  const closure = new Set(canvasPatchDependentClosure(entries, historyId))
+  const graph = buildCanvasPatchGraph(entries)
+  const ordered = entries
+    .filter((entry) => closure.has(entry.id) && !entry.undoneAt)
+    .sort((left, right) => (graph.get(right.id)?.depth ?? 0) - (graph.get(left.id)?.depth ?? 0) || right.appliedAt.localeCompare(left.appliedAt))
+  if (!ordered.length) throw new Error('当前没有可撤销的 Patch 依赖链。')
+  const current = await store.get(target.path)
+  if (current.type !== 'canvas') throw new Error('AI Patch 依赖链撤销只支持 Canvas 图。')
+  let scene = parseCanvasScene(current.source)
+  const reverted = new Set<string>()
+  for (const entry of ordered) {
+    const result = undoCanvasPatchHistory(scene, entry)
+    scene = result.scene
+    result.revertedElementIds.forEach((id) => reverted.add(id))
+  }
+  const diagram = await store.update(target.path, serializeCanvasScene(scene), current.modifiedAt)
+  await history.appendUndoBatch(ordered.map((entry) => ({
+      path: entry.path,
+      targetId: entry.id,
+      beforeModifiedAt: current.modifiedAt,
+      afterModifiedAt: diagram.modifiedAt,
+    })))
+  const byId = new Map(scene.elements.map((item) => [item.id, item]))
+  const focusNodeIds = [...reverted].filter((id) => byId.get(id)?.type !== 'arrow')
+  markThreadDiagram(extra._meta, diagram.path, focusNodeIds, undefined, 'history-undo', diagram.modifiedAt)
+  const payload = {
+    kind: 'diagram-patch-history-chain-undo',
+    workspacePath: store.workspacePath,
+    diagram,
+    rootHistoryId: historyId,
+    historyIds: ordered.map((entry) => entry.id),
+    revertedElementIds: [...reverted],
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
 server.registerTool('diagram.redoPatchHistory', {
   title: 'Redo AI Canvas patch',
   description: 'Internal app bridge for safely reapplying one previously undone incremental Canvas patch. Reapplies only fields owned by that transaction and refuses to overwrite later edits to the same fields.',
@@ -1268,6 +1434,9 @@ server.registerTool('diagram.redoPatchHistory', {
   const entry = await history.get(historyId)
   if (!entry) throw new Error('找不到这条 AI 修改历史，可能已被清理或属于其他工作空间。')
   if (!entry.undoneAt) throw new Error('这条 AI 修改当前不是已撤销状态，不能重做。')
+  const related = await history.list(entry.path, 200)
+  const inactiveDependencies = (entry.dependsOnIds ?? []).filter((id) => related.find((item) => item.id === id)?.undoneAt)
+  if (inactiveDependencies.length) throw new Error(`这次修改依赖 ${inactiveDependencies.length} 个仍处于撤销状态的上游 Patch，请先重做上游依赖。`)
   const current = await store.get(entry.path)
   if (current.type !== 'canvas') throw new Error('AI Patch 历史重做只支持 Canvas 图。')
   const result = redoCanvasPatchHistory(parseCanvasScene(current.source), entry)
@@ -1288,6 +1457,68 @@ server.registerTool('diagram.redoPatchHistory', {
     historyId: entry.id,
     redoEventId: redoEvent.id,
     reappliedElementIds: result.reappliedElementIds,
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
+server.registerTool('diagram.redoPatchHistoryChain', {
+  title: 'Redo AI Canvas patch dependency chain',
+  description: 'Internal app bridge for safely reapplying one undone Canvas patch and its undone dependent chain in dependency order.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    historyId: z.string().min(1),
+  }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, historyId }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  const store = await resolveStore(workspacePath, threadId)
+  const history = new CanvasPatchHistoryStore(store.workspacePath)
+  const target = await history.get(historyId)
+  if (!target) throw new Error('找不到这条 AI 修改历史。')
+  if (!target.undoneAt) throw new Error('这条 AI 修改当前不是已撤销状态。')
+  const entries = await history.list(target.path, 200)
+  const closure = new Set(canvasPatchDependentClosure(entries, historyId))
+  const graph = buildCanvasPatchGraph(entries)
+  const ordered = entries
+    .filter((entry) => closure.has(entry.id) && Boolean(entry.undoneAt))
+    .sort((left, right) => (graph.get(left.id)?.depth ?? 0) - (graph.get(right.id)?.depth ?? 0) || left.appliedAt.localeCompare(right.appliedAt))
+  if (!ordered.length) throw new Error('当前没有可重做的 Patch 依赖链。')
+  const availableDependencies = new Set(entries.filter((entry) => !entry.undoneAt).map((entry) => entry.id))
+  for (const entry of ordered) {
+    const missing = (entry.dependsOnIds ?? []).filter((id) => !availableDependencies.has(id))
+    if (missing.length) throw new Error(`无法重做依赖链：Patch ${entry.id} 仍依赖 ${missing.length} 个未恢复的上游 Patch。请先从更上游的根节点重做。`)
+    availableDependencies.add(entry.id)
+  }
+  const current = await store.get(target.path)
+  if (current.type !== 'canvas') throw new Error('AI Patch 依赖链重做只支持 Canvas 图。')
+  let scene = parseCanvasScene(current.source)
+  const reapplied = new Set<string>()
+  for (const entry of ordered) {
+    const result = redoCanvasPatchHistory(scene, entry)
+    scene = result.scene
+    result.reappliedElementIds.forEach((id) => reapplied.add(id))
+  }
+  const diagram = await store.update(target.path, serializeCanvasScene(scene), current.modifiedAt)
+  await history.appendRedoBatch(ordered.map((entry) => ({
+      path: entry.path,
+      targetId: entry.id,
+      beforeModifiedAt: current.modifiedAt,
+      afterModifiedAt: diagram.modifiedAt,
+    })))
+  const byId = new Map(scene.elements.map((item) => [item.id, item]))
+  const focusNodeIds = [...reapplied].filter((id) => byId.get(id)?.type !== 'arrow')
+  markThreadDiagram(extra._meta, diagram.path, focusNodeIds, undefined, 'history-redo', diagram.modifiedAt)
+  const payload = {
+    kind: 'diagram-patch-history-chain-redo',
+    workspacePath: store.workspacePath,
+    diagram,
+    rootHistoryId: historyId,
+    historyIds: ordered.map((entry) => entry.id),
+    reappliedElementIds: [...reapplied],
   }
   return {
     content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
@@ -1708,7 +1939,7 @@ function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
   }
 }
 
-function patchHistorySummary(entry: CanvasPatchHistorySummary) {
+function patchHistorySummary(entry: CanvasPatchHistorySummary, graphNode?: { dependsOnIds: string[]; dependentIds: string[]; depth: number }) {
   return {
     id: entry.id,
     path: entry.path,
@@ -1723,10 +1954,15 @@ function patchHistorySummary(entry: CanvasPatchHistorySummary) {
     proposalBranchId: entry.proposalBranchId,
     proposalBranchLabel: entry.proposalBranchLabel,
     proposalBranchGroupId: entry.proposalBranchGroupId,
+    dependsOnIds: graphNode?.dependsOnIds ?? entry.dependsOnIds ?? [],
+    dependentIds: graphNode?.dependentIds ?? [],
+    dependencyDepth: graphNode?.depth ?? 0,
     undoneAt: entry.undoneAt,
     undoEventId: entry.undoEventId,
+    undoBatchId: entry.undoBatchId,
     redoneAt: entry.redoneAt,
     redoEventId: entry.redoEventId,
+    redoBatchId: entry.redoBatchId,
     counts: {
       updated: entry.changes.filter((item) => item.kind === 'update').length,
       added: entry.changes.filter((item) => item.kind === 'add').length,

@@ -67,6 +67,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       '5. 合理使用 C4 person/software-system/container/component 语义，以及 icon 标明运行角色、stencil 标明真实技术栈；不要为了装饰给所有节点重复相同图标或技术标签。',
       '6. diagram.proposeSubgraphPatch 的 layout 默认 preserve；只有用户明确要求整理/重排当前局部结构时才用 local。服务端会保留未声明的人工布局和 Label，并自动计算受影响关系。不要把 Mermaid 语法写进自由画布文件。Proposal 不会直接覆盖文件，等待用户在右侧 Diagram 接受或拒绝。',
       '7. 默认只提交一个候选。只有用户明确要求多个方案、A/B 对比或备选实现时，才对同一 base revision 分别调用 diagram.proposeSubgraphPatch，并为每个候选设置不同 branchLabel（例如“保守方案”“重构方案”）；不要为了显得丰富自动制造分支。',
+      '8. 如果用户随后明确要求把多个兼容候选合并，优先使用 diagram.composeProposalBranches 和 branchSet 中的 branch id，让服务端检查字段写冲突并生成新的组合候选；不要把互斥 A/B 方案自动合并，也不要自行用 last-write-wins 拼 Patch。',
     ].join('\n')
   }
   return [
@@ -100,5 +101,6 @@ export function buildSubgraphModificationPrompt(workspacePath: string, diagram: 
     '5. layout 默认 preserve；只有用户明确要求当前子图重新布局/整理时才使用 local。服务端会计算关系重路由、删除节点的连带关系等自动影响，并在 Proposal 中单独显示。',
     '6. 不要直接调用 diagram.update，也不要优先使用旧的 diagram.proposeSubgraphUpdate。等待用户在右侧 Diagram 审查并接受/拒绝。',
     '7. 默认只提交一个候选。只有用户明确要求多个方案、A/B 对比或备选实现时，才在相同 base revision 上分别提交带不同 branchLabel 的 diagram.proposeSubgraphPatch，让右侧进行候选对比；不要自动生成无意义分支。',
+    '8. 用户明确要求组合多个兼容候选时，使用 diagram.composeProposalBranches；冲突字段交给服务端拒绝，不要自行选择某个候选值覆盖另一个。',
   ].join('\n')
 }

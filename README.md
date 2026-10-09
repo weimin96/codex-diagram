@@ -74,9 +74,12 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 - 增量 Canvas Proposal 的部分接受使用 element-id 语义并做依赖校验：新增关系必须同时接受缺失的新端点；删除节点会安全清理悬空关系；架构节点几何只应用一部分时，会根据最终节点位置重新计算必要关系路由，避免留下指向旧位置的折点
 - Proposal 出现后仍可继续手工编辑 Canvas：接受增量 Proposal 时，插件会先保存本地 dirty 草稿，再通过字段级 rebase 合并；整图 Proposal 无法安全合并本地草稿时会阻止覆盖
 - 当用户明确要求多个方案 / A-B 对比时，`diagram.proposeSubgraphPatch` 可通过 `branchLabel` 在同一 base revision 上保留最多 6 个候选；右侧 Proposal 面板会并排显示每个方案的修改/新增/删除、自动影响以及独有/共同影响元素，切换候选不会写文件，接受时只应用当前方案
+- 多个未应用候选可以通过 `diagram.composeProposalBranches` 做服务端组合：同一元素的不同字段可以合并，相同字段写入不同值、更新/删除冲突等会直接拒绝，不使用 last-write-wins；组合结果本身仍是新的可审查 Proposal，不会直接写 Canvas
 - 已应用的增量 AI Patch 会进入当前图的“历史”时间线，记录修改原因、直接修改、自动影响、部分接受和并发 Rebase 状态；历史数据保存在用户本机的 `~/.codex-diagram/history/`，不会向项目仓库写入额外文件
+- AI Patch History 会按字段和结构因果生成 Patch DAG，而不是简单把所有历史串成链；后续 Patch 修改前一 Patch 拥有的字段、引用其新增节点等才建立 dependency，不同子图保持并行根/分支。右侧时间线显示 roots / edges / 上下游关系，Codex 也可通过 `diagram.patchGraph` 读取同一依赖图
 - “撤销这次修改”按子图事务做反向三方合并：只恢复该 AI Patch 真正拥有的字段，保留后来对其它字段的人工修改；如果同一字段后来又被编辑、AI 新增节点已被后续关系依赖等，则拒绝危险撤销并明确提示冲突
 - 已撤销的 AI Patch 可以安全 Redo；Redo 与 Undo 使用同一套字段所有权和结构依赖检查，后续无关字段修改会保留，同字段修改、新关系依赖或 ID 复用会阻止覆盖。接受 A/B 候选后，Timeline 也会保留实际采用的分支标签
+- 存在活跃下游依赖时不允许单独撤销上游 Patch；Timeline 会提供“撤销依赖链”，按逆拓扑顺序安全撤销整个下游闭包，并可按正拓扑顺序“重做依赖链”。链级 Undo/Redo 使用 batch id 审计，不会把多条事务误看成互不相关的单次操作
 - AI Patch History 只持久化受影响元素的 before/after 快照，不复制整张 Canvas；5000 节点画布中单元素事务仍保持稀疏历史记录
 - 右侧可直接“调整选中”，该操作会显式携带当前 element ids 和选区结构，让 Codex 只修改当前选区，不需要常驻聊天上下文
 - Codex / IDE 外部更新图表后会保留修改前快照，可在右侧“查看变更”，并一键恢复旧版
@@ -149,11 +152,15 @@ pnpm plugin:install:desktop
 | `diagram.proposeSubgraphUpdate` | 兼容旧版完整 Canvas 子图候选修改，不再作为首选 |
 | `diagram.proposal` | UI 内部读取当前聊天待审查 Proposal |
 | `diagram.selectProposalBranch` | UI 内部切换同一 base revision 上的 AI A/B Patch 候选，不写入图表文件 |
+| `diagram.composeProposalBranches` | 将同一基线上的兼容 AI Patch 候选组合成新的可审查候选；字段冲突直接拒绝 |
 | `diagram.applyProposal` | UI 内部接受 Proposal；Canvas 可指定 element ids 部分应用，增量 patch 支持字段级并发 rebase 与候选漂移二次审查 |
 | `diagram.dismissProposal` | UI 内部拒绝 Proposal，不修改文件 |
 | `diagram.patchHistory` | UI 内部读取当前 Canvas 已应用的 AI 增量 Patch 时间线 |
+| `diagram.patchGraph` | 读取当前 Canvas AI Patch 依赖 DAG、上下游关系与活跃状态，不加载完整 Canvas |
 | `diagram.undoPatchHistory` | UI 内部安全撤销一次 AI Patch；只反转该事务拥有的字段并检测后续冲突 |
+| `diagram.undoPatchHistoryChain` | UI 内部按逆拓扑顺序安全撤销一个 Patch 及其活跃下游依赖链 |
 | `diagram.redoPatchHistory` | UI 内部安全重做一次已撤销 AI Patch；保留后续无关修改并拒绝覆盖同字段/新依赖 |
+| `diagram.redoPatchHistoryChain` | UI 内部按正拓扑顺序安全重做一条已撤销 Patch 依赖链 |
 | `diagram.rename` | 重命名图表 |
 | `diagram.duplicate` | 复制图表 |
 | `diagram.delete` | 删除图表 |

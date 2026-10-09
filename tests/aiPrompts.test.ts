@@ -45,6 +45,7 @@ test('prefers incremental Canvas patches for finite conversational edits', () =>
   assert.match(prompt, /layout 默认 preserve/)
   assert.match(prompt, /branchLabel/)
   assert.match(prompt, /只有用户明确要求多个方案/)
+  assert.match(prompt, /diagram\.composeProposalBranches/)
 })
 
 test('subgraph modification prompt sends deltas instead of a full Canvas document', () => {
@@ -62,4 +63,5 @@ test('subgraph modification prompt sends deltas instead of a full Canvas documen
   assert.match(prompt, /不要生成或传回完整 Canvas JSON/)
   assert.match(prompt, /新增 node\/note 可以省略 x\/y/)
   assert.match(prompt, /branchLabel/)
+  assert.match(prompt, /diagram\.composeProposalBranches/)
 })

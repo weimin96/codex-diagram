@@ -137,12 +137,35 @@ interface DiagramPatchHistoryEntry {
   proposalBranchId?: string
   proposalBranchLabel?: string
   proposalBranchGroupId?: string
+  dependsOnIds: string[]
+  dependentIds: string[]
+  dependencyDepth: number
   undoneAt?: string
   undoEventId?: string
+  undoBatchId?: string
   redoneAt?: string
   redoEventId?: string
+  redoBatchId?: string
   counts: { updated: number; added: number; removed: number; automatic: number }
   changes: DiagramPatchHistoryChange[]
+}
+
+interface DiagramPatchHistoryChainUndoResult {
+  kind: 'diagram-patch-history-chain-undo'
+  workspacePath: string
+  diagram: DiagramDocument
+  rootHistoryId: string
+  historyIds: string[]
+  revertedElementIds: string[]
+}
+
+interface DiagramPatchHistoryChainRedoResult {
+  kind: 'diagram-patch-history-chain-redo'
+  workspacePath: string
+  diagram: DiagramDocument
+  rootHistoryId: string
+  historyIds: string[]
+  reappliedElementIds: string[]
 }
 
 interface DiagramPatchHistoryResult {
@@ -1002,6 +1025,33 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function composeProposalBranches(branchIds: string[]) {
+    if (!aiProposal || saving || branchIds.length < 2) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await callTool<DiagramProposalSourceResult>('diagram.composeProposalBranches', {
+        branchIds,
+        branchLabel: '组合方案',
+      })
+      const after: DiagramDocument = { ...result.before, source: result.candidateSource }
+      setAiProposal({ summary: result.proposal, before: result.before, after })
+      setProposalBranchSet(result.branchSet ?? null)
+      setProposalReviewOpen(true)
+      if (result.proposal.impactElementIds?.length && result.before.type === 'canvas') {
+        const candidate = parseCanvasScene(result.candidateSource)
+        const nodeIds = new Set(candidate.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.proposal.impactElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `proposal-compose:${Date.now()}` })
+      }
+      setNotice(`已生成组合候选 · ${branchIds.length} 个 Patch 合并`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function loadPatchHistory(diagramPath = selected?.path) {
     if (!diagramPath) return
     const requestSeq = ++patchHistoryRequestSeq.current
@@ -1091,6 +1141,70 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function undoPatchHistoryChain(entry: DiagramPatchHistoryEntry) {
+    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId || patchHistoryRedoingId) return
+    if (dirty && externalChange) {
+      setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
+      return
+    }
+    setSaving(true)
+    setPatchHistoryUndoingId(entry.id)
+    setError(null)
+    try {
+      let beforeSource = source
+      if (dirty) {
+        const savedDraft = await callTool<DiagramResult>('diagram.update', {
+          workspacePath,
+          path: selected.path,
+          source,
+          expectedModifiedAt: selected.modifiedAt,
+          animate: false,
+        })
+        setSelected(savedDraft.diagram)
+        setSource(savedDraft.diagram.source)
+        beforeSource = savedDraft.diagram.source
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
+        })
+      }
+      const result = await callTool<DiagramPatchHistoryChainUndoResult>('diagram.undoPatchHistoryChain', {
+        workspacePath,
+        historyId: entry.id,
+      })
+      if (isThread && result.diagram.type === 'canvas') {
+        setCanvasPlayback({
+          key: `history-chain-undo:${entry.id}:${result.diagram.modifiedAt}`,
+          path: result.diagram.path,
+          mode: 'update',
+          fromSource: beforeSource,
+          label: `正在撤销 ${result.historyIds.length} 个依赖 Patch`,
+        })
+      }
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      if (result.diagram.type === 'canvas' && result.revertedElementIds.length) {
+        const restored = parseCanvasScene(result.diagram.source)
+        const nodeIds = new Set(restored.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.revertedElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `history-chain-focus:${entry.id}:${result.diagram.modifiedAt}` })
+      }
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      await loadPatchHistory(result.diagram.path)
+      setNotice(`已撤销依赖链 · ${result.historyIds.length} 个 Patch · ${result.revertedElementIds.length} 个元素恢复`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+      setPatchHistoryUndoingId(null)
+    }
+  }
+
   async function redoPatchHistory(entry: DiagramPatchHistoryEntry) {
     if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId || patchHistoryRedoingId) return
     if (dirty && externalChange) {
@@ -1147,6 +1261,70 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       })
       await loadPatchHistory(result.diagram.path)
       setNotice(`已重做这次 AI 修改 · ${result.reappliedElementIds.length} 个元素重新应用`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+      setPatchHistoryRedoingId(null)
+    }
+  }
+
+  async function redoPatchHistoryChain(entry: DiagramPatchHistoryEntry) {
+    if (!selected || selected.path !== entry.path || saving || patchHistoryUndoingId || patchHistoryRedoingId) return
+    if (dirty && externalChange) {
+      setError('当前画布同时存在未保存修改和外部更新，请先处理外部冲突。')
+      return
+    }
+    setSaving(true)
+    setPatchHistoryRedoingId(entry.id)
+    setError(null)
+    try {
+      let beforeSource = source
+      if (dirty) {
+        const savedDraft = await callTool<DiagramResult>('diagram.update', {
+          workspacePath,
+          path: selected.path,
+          source,
+          expectedModifiedAt: selected.modifiedAt,
+          animate: false,
+        })
+        setSelected(savedDraft.diagram)
+        setSource(savedDraft.diagram.source)
+        beforeSource = savedDraft.diagram.source
+        setExternalChange(false)
+        onSnapshot({
+          ...snapshot,
+          diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
+        })
+      }
+      const result = await callTool<DiagramPatchHistoryChainRedoResult>('diagram.redoPatchHistoryChain', {
+        workspacePath,
+        historyId: entry.id,
+      })
+      if (isThread && result.diagram.type === 'canvas') {
+        setCanvasPlayback({
+          key: `history-chain-redo:${entry.id}:${result.diagram.modifiedAt}`,
+          path: result.diagram.path,
+          mode: 'update',
+          fromSource: beforeSource,
+          label: `正在重做 ${result.historyIds.length} 个依赖 Patch`,
+        })
+      }
+      setSelected(result.diagram)
+      setSource(result.diagram.source)
+      setExternalChange(false)
+      if (result.diagram.type === 'canvas' && result.reappliedElementIds.length) {
+        const reapplied = parseCanvasScene(result.diagram.source)
+        const nodeIds = new Set(reapplied.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
+        const focusIds = result.reappliedElementIds.filter((id) => nodeIds.has(id))
+        if (focusIds.length) setCanvasFocus({ ids: focusIds, key: `history-chain-redo-focus:${entry.id}:${result.diagram.modifiedAt}` })
+      }
+      onSnapshot({
+        ...snapshot,
+        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+      })
+      await loadPatchHistory(result.diagram.path)
+      setNotice(`已重做依赖链 · ${result.historyIds.length} 个 Patch · ${result.reappliedElementIds.length} 个元素重新应用`)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -1897,6 +2075,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onAccept={(elementIds) => void acceptAiProposal(elementIds)}
             onReject={() => void dismissAiProposal()}
             onSelectBranch={(branchId) => void selectProposalBranch(branchId)}
+            onComposeBranches={(branchIds) => void composeProposalBranches(branchIds)}
           />
         ) : null}
         {selected?.type === 'canvas' && patchHistoryOpen ? (
@@ -1909,7 +2088,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             onClose={() => setPatchHistoryOpen(false)}
             onRefresh={() => void loadPatchHistory(selected.path)}
             onUndo={(entry) => void undoPatchHistory(entry)}
+            onUndoChain={(entry) => void undoPatchHistoryChain(entry)}
             onRedo={(entry) => void redoPatchHistory(entry)}
+            onRedoChain={(entry) => void redoPatchHistoryChain(entry)}
             onFocus={(ids) => {
               const live = parseCanvasScene(source)
               const nodeIds = new Set(live.elements.filter((item) => item.type !== 'arrow').map((item) => item.id))
@@ -1957,7 +2138,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   )
 }
 
-function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClose, onRefresh, onUndo, onRedo, onFocus }: {
+function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClose, onRefresh, onUndo, onUndoChain, onRedo, onRedoChain, onFocus }: {
   path: string
   entries: DiagramPatchHistoryEntry[]
   loading: boolean
@@ -1966,9 +2147,58 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClo
   onClose: () => void
   onRefresh: () => void
   onUndo: (entry: DiagramPatchHistoryEntry) => void
+  onUndoChain: (entry: DiagramPatchHistoryEntry) => void
   onRedo: (entry: DiagramPatchHistoryEntry) => void
+  onRedoChain: (entry: DiagramPatchHistoryEntry) => void
   onFocus: (ids: string[]) => void
 }) {
+  const activeDependentClosure = useMemo(() => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]))
+    const result = new Map<string, string[]>()
+    const collect = (rootId: string) => {
+      const seen = new Set<string>()
+      const visit = (id: string) => {
+        const item = byId.get(id)
+        if (!item) return
+        for (const childId of item.dependentIds ?? []) {
+          const child = byId.get(childId)
+          if (!child || child.undoneAt || seen.has(childId)) continue
+          seen.add(childId)
+          visit(childId)
+        }
+      }
+      visit(rootId)
+      return [...seen]
+    }
+    for (const entry of entries) result.set(entry.id, collect(entry.id))
+    return result
+  }, [entries])
+  const undoneDependentClosure = useMemo(() => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]))
+    const result = new Map<string, string[]>()
+    const collect = (rootId: string) => {
+      const seen = new Set<string>()
+      const visit = (id: string) => {
+        const item = byId.get(id)
+        if (!item) return
+        for (const childId of item.dependentIds ?? []) {
+          const child = byId.get(childId)
+          if (!child || !child.undoneAt || seen.has(childId)) continue
+          seen.add(childId)
+          visit(childId)
+        }
+      }
+      visit(rootId)
+      return [...seen]
+    }
+    for (const entry of entries) result.set(entry.id, collect(entry.id))
+    return result
+  }, [entries])
+  const graphStats = useMemo(() => ({
+    roots: entries.filter((entry) => !entry.dependsOnIds?.length).length,
+    edges: entries.reduce((sum, entry) => sum + (entry.dependsOnIds?.length ?? 0), 0),
+    active: entries.filter((entry) => !entry.undoneAt).length,
+  }), [entries])
   return (
     <aside className="change-review-panel patch-history-panel" aria-label="AI 修改历史">
       <div className="change-review-head">
@@ -1983,11 +2213,26 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClo
         </div>
       </div>
       <div className="change-review-path">{path}</div>
+      {entries.length ? (
+        <div className="patch-history-graph-summary">
+          <strong>PATCH DAG</strong>
+          <span>{graphStats.roots} roots</span>
+          <span>{graphStats.edges} edges</span>
+          <span>{graphStats.active} active</span>
+        </div>
+      ) : null}
       <div className="patch-history-body">
         {loading && entries.length === 0 ? <div className="patch-history-empty">正在读取本地 AI 修改历史…</div> : null}
         {!loading && entries.length === 0 ? <div className="patch-history-empty">这张图还没有已应用的增量 AI 修改。</div> : null}
-        {entries.map((entry) => (
-          <article key={entry.id} className={`patch-history-entry${entry.undoneAt ? ' is-undone' : ''}`}>
+        {entries.map((entry) => {
+          const activeDependents = activeDependentClosure.get(entry.id) ?? []
+          const undoneDependents = undoneDependentClosure.get(entry.id) ?? []
+          return (
+          <article
+            key={entry.id}
+            className={`patch-history-entry${entry.undoneAt ? ' is-undone' : ''}`}
+            style={{ '--patch-depth': Math.min(3, entry.dependencyDepth ?? 0) } as CSSProperties}
+          >
             <div className="patch-history-entry-head">
               <div>
                 <time dateTime={entry.appliedAt}>{formatPatchHistoryTime(entry.appliedAt)}</time>
@@ -2000,8 +2245,17 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClo
                 <span>{entry.layout === 'local' ? '局部布局' : '保持布局'}</span>
                 {entry.undoneAt ? <span className="is-undone">已撤销</span> : null}
                 {entry.redoneAt ? <span>已重做</span> : null}
+                {entry.undoBatchId ? <span>链撤销</span> : null}
+                {entry.redoBatchId ? <span>链重做</span> : null}
               </div>
             </div>
+            {(entry.dependsOnIds?.length || entry.dependentIds?.length) ? (
+              <div className="patch-history-graph-meta">
+                <span>Patch DAG</span>
+                {entry.dependsOnIds?.length ? <span>↑ {entry.dependsOnIds.length} 上游</span> : <span>根节点</span>}
+                {activeDependents.length ? <strong>↓ {activeDependents.length} 活跃下游</strong> : null}
+              </div>
+            ) : null}
             <div className="patch-history-counts">
               <span><strong>{entry.counts.updated}</strong> 修改</span>
               <span><strong>{entry.counts.added}</strong> 新增</span>
@@ -2024,18 +2278,31 @@ function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId, onClo
               {entry.undoneAt ? (
                 <>
                   <span>撤销于 {formatPatchHistoryTime(entry.undoneAt)}</span>
-                  <button type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onRedo(entry)}>
-                    {redoingId === entry.id ? '重做中…' : '重做这次修改'}
-                  </button>
+                  {undoneDependents.length ? (
+                    <button type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onRedoChain(entry)}>
+                      {redoingId === entry.id ? '重做链中…' : `重做依赖链 (${undoneDependents.length + 1})`}
+                    </button>
+                  ) : (
+                    <button type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onRedo(entry)}>
+                      {redoingId === entry.id ? '重做中…' : '重做这次修改'}
+                    </button>
+                  )}
                 </>
               ) : (
-                <button className="is-danger" type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onUndo(entry)}>
-                  {undoingId === entry.id ? '撤销中…' : '撤销这次修改'}
-                </button>
+                activeDependents.length ? (
+                  <button className="is-danger" type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onUndoChain(entry)}>
+                    {undoingId === entry.id ? '撤销链中…' : `撤销依赖链 (${activeDependents.length + 1})`}
+                  </button>
+                ) : (
+                  <button className="is-danger" type="button" disabled={Boolean(undoingId || redoingId)} onClick={() => onUndo(entry)}>
+                    {undoingId === entry.id ? '撤销中…' : '撤销这次修改'}
+                  </button>
+                )
               )}
             </div>
           </article>
-        ))}
+          )
+        })}
       </div>
     </aside>
   )
@@ -2143,7 +2410,7 @@ function ChangeReviewPanel({ before, after, restoring, onClose, onRestore }: {
   )
 }
 
-function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, rebaseable, patchSummary, branches, activeBranchId, applying, onClose, onAccept, onReject, onSelectBranch }: {
+function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElementIds, impactElementIds, automaticElementIds, rebaseable, patchSummary, branches, activeBranchId, applying, onClose, onAccept, onReject, onSelectBranch, onComposeBranches }: {
   before: DiagramDocument
   after: DiagramDocument
   reason?: string
@@ -2160,6 +2427,7 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   onAccept: (elementIds?: string[]) => void
   onReject: () => void
   onSelectBranch: (branchId: string) => void
+  onComposeBranches: (branchIds: string[]) => void
 }) {
   const diff = useMemo(() => buildLineDiff(before.source, after.source), [after.source, before.source])
   const added = diff.filter((line) => line.kind === 'add').length
@@ -2183,9 +2451,14 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
   }, [branches])
   const partialSelectionAllowed = patchSummary?.layout !== 'local'
   const [selectedChangeIds, setSelectedChangeIds] = useState<string[]>([])
+  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([])
   useEffect(() => {
     setSelectedChangeIds(canvasChanges?.map((item) => item.id) ?? [])
   }, [canvasChanges])
+  useEffect(() => {
+    const available = new Set((branches ?? []).flatMap((branch) => branch.branchId ? [branch.branchId] : []))
+    setSelectedBranchIds((current) => current.filter((id) => available.has(id)))
+  }, [branches])
   return (
     <aside className="change-review-panel proposal-review-panel" aria-label="Codex 候选修改">
       <div className="change-review-head">
@@ -2201,28 +2474,39 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
         <div className="proposal-branch-compare" aria-label="AI 候选分支">
           <div className="proposal-branch-head">
             <strong>候选分支</strong>
-            <span>{branches.length} 个方案 · 共享同一基线</span>
+            <div>
+              <span>{branches.length} 个方案 · 共享同一基线</span>
+              <button type="button" disabled={applying || selectedBranchIds.length < 2} onClick={() => onComposeBranches(selectedBranchIds)}>
+                组合选中{selectedBranchIds.length >= 2 ? ` (${selectedBranchIds.length})` : ''}
+              </button>
+            </div>
           </div>
           <div className="proposal-branch-grid">
             {branches.map((branch, index) => (
-              <button
-                key={branch.branchId ?? `${index}`}
-                type="button"
-                className={branch.branchId === activeBranchId ? 'is-active' : ''}
-                disabled={applying || !branch.branchId}
-                onClick={() => branch.branchId && onSelectBranch(branch.branchId)}
-              >
-                <strong>{branch.branchLabel || `方案 ${index + 1}`}</strong>
-                {branch.patchSummary ? (
-                  <span>{branch.patchSummary.updated} 改 · {branch.patchSummary.added} 增 · {branch.patchSummary.removed} 删</span>
-                ) : <span>整图候选</span>}
-                <small>
-                  {branch.branchId && branchComparison.get(branch.branchId)?.unique ? `${branchComparison.get(branch.branchId)!.unique} 独有` : '无独有'}
-                  {branch.branchId && branchComparison.get(branch.branchId)?.shared ? ` · ${branchComparison.get(branch.branchId)!.shared} 共同` : ''}
-                  {branch.automaticElementIds?.length ? ` · ${branch.automaticElementIds.length} 自动` : ''}
-                  {branch.patchSummary?.layout === 'local' ? ' · 局部布局' : ''}
-                </small>
-              </button>
+              <div key={branch.branchId ?? `${index}`} className={`proposal-branch-card${branch.branchId === activeBranchId ? ' is-active' : ''}`}>
+                <label className="proposal-branch-check" title="选择后可与其它兼容候选组合">
+                  <input
+                    type="checkbox"
+                    disabled={applying || !branch.branchId}
+                    checked={Boolean(branch.branchId && selectedBranchIds.includes(branch.branchId))}
+                    onChange={(event) => branch.branchId && setSelectedBranchIds((current) => event.target.checked
+                      ? [...new Set([...current, branch.branchId!])]
+                      : current.filter((id) => id !== branch.branchId))}
+                  />
+                </label>
+                <button type="button" disabled={applying || !branch.branchId} onClick={() => branch.branchId && onSelectBranch(branch.branchId)}>
+                  <strong>{branch.branchLabel || `方案 ${index + 1}`}</strong>
+                  {branch.patchSummary ? (
+                    <span>{branch.patchSummary.updated} 改 · {branch.patchSummary.added} 增 · {branch.patchSummary.removed} 删</span>
+                  ) : <span>整图候选</span>}
+                  <small>
+                    {branch.branchId && branchComparison.get(branch.branchId)?.unique ? `${branchComparison.get(branch.branchId)!.unique} 独有` : '无独有'}
+                    {branch.branchId && branchComparison.get(branch.branchId)?.shared ? ` · ${branchComparison.get(branch.branchId)!.shared} 共同` : ''}
+                    {branch.automaticElementIds?.length ? ` · ${branch.automaticElementIds.length} 自动` : ''}
+                    {branch.patchSummary?.layout === 'local' ? ' · 局部布局' : ''}
+                  </small>
+                </button>
+              </div>
             ))}
           </div>
         </div>

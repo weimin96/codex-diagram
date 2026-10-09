@@ -35,6 +35,7 @@ export interface CanvasPatchHistoryEntry {
   proposalBranchId?: string
   proposalBranchLabel?: string
   proposalBranchGroupId?: string
+  dependsOnIds?: string[]
   changes: CanvasHistoryElementChange[]
 }
 
@@ -48,6 +49,7 @@ export interface CanvasPatchHistoryUndoEvent {
   targetId: string
   beforeModifiedAt: string
   afterModifiedAt: string
+  batchId?: string
 }
 
 export interface CanvasPatchHistoryRedoEvent {
@@ -60,6 +62,7 @@ export interface CanvasPatchHistoryRedoEvent {
   targetId: string
   beforeModifiedAt: string
   afterModifiedAt: string
+  batchId?: string
 }
 
 type CanvasHistoryEvent = CanvasPatchHistoryEntry | CanvasPatchHistoryUndoEvent | CanvasPatchHistoryRedoEvent
@@ -67,8 +70,10 @@ type CanvasHistoryEvent = CanvasPatchHistoryEntry | CanvasPatchHistoryUndoEvent 
 export interface CanvasPatchHistorySummary extends CanvasPatchHistoryEntry {
   undoneAt?: string
   undoEventId?: string
+  undoBatchId?: string
   redoneAt?: string
   redoEventId?: string
+  redoBatchId?: string
 }
 
 export interface CanvasHistoryUndoResult {
@@ -98,6 +103,7 @@ export function buildCanvasPatchHistoryEntry(input: {
   proposalBranchId?: string
   proposalBranchLabel?: string
   proposalBranchGroupId?: string
+  dependsOnIds?: string[]
   appliedAt?: string
   id?: string
 }): CanvasPatchHistoryEntry {
@@ -135,6 +141,7 @@ export function buildCanvasPatchHistoryEntry(input: {
     proposalBranchId: input.proposalBranchId,
     proposalBranchLabel: input.proposalBranchLabel,
     proposalBranchGroupId: input.proposalBranchGroupId,
+    dependsOnIds: [...new Set(input.dependsOnIds ?? [])],
     changes,
   }
 }
@@ -341,6 +348,22 @@ export class CanvasPatchHistoryStore {
     return event
   }
 
+  async appendUndoBatch(inputs: Array<Omit<CanvasPatchHistoryUndoEvent, 'kind' | 'version' | 'id' | 'workspacePath' | 'appliedAt' | 'batchId'>>): Promise<CanvasPatchHistoryUndoEvent[]> {
+    const batchId = randomUUID()
+    const appliedAt = new Date().toISOString()
+    const events = inputs.map((input): CanvasPatchHistoryUndoEvent => ({
+      kind: 'undo',
+      version: 1,
+      id: randomUUID(),
+      workspacePath: this.workspacePath,
+      appliedAt,
+      batchId,
+      ...input,
+    }))
+    await this.appendMany(events)
+    return events
+  }
+
   async appendRedo(input: Omit<CanvasPatchHistoryRedoEvent, 'kind' | 'version' | 'id' | 'workspacePath' | 'appliedAt'>): Promise<CanvasPatchHistoryRedoEvent> {
     const event: CanvasPatchHistoryRedoEvent = {
       kind: 'redo',
@@ -354,6 +377,22 @@ export class CanvasPatchHistoryStore {
     return event
   }
 
+  async appendRedoBatch(inputs: Array<Omit<CanvasPatchHistoryRedoEvent, 'kind' | 'version' | 'id' | 'workspacePath' | 'appliedAt' | 'batchId'>>): Promise<CanvasPatchHistoryRedoEvent[]> {
+    const batchId = randomUUID()
+    const appliedAt = new Date().toISOString()
+    const events = inputs.map((input): CanvasPatchHistoryRedoEvent => ({
+      kind: 'redo',
+      version: 1,
+      id: randomUUID(),
+      workspacePath: this.workspacePath,
+      appliedAt,
+      batchId,
+      ...input,
+    }))
+    await this.appendMany(events)
+    return events
+  }
+
   async list(diagramPath?: string, limit = 80): Promise<CanvasPatchHistorySummary[]> {
     const events = await this.readEvents()
     const state = historyState(events)
@@ -364,8 +403,8 @@ export class CanvasPatchHistoryStore {
       .slice(0, Math.max(1, Math.min(200, limit)))
       .map((entry) => {
         const current = state.get(entry.id)
-        if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id }
-        if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id }
+        if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id, undoBatchId: current.batchId }
+        if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id, redoBatchId: current.batchId }
         return entry
       })
   }
@@ -375,15 +414,20 @@ export class CanvasPatchHistoryStore {
     const entry = events.find((event): event is CanvasPatchHistoryEntry => event.kind === 'apply' && event.id === id)
     if (!entry) return undefined
     const current = historyState(events).get(id)
-    if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id }
-    if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id }
+    if (current?.kind === 'undo') return { ...entry, undoneAt: current.appliedAt, undoEventId: current.id, undoBatchId: current.batchId }
+    if (current?.kind === 'redo') return { ...entry, redoneAt: current.appliedAt, redoEventId: current.id, redoBatchId: current.batchId }
     return entry
   }
 
   private async append(event: CanvasHistoryEvent): Promise<void> {
+    await this.appendMany([event])
+  }
+
+  private async appendMany(events: CanvasHistoryEvent[]): Promise<void> {
+    if (!events.length) return
     const file = historyFile(this.workspacePath)
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-    await appendFile(file, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'a' })
+    await appendFile(file, events.map((event) => JSON.stringify(event)).join('\n') + '\n', { encoding: 'utf8', mode: 0o600, flag: 'a' })
   }
 
   private async readEvents(): Promise<CanvasHistoryEvent[]> {
