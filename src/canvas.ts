@@ -283,7 +283,8 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const text = colors?.text || '#171717'
   const border = colors?.border || '#8a8a8a'
   const note = colors?.note || '#fff7cc'
-  const architectureBorder = architectureMode && hexLuminance(background) < 0.18 ? '#71717a' : border
+  const darkArchitecture = architectureMode && hexLuminance(background) < 0.18
+  const architectureBorder = darkArchitecture ? '#71717a' : border
   const allNodes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
   const groupFrames = canvasGroupFrames(scene)
   const collapsedOwners = canvasCollapsedOwners(scene)
@@ -291,10 +292,15 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const labelLayouts = canvasArrowLabelLayouts(scene)
   const architectureHeader = canvasArchitectureHeader(sourceScene)
   const bundleTrunks = canvasBundleTrunks(scene).map((bundle) => {
+    const groupBus = architectureMode && bundle.id.startsWith('group:')
     const opacity = architectureMode
-      ? bundle.emphasis === 'primary' ? '0.14' : bundle.emphasis === 'muted' ? '0.05' : '0.09'
+      ? groupBus
+        ? bundle.emphasis === 'primary' ? darkArchitecture ? '0.40' : '0.34' : bundle.emphasis === 'muted' ? darkArchitecture ? '0.18' : '0.16' : darkArchitecture ? '0.30' : '0.24'
+        : bundle.emphasis === 'primary' ? '0.14' : bundle.emphasis === 'muted' ? '0.05' : '0.09'
       : bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
-    const width = architectureMode ? (bundle.emphasis === 'primary' ? 3.4 : 2.7) * architectureProfile.edgeScale : bundle.emphasis === 'primary' ? 7 : 5.5
+    const width = architectureMode
+      ? (groupBus ? bundle.emphasis === 'primary' ? 4.1 : 3.4 : bundle.emphasis === 'primary' ? 3.4 : 2.7) * architectureProfile.edgeScale
+      : bundle.emphasis === 'primary' ? 7 : 5.5
     return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
   }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
@@ -310,8 +316,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const strokeWidth = architectureMode
       ? (arrow.emphasis === 'primary' ? 1.8 : arrow.emphasis === 'muted' ? 0.85 : 1.2) * architectureProfile.edgeScale
       : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
+    const groupBundle = architectureMode && arrow.bundleKey?.startsWith('group:')
     const opacity = architectureMode
-      ? arrow.emphasis === 'muted' ? '0.34' : arrow.emphasis === 'secondary' ? '0.72' : '0.94'
+      ? groupBundle
+        ? arrow.emphasis === 'muted' ? darkArchitecture ? '0.24' : '0.20' : arrow.emphasis === 'secondary' ? darkArchitecture ? '0.56' : '0.48' : darkArchitecture ? '0.84' : '0.78'
+        : arrow.emphasis === 'muted' ? '0.34' : arrow.emphasis === 'secondary' ? '0.72' : '0.94'
       : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
     const visibleLabel = architectureMode && arrow.label && !canvasArchitectureRelationLabelVisible(arrow) ? undefined : arrow.label
     const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
@@ -331,7 +340,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const dash = connection.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
     const label = connection.labels.length ? connection.labels.slice(0, 2).join(' · ') : ''
     const suffix = connection.count > 1 ? ` ×${connection.count}` : ''
-    return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(border)}" stroke-width="2.2"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
+    return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${architectureMode ? 2.4 : 2.2}"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
     const palette = architectureMode
@@ -401,9 +410,11 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
 
 export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const collapsedOwners = canvasCollapsedOwners(scene)
   const groups = new Map<string, CanvasArrow[]>()
   scene.elements.forEach((item) => {
     if (item.type !== 'arrow' || !item.bundleKey) return
+    if (collapsedOwners.has(item.from) || collapsedOwners.has(item.to)) return
     groups.set(item.bundleKey, [...(groups.get(item.bundleKey) ?? []), item])
   })
   const result: CanvasBundleTrunk[] = []
@@ -443,6 +454,49 @@ export function canvasBundleTrunks(scene: CanvasScene): CanvasBundleTrunk[] {
         const end = anchorPoint(box, first.toAnchor, start)
         result.push({ id: `${bundleKey}:${clusterKey}`, path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, emphasis: strongestEmphasis(members), count: members.length })
       }
+    } else if (bundleKey.startsWith('group:')) {
+      const shared = new Map<string, Array<{ start: number; end: number; arrow: CanvasArrow }>>()
+      for (const arrow of arrows) {
+        const from = boxes.get(arrow.from)
+        const to = boxes.get(arrow.to)
+        if (!from || !to) continue
+        const start = anchorPoint(from, arrow.fromAnchor, centerOfCanvasBox(to))
+        const end = anchorPoint(to, arrow.toAnchor, centerOfCanvasBox(from))
+        const route = canvasArrowRoutePoints(start, end, arrow)
+        for (let index = 0; index < route.length - 1; index += 1) {
+          const a = route[index]
+          const b = route[index + 1]
+          const length = Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+          if (length < 36 || a.x !== b.x && a.y !== b.y) continue
+          const horizontal = a.y === b.y
+          const key = horizontal ? `h:${Math.round(a.y)}` : `v:${Math.round(a.x)}`
+          const start = horizontal ? Math.min(a.x, b.x) : Math.min(a.y, b.y)
+          const end = horizontal ? Math.max(a.x, b.x) : Math.max(a.y, b.y)
+          shared.set(key, [...(shared.get(key) ?? []), { start, end, arrow }])
+        }
+      }
+      for (const [axisKey, segments] of shared) {
+        const coordinates = [...new Set(segments.flatMap((segment) => [segment.start, segment.end]))].sort((left, right) => left - right)
+        for (let index = 0; index < coordinates.length - 1; index += 1) {
+          const start = coordinates[index]
+          const end = coordinates[index + 1]
+          if (end - start < 24) continue
+          const members = segments.filter((segment) => segment.start <= start && segment.end >= end).map((segment) => segment.arrow)
+          const uniqueMembers = [...new Map(members.map((arrow) => [arrow.id, arrow])).values()]
+          if (uniqueMembers.length < 2) continue
+          const [axis, coordinate] = axisKey.split(':')
+          const fixed = Number(coordinate)
+          const path = axis === 'h'
+            ? `M ${start} ${fixed} L ${end} ${fixed}`
+            : `M ${fixed} ${start} L ${fixed} ${end}`
+          result.push({
+            id: `${bundleKey}:${axisKey}:${Math.round(start)}:${Math.round(end)}`,
+            path,
+            emphasis: strongestEmphasis(uniqueMembers),
+            count: uniqueMembers.length,
+          })
+        }
+      }
     }
   }
   return result
@@ -452,23 +506,35 @@ export function canvasArchitectureProjection(scene: CanvasScene): CanvasArchitec
   const view = scene.architecture?.view ?? 'detail'
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const boxById = new Map(boxes.map((item) => [item.id, item]))
   const density = resolveCanvasArchitectureDensity(scene, boxes.length)
-  if (view === 'detail' || boxes.length <= overviewNodeLimit(density)) {
+  if (view === 'detail') {
     return { scene, view, density, hiddenNodes: 0, hiddenArrows: 0 }
   }
 
-  const degree = new Map<string, number>(boxes.map((item) => [item.id, 0]))
+  const projectedGroups = architectureOverviewGroups(scene, boxes)
+  const overviewScene = projectedGroups === scene.groups ? scene : { ...scene, groups: projectedGroups }
+  const collapsedOwners = canvasCollapsedOwners(overviewScene)
+  const collapsedNodeIds = new Set(collapsedOwners.keys())
+  const explicitBoxes = boxes.filter((item) => !collapsedNodeIds.has(item.id))
+  if (!collapsedNodeIds.size && boxes.length <= overviewNodeLimit(density)) {
+    return { scene, view, density, hiddenNodes: 0, hiddenArrows: 0 }
+  }
+
+  const boxById = new Map(boxes.map((item) => [item.id, item]))
+
+  const degree = new Map<string, number>(explicitBoxes.map((item) => [item.id, 0]))
   arrows.forEach((arrow) => {
+    if (collapsedNodeIds.has(arrow.from) || collapsedNodeIds.has(arrow.to)) return
     degree.set(arrow.from, (degree.get(arrow.from) ?? 0) + 1)
     degree.set(arrow.to, (degree.get(arrow.to) ?? 0) + 1)
   })
   const visible = new Set<string>()
-  boxes.forEach((item) => {
+  explicitBoxes.forEach((item) => {
     if (item.emphasis === 'primary') visible.add(item.id)
   })
   arrows.forEach((arrow) => {
     if (arrow.emphasis !== 'primary') return
+    if (collapsedNodeIds.has(arrow.from) || collapsedNodeIds.has(arrow.to)) return
     visible.add(arrow.from)
     visible.add(arrow.to)
   })
@@ -476,7 +542,7 @@ export function canvasArchitectureProjection(scene: CanvasScene): CanvasArchitec
   // Keep at least one representative for every architecture lane and group so
   // overview mode still communicates the full system shape rather than only a path.
   const buckets = new Map<string, Array<CanvasNode | CanvasNote>>()
-  boxes.forEach((item) => {
+  explicitBoxes.forEach((item) => {
     const key = item.laneId ? `lane:${item.laneId}` : item.groupId ? `group:${item.groupId}` : 'ungrouped'
     buckets.set(key, [...(buckets.get(key) ?? []), item])
   })
@@ -486,26 +552,64 @@ export function canvasArchitectureProjection(scene: CanvasScene): CanvasArchitec
   })
 
   const limit = Math.max(visible.size, overviewNodeLimit(density))
-  boxes
+  explicitBoxes
     .filter((item) => !visible.has(item.id))
     .sort((left, right) => architectureOverviewScore(right, degree) - architectureOverviewScore(left, degree) || left.x - right.x || left.y - right.y)
     .slice(0, Math.max(0, limit - visible.size))
     .forEach((item) => visible.add(item.id))
 
   const visibleArrows = arrows.filter((arrow) => {
+    if (collapsedNodeIds.has(arrow.from) || collapsedNodeIds.has(arrow.to)) {
+      const otherId = collapsedNodeIds.has(arrow.from) ? arrow.to : arrow.from
+      return collapsedNodeIds.has(otherId) || visible.has(otherId)
+    }
     if (!visible.has(arrow.from) || !visible.has(arrow.to)) return false
     if (arrow.emphasis !== 'muted') return true
     return boxById.get(arrow.from)?.emphasis === 'primary' || boxById.get(arrow.to)?.emphasis === 'primary'
   })
   const visibleArrowIds = new Set(visibleArrows.map((arrow) => arrow.id))
-  const elements = scene.elements.filter((item) => item.type === 'arrow' ? visibleArrowIds.has(item.id) : visible.has(item.id))
+  const elements = scene.elements.filter((item) => item.type === 'arrow'
+    ? visibleArrowIds.has(item.id)
+    : collapsedNodeIds.has(item.id) || visible.has(item.id))
+  const explicitVisibleArrows = visibleArrows.filter((arrow) => !collapsedNodeIds.has(arrow.from) && !collapsedNodeIds.has(arrow.to)).length
   return {
-    scene: { ...scene, elements },
+    scene: { ...overviewScene, elements },
     view,
     density,
     hiddenNodes: boxes.length - visible.size,
-    hiddenArrows: arrows.length - visibleArrows.length,
+    hiddenArrows: arrows.length - explicitVisibleArrows,
   }
+}
+
+function architectureOverviewGroups(scene: CanvasScene, boxes: Array<CanvasNode | CanvasNote>): CanvasGroup[] | undefined {
+  const groups = scene.groups
+  if (!groups?.length) return groups
+  const frames = canvasGroupFrames(scene)
+  const eligible = new Set(frames.flatMap((frame) => {
+    const group = groups.find((item) => item.id === frame.id)
+    if (!group || group.collapsed || group.c4Type === 'software-system') return []
+    if (group.kind !== 'boundary' && group.c4Type !== 'container') return []
+    if (frame.memberIds.length < 5) return []
+    if (groups.length === 1 && frame.memberIds.length >= boxes.length * 0.8) return []
+    return [group.id]
+  }))
+  if (!eligible.size) return groups
+
+  const groupById = new Map(groups.map((group) => [group.id, group]))
+  const collapsed = new Set<string>()
+  for (const id of eligible) {
+    let parentId = groupById.get(id)?.parentId
+    let hasEligibleAncestor = false
+    while (parentId) {
+      if (eligible.has(parentId)) {
+        hasEligibleAncestor = true
+        break
+      }
+      parentId = groupById.get(parentId)?.parentId
+    }
+    if (!hasEligibleAncestor) collapsed.add(id)
+  }
+  return groups.map((group) => collapsed.has(group.id) ? { ...group, collapsed: true } : group)
 }
 
 export function canvasArchitectureScopeProjection(scene: CanvasScene, scope: CanvasArchitectureScope): CanvasArchitectureScopeProjection {

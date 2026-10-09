@@ -6,6 +6,7 @@ import type {
   CanvasElement,
   CanvasEmphasis,
   CanvasGroup,
+  CanvasGroupFrame,
   CanvasIcon,
   CanvasNode,
   CanvasNote,
@@ -14,7 +15,7 @@ import type {
   CanvasStencil,
   CanvasTone,
 } from './canvas.js'
-import { anchorPoint, canvasArrowRoutePoints } from './canvas.js'
+import { anchorPoint, canvasArrowRoutePoints, canvasGroupFrames } from './canvas.js'
 
 export type ArchitectureTheme = CanvasArchitectureTheme
 
@@ -346,11 +347,15 @@ export function routeArchitectureEdgesIncremental(scene: CanvasScene, changedNod
 function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): CanvasScene {
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const groupFrames = new Map(canvasGroupFrames(scene).map((frame) => [frame.id, frame]))
+  const groups = new Map((scene.groups ?? []).map((group) => [group.id, group]))
   const routed = new Map<string, CanvasArrow>()
   const occupied: RouteSegment[] = []
   const fanout = countArrowEndpoints(arrows, 'from')
   const fanin = countArrowEndpoints(arrows, 'to')
+  const highDensityRouting = arrows.length >= 48 || boxes.size >= 36
   const groupedFanoutIds = only ? new Set<string>() : collectDownwardGroupFanoutArrowIds(arrows, boxes)
+  const crossGroupBundleIds = only ? new Set<string>() : collectCrossGroupBundleArrowIds(arrows, boxes, groupedFanoutIds)
 
   if (only) {
     for (const arrow of arrows) {
@@ -361,12 +366,37 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
   }
 
   const routeOrder = arrows
-    .filter((arrow) => (!only || only.has(arrow.id)) && !groupedFanoutIds.has(arrow.id))
+    .filter((arrow) => (!only || only.has(arrow.id)) && !groupedFanoutIds.has(arrow.id) && !crossGroupBundleIds.has(arrow.id))
     .slice()
     .sort((left, right) => architectureArrowRoutingPriority(left) - architectureArrowRoutingPriority(right))
 
-  for (const arrow of routeOrder) {
-    const result = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin)
+  const localRouteOrder = only || !highDensityRouting ? [] : routeOrder.filter((arrow) => isIntraGroupArrow(arrow, boxes))
+  const remainingRouteOrder = only || !highDensityRouting ? routeOrder : routeOrder.filter((arrow) => !isIntraGroupArrow(arrow, boxes))
+
+  for (const arrow of localRouteOrder) {
+    const result = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin, groupFrames, groups)
+    if (result) routed.set(arrow.id, result)
+  }
+
+  if (!only && crossGroupBundleIds.size) {
+    const bundled = routeCrossGroupBundles(
+      arrows.filter((arrow) => crossGroupBundleIds.has(arrow.id)),
+      boxes,
+      occupied,
+      groupFrames,
+      groups,
+      highDensityRouting,
+    )
+    for (const [id, arrow] of bundled) routed.set(id, arrow)
+    for (const arrow of arrows) {
+      if (!crossGroupBundleIds.has(arrow.id) || routed.has(arrow.id)) continue
+      const fallback = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin, groupFrames, groups)
+      if (fallback) routed.set(arrow.id, fallback)
+    }
+  }
+
+  for (const arrow of remainingRouteOrder) {
+    const result = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin, groupFrames, groups)
     if (result) routed.set(arrow.id, result)
   }
 
@@ -375,7 +405,7 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
     for (const [id, arrow] of bundled) routed.set(id, arrow)
     for (const arrow of arrows) {
       if (!groupedFanoutIds.has(arrow.id) || routed.has(arrow.id)) continue
-      const fallback = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin)
+      const fallback = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin, groupFrames, groups)
       if (fallback) routed.set(arrow.id, fallback)
     }
   }
@@ -386,12 +416,20 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
   }
 }
 
+function isIntraGroupArrow(arrow: CanvasArrow, boxes: Map<string, CanvasNode | CanvasNote>): boolean {
+  const from = boxes.get(arrow.from)
+  const to = boxes.get(arrow.to)
+  return Boolean(from?.groupId && from.groupId === to?.groupId)
+}
+
 function routeArchitectureArrow(
   arrow: CanvasArrow,
   boxes: Map<string, CanvasNode | CanvasNote>,
   occupied: RouteSegment[],
   fanout: Map<string, number>,
   fanin: Map<string, number>,
+  groupFrames: Map<string, CanvasGroupFrame>,
+  groups: Map<string, CanvasGroup>,
 ): CanvasArrow | undefined {
   const from = boxes.get(arrow.from)
   const to = boxes.get(arrow.to)
@@ -403,7 +441,7 @@ function routeArchitectureArrow(
   const asyncEdge = from.icon === 'queue' || to.icon === 'queue'
     || from.stencil === 'kafka' || to.stencil === 'kafka'
     || from.stencil === 'rabbitmq' || to.stencil === 'rabbitmq'
-  const obstacles = [...boxes.values()]
+  const nodeObstacles = [...boxes.values()]
     .filter((item) => item.id !== from.id && item.id !== to.id)
     .map((item) => expandRect(item, 18))
   const bundleKey = (fanout.get(arrow.from) ?? 0) >= 2
@@ -411,7 +449,13 @@ function routeArchitectureArrow(
     : (fanin.get(arrow.to) ?? 0) >= 2
       ? `to:${arrow.to}`
       : undefined
-  const pairs = preferredAnchorPairs(dx, dy)
+  const groupObstacles = routingGroupObstacles(from, to, groupFrames, groups)
+  const obstacles = [...nodeObstacles, ...groupObstacles]
+  const fromFrame = from.groupId ? groupFrames.get(from.groupId) : undefined
+  const toFrame = to.groupId ? groupFrames.get(to.groupId) : undefined
+  const routingDx = fromFrame && toFrame ? (toFrame.x + toFrame.width / 2) - (fromFrame.x + fromFrame.width / 2) : dx
+  const routingDy = fromFrame && toFrame ? (toFrame.y + toFrame.height / 2) - (fromFrame.y + fromFrame.height / 2) : dy
+  const pairs = preferredAnchorPairs(routingDx, routingDy)
   let best: { score: number; fromAnchor: 'top' | 'right' | 'bottom' | 'left'; toAnchor: 'top' | 'right' | 'bottom' | 'left'; route: CanvasPoint[] } | undefined
   for (const [fromAnchor, toAnchor] of pairs) {
     const start = fixedAnchorPoint(from, fromAnchor)
@@ -420,7 +464,7 @@ function routeArchitectureArrow(
     const score = scoreRoute(route, obstacles, occupied, bundleKey)
       + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
     if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
-    if (bundleKey) {
+    if (bundleKey?.startsWith('from:') || bundleKey?.startsWith('to:')) {
       const side = bundleKey.startsWith('from:') ? 'from' : 'to'
       const bundled = buildBundleRoute(start, end, fromAnchor, toAnchor, side)
       const bundleScore = scoreRoute(bundled, obstacles, occupied, bundleKey) - 72
@@ -460,6 +504,248 @@ function collectDownwardGroupFanoutArrowIds(
     members.forEach((arrow) => result.add(arrow.id))
   }
   return result
+}
+
+function collectCrossGroupBundleArrowIds(
+  arrows: CanvasArrow[],
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  excluded: Set<string>,
+): Set<string> {
+  const grouped = new Map<string, CanvasArrow[]>()
+  for (const arrow of arrows) {
+    if (excluded.has(arrow.id)) continue
+    const from = boxes.get(arrow.from)
+    const to = boxes.get(arrow.to)
+    if (!from || !to) continue
+    const key = crossGroupPairKey(from, to)
+    if (!key) continue
+    grouped.set(key, [...(grouped.get(key) ?? []), arrow])
+  }
+  const result = new Set<string>()
+  for (const members of grouped.values()) {
+    if (members.length < 3) continue
+    members.forEach((arrow) => result.add(arrow.id))
+  }
+  return result
+}
+
+function routeCrossGroupBundles(
+  arrows: CanvasArrow[],
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  occupied: RouteSegment[],
+  groupFrames: Map<string, CanvasGroupFrame>,
+  groups: Map<string, CanvasGroup>,
+  preferAlignedBundles: boolean,
+): Map<string, CanvasArrow> {
+  const grouped = new Map<string, CanvasArrow[]>()
+  for (const arrow of arrows) {
+    const from = boxes.get(arrow.from)
+    const to = boxes.get(arrow.to)
+    if (!from || !to) continue
+    const key = crossGroupPairKey(from, to)
+    if (!key) continue
+    grouped.set(key, [...(grouped.get(key) ?? []), arrow])
+  }
+
+  const result = new Map<string, CanvasArrow>()
+  const orderedGroups = [...grouped.entries()].sort((left, right) => {
+    const leftPriority = Math.min(...left[1].map(architectureArrowRoutingPriority))
+    const rightPriority = Math.min(...right[1].map(architectureArrowRoutingPriority))
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority
+    if (!preferAlignedBundles) return right[1].length - left[1].length
+    const leftGeometry = crossGroupBundleGeometryRank(left[1], boxes, groupFrames)
+    const rightGeometry = crossGroupBundleGeometryRank(right[1], boxes, groupFrames)
+    return leftGeometry.alignment - rightGeometry.alignment
+      || leftGeometry.distance - rightGeometry.distance
+      || right[1].length - left[1].length
+  })
+
+  for (const [pairKey, members] of orderedGroups) {
+    if (members.length < 3) continue
+    const source = boxes.get(members[0].from)
+    const target = boxes.get(members[0].to)
+    if (!source?.groupId || !target?.groupId) continue
+    const sourceFrame = groupFrames.get(source.groupId)
+    const targetFrame = groupFrames.get(target.groupId)
+    if (!sourceFrame || !targetFrame) continue
+    const trunk = chooseCrossGroupTrunk(sourceFrame, targetFrame, boxes, occupied, groupFrames, groups)
+    if (!trunk) continue
+
+    const bundleKey = `group:${pairKey}`
+    for (const arrow of members.slice().sort((left, right) => architectureArrowRoutingPriority(left) - architectureArrowRoutingPriority(right))) {
+      const from = boxes.get(arrow.from)
+      const to = boxes.get(arrow.to)
+      if (!from || !to) continue
+      const start = fixedAnchorPoint(from, trunk.fromAnchor)
+      const end = fixedAnchorPoint(to, trunk.toAnchor)
+      const sourcePort = trunk.sourcePort
+      const targetPort = trunk.targetPort
+      const obstacles = [
+        ...[...boxes.values()].filter((item) => item.id !== from.id && item.id !== to.id).map((item) => expandRect(item, 10)),
+        ...routingGroupObstacles(from, to, groupFrames, groups),
+      ]
+      const sourceRoute = findOrthogonalRoute(
+        start,
+        sourcePort,
+        obstacles,
+        occupied,
+        bundleKey,
+        trunk.fromAnchor,
+        trunk.sourcePortApproach,
+        trunk.hints,
+      )
+      const targetRoute = findOrthogonalRoute(
+        targetPort,
+        end,
+        obstacles,
+        occupied,
+        bundleKey,
+        trunk.targetPortLeave,
+        trunk.toAnchor,
+        trunk.hints,
+      )
+      const route = simplifyRoute([
+        ...sourceRoute.slice(0, -1),
+        sourcePort,
+        targetPort,
+        ...targetRoute.slice(1),
+      ])
+      if (countRouteObstacleCollisions(route, obstacles) > 0) continue
+      const asyncEdge = from.icon === 'queue' || to.icon === 'queue'
+        || from.stencil === 'kafka' || to.stencil === 'kafka'
+        || from.stencil === 'rabbitmq' || to.stencil === 'rabbitmq'
+      const routedArrow: CanvasArrow = {
+        ...arrow,
+        routing: 'orthogonal',
+        fromAnchor: trunk.fromAnchor,
+        toAnchor: trunk.toAnchor,
+        lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
+        points: route.length > 2 ? route.slice(1, -1) : undefined,
+        bundleKey,
+      }
+      result.set(arrow.id, routedArrow)
+      addOccupiedSegments(route, occupied, bundleKey)
+    }
+  }
+  return result
+}
+
+function crossGroupBundleGeometryRank(
+  members: CanvasArrow[],
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  groupFrames: Map<string, CanvasGroupFrame>,
+): { alignment: number; distance: number } {
+  const from = boxes.get(members[0]?.from ?? '')
+  const to = boxes.get(members[0]?.to ?? '')
+  const source = from?.groupId ? groupFrames.get(from.groupId) : undefined
+  const target = to?.groupId ? groupFrames.get(to.groupId) : undefined
+  if (!source || !target) return { alignment: Number.POSITIVE_INFINITY, distance: Number.POSITIVE_INFINITY }
+  const dx = Math.abs((target.x + target.width / 2) - (source.x + source.width / 2))
+  const dy = Math.abs((target.y + target.height / 2) - (source.y + source.height / 2))
+  const major = Math.max(dx, dy, 1)
+  return {
+    alignment: Math.min(dx, dy) / major,
+    distance: dx + dy,
+  }
+}
+
+function chooseCrossGroupTrunk(
+  source: CanvasGroupFrame,
+  target: CanvasGroupFrame,
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  occupied: RouteSegment[],
+  groupFrames: Map<string, CanvasGroupFrame>,
+  groups: Map<string, CanvasGroup>,
+): {
+  fromAnchor: 'top' | 'right' | 'bottom' | 'left'
+  toAnchor: 'top' | 'right' | 'bottom' | 'left'
+  sourcePortApproach: 'top' | 'right' | 'bottom' | 'left'
+  targetPortLeave: 'top' | 'right' | 'bottom' | 'left'
+  sourcePort: CanvasPoint
+  targetPort: CanvasPoint
+  hints: RouteCorridorHints
+} | undefined {
+  const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 }
+  const targetCenter = { x: target.x + target.width / 2, y: target.y + target.height / 2 }
+  const horizontalGap = Math.max(0, target.x - (source.x + source.width), source.x - (target.x + target.width))
+  const verticalGap = Math.max(0, target.y - (source.y + source.height), source.y - (target.y + target.height))
+  const horizontal = horizontalGap > verticalGap || horizontalGap === verticalGap && Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y)
+  const unrelatedFrames = [...groupFrames.values()].filter((frame) => (
+    frame.id !== source.id
+    && frame.id !== target.id
+    && !groupContainsGroup(frame.id, source.id, groups)
+    && !groupContainsGroup(source.id, frame.id, groups)
+    && !groupContainsGroup(frame.id, target.id, groups)
+    && !groupContainsGroup(target.id, frame.id, groups)
+    && groups.get(frame.id)?.c4Type !== 'software-system'
+  ))
+  const unrelatedNodes = [...boxes.values()].filter((item) => item.groupId !== source.id && item.groupId !== target.id)
+  const obstacles = [
+    ...unrelatedFrames.map((frame) => expandRect(frame, 10)),
+    ...unrelatedNodes.map((item) => expandRect(item, 8)),
+  ]
+
+  if (horizontal) {
+    const forward = targetCenter.x >= sourceCenter.x
+    const sourceX = forward ? source.x + source.width + 22 : source.x - 22
+    const targetX = forward ? target.x - 22 : target.x + target.width + 22
+    const midpoint = (sourceCenter.y + targetCenter.y) / 2
+    const candidates = uniqueNumbers([
+      midpoint,
+      source.y - 22,
+      source.y + source.height + 22,
+      target.y - 22,
+      target.y + target.height + 22,
+      ...obstacles.flatMap((item) => [item.y - 18, item.y + item.height + 18]),
+    ]).sort((left, right) => Math.abs(left - midpoint) - Math.abs(right - midpoint)).slice(0, 18)
+    let best: { score: number; y: number } | undefined
+    for (const y of candidates) {
+      const route = [{ x: sourceX, y }, { x: targetX, y }]
+      if (countRouteObstacleCollisions(route, obstacles) > 0) continue
+      const score = Math.abs(y - midpoint) + countRouteCrossings(route, occupied) * 1800
+      if (!best || score < best.score) best = { score, y }
+    }
+    if (!best) return undefined
+    return {
+      fromAnchor: forward ? 'right' : 'left',
+      toAnchor: forward ? 'left' : 'right',
+      sourcePortApproach: forward ? 'left' : 'right',
+      targetPortLeave: forward ? 'right' : 'left',
+      sourcePort: { x: sourceX, y: best.y },
+      targetPort: { x: targetX, y: best.y },
+      hints: { x: [sourceX, targetX], y: [best.y] },
+    }
+  }
+
+  const forward = targetCenter.y >= sourceCenter.y
+  const sourceY = forward ? source.y + source.height + 22 : source.y - 22
+  const targetY = forward ? target.y - 22 : target.y + target.height + 22
+  const midpoint = (sourceCenter.x + targetCenter.x) / 2
+  const candidates = uniqueNumbers([
+    midpoint,
+    source.x - 22,
+    source.x + source.width + 22,
+    target.x - 22,
+    target.x + target.width + 22,
+    ...obstacles.flatMap((item) => [item.x - 18, item.x + item.width + 18]),
+  ]).sort((left, right) => Math.abs(left - midpoint) - Math.abs(right - midpoint)).slice(0, 18)
+  let best: { score: number; x: number } | undefined
+  for (const x of candidates) {
+    const route = [{ x, y: sourceY }, { x, y: targetY }]
+    if (countRouteObstacleCollisions(route, obstacles) > 0) continue
+    const score = Math.abs(x - midpoint) + countRouteCrossings(route, occupied) * 1800
+    if (!best || score < best.score) best = { score, x }
+  }
+  if (!best) return undefined
+  return {
+    fromAnchor: forward ? 'bottom' : 'top',
+    toAnchor: forward ? 'top' : 'bottom',
+    sourcePortApproach: forward ? 'top' : 'bottom',
+    targetPortLeave: forward ? 'bottom' : 'top',
+    sourcePort: { x: best.x, y: sourceY },
+    targetPort: { x: best.x, y: targetY },
+    hints: { x: [best.x], y: [sourceY, targetY] },
+  }
 }
 
 function routeDownwardGroupFanouts(
@@ -600,11 +886,48 @@ function currentArrowRoute(arrow: CanvasArrow, boxes: Map<string, CanvasNode | C
 
 type RouteRect = { x: number; y: number; width: number; height: number }
 type RouteSegment = { a: CanvasPoint; b: CanvasPoint; bundleKey?: string }
+type RouteCorridorHints = { x: number[]; y: number[] }
 
 function countArrowEndpoints(arrows: CanvasArrow[], side: 'from' | 'to'): Map<string, number> {
   const counts = new Map<string, number>()
   arrows.forEach((arrow) => counts.set(arrow[side], (counts.get(arrow[side]) ?? 0) + 1))
   return counts
+}
+
+function crossGroupPairKey(from: CanvasNode | CanvasNote, to: CanvasNode | CanvasNote): string | undefined {
+  if (!from.groupId || !to.groupId || from.groupId === to.groupId) return undefined
+  return `${from.groupId}->${to.groupId}`
+}
+
+function routingGroupObstacles(
+  from: CanvasNode | CanvasNote,
+  to: CanvasNode | CanvasNote,
+  frames: Map<string, CanvasGroupFrame>,
+  groups: Map<string, CanvasGroup>,
+): RouteRect[] {
+  return [...frames.values()].flatMap((frame) => {
+    const group = groups.get(frame.id)
+    if (!group || group.c4Type === 'software-system') return []
+    if (group.kind !== 'boundary' && !group.c4Type) return []
+    if (groupRelatedToNode(frame.id, from.groupId, groups) || groupRelatedToNode(frame.id, to.groupId, groups)) return []
+    return [expandRect(frame, 10)]
+  })
+}
+
+function groupRelatedToNode(groupId: string, nodeGroupId: string | undefined, groups: Map<string, CanvasGroup>): boolean {
+  if (!nodeGroupId) return false
+  return groupContainsGroup(groupId, nodeGroupId, groups) || groupContainsGroup(nodeGroupId, groupId, groups)
+}
+
+function groupContainsGroup(ancestorId: string, candidateId: string, groups: Map<string, CanvasGroup>): boolean {
+  let current: string | undefined = candidateId
+  const seen = new Set<string>()
+  while (current && !seen.has(current)) {
+    if (current === ancestorId) return true
+    seen.add(current)
+    current = groups.get(current)?.parentId
+  }
+  return false
 }
 
 function buildBundleRoute(
@@ -660,20 +983,27 @@ function findOrthogonalRoute(
   bundleKey: string | undefined,
   fromAnchor: 'top' | 'right' | 'bottom' | 'left',
   toAnchor: 'top' | 'right' | 'bottom' | 'left',
+  hints?: RouteCorridorHints,
 ): CanvasPoint[] {
   const margin = 24
   const xCandidates = uniqueNumbers([
+    ...(hints?.x ?? []),
+    ...uniqueNumbers([
     (start.x + end.x) / 2,
     start.x + Math.sign(end.x - start.x || 1) * 56,
     end.x - Math.sign(end.x - start.x || 1) * 56,
     ...obstacles.flatMap((item) => [item.x - margin, item.x + item.width + margin]),
-  ]).sort((a, b) => Math.abs(a - (start.x + end.x) / 2) - Math.abs(b - (start.x + end.x) / 2)).slice(0, 28)
+    ]).sort((a, b) => Math.abs(a - (start.x + end.x) / 2) - Math.abs(b - (start.x + end.x) / 2)).slice(0, 28),
+  ])
   const yCandidates = uniqueNumbers([
+    ...(hints?.y ?? []),
+    ...uniqueNumbers([
     (start.y + end.y) / 2,
     start.y + Math.sign(end.y - start.y || 1) * 48,
     end.y - Math.sign(end.y - start.y || 1) * 48,
     ...obstacles.flatMap((item) => [item.y - margin, item.y + item.height + margin]),
-  ]).sort((a, b) => Math.abs(a - (start.y + end.y) / 2) - Math.abs(b - (start.y + end.y) / 2)).slice(0, 28)
+    ]).sort((a, b) => Math.abs(a - (start.y + end.y) / 2) - Math.abs(b - (start.y + end.y) / 2)).slice(0, 28),
+  ])
 
   // A single shared X or Y corridor is not enough when an intermediate node
   // blocks the direct path and the destination column is itself stacked with
@@ -806,7 +1136,10 @@ function scoreRoute(route: CanvasPoint[], obstacles: RouteRect[], occupied: Rout
     for (const used of occupied) {
       const overlap = segmentOverlap(segment, used)
       overlapPenalty += overlap * (bundleKey && used.bundleKey === bundleKey ? 0.08 : 4)
-      if (segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey)) crossingPenalty += 960
+      if (segmentsCross(segment, used) && (!bundleKey || used.bundleKey !== bundleKey)) {
+        const groupBus = bundleKey?.startsWith('group:') || used.bundleKey?.startsWith('group:')
+        crossingPenalty += groupBus ? 2200 : 960
+      }
     }
   }
   return length + Math.max(0, route.length - 2) * 22 + collisions * 100_000 + overlapPenalty + crossingPenalty

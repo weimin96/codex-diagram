@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -187,6 +187,63 @@ test('overview projection keeps source data intact while reducing low-priority a
   assert.ok(projection.scene.elements.some((item) => item.id === 'node-0'))
   assert.ok(projection.scene.elements.some((item) => item.id === 'node-29'))
   assert.ok(projection.scene.elements.length < scene.elements.length)
+})
+
+test('architecture overview collapses dense semantic regions and aggregates their relationships', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Overview aggregation',
+    width: 1700,
+    height: 1000,
+    architecture: { theme: 'enterprise', view: 'overview', density: 'compact' },
+    groups: [
+      { id: 'entry', label: 'Entry', kind: 'boundary' },
+      { id: 'runtime', label: 'Runtime', kind: 'boundary' },
+      { id: 'data', label: 'Data', kind: 'boundary' },
+    ],
+    elements: [
+      { id: 'web', type: 'node', x: 100, y: 180, width: 180, height: 76, text: 'Web', icon: 'web', groupId: 'entry', emphasis: 'primary' },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: `runtime-${index}`,
+        type: 'node' as const,
+        x: 480 + (index % 3) * 200,
+        y: 140 + Math.floor(index / 3) * 130,
+        width: 170,
+        height: 76,
+        text: `Runtime ${index}`,
+        icon: 'service' as const,
+        groupId: 'runtime',
+        emphasis: index === 0 ? 'primary' as const : 'secondary' as const,
+      })),
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `data-${index}`,
+        type: 'node' as const,
+        x: 1080 + (index % 2) * 200,
+        y: 140 + Math.floor(index / 2) * 130,
+        width: 170,
+        height: 76,
+        text: `Data ${index}`,
+        icon: 'database' as const,
+        groupId: 'data',
+        emphasis: index === 0 ? 'primary' as const : 'muted' as const,
+      })),
+      { id: 'web-runtime', type: 'arrow', from: 'web', to: 'runtime-0', emphasis: 'primary' },
+      ...Array.from({ length: 5 }, (_, index) => ({ id: `runtime-data-${index}`, type: 'arrow' as const, from: `runtime-${index}`, to: `data-${index}`, emphasis: 'secondary' as const, bundleKey: 'group:runtime->data' })),
+    ],
+  }
+
+  const projection = canvasArchitectureProjection(scene)
+  const runtime = projection.scene.groups?.find((group) => group.id === 'runtime')
+  const data = projection.scene.groups?.find((group) => group.id === 'data')
+  assert.equal(runtime?.collapsed, true)
+  assert.equal(data?.collapsed, true)
+  const aggregated = canvasCollapsedConnections(projection.scene)
+  assert.ok(aggregated.some((connection) => connection.fromKey === 'node:web' && connection.toKey === 'group:runtime'))
+  assert.ok(aggregated.some((connection) => connection.fromKey === 'group:runtime' && connection.toKey === 'group:data' && connection.count >= 4))
+  assert.equal(canvasBundleTrunks(projection.scene).length, 0)
+  assert.ok(projection.hiddenNodes >= 10)
+  assert.ok(projection.hiddenArrows >= 4)
 })
 
 test('architecture cards map roles into stable semantic templates', () => {

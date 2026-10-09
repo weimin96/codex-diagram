@@ -53,6 +53,29 @@ test('Canvas quality gate identifies crossing independent relationships', () => 
   assert.ok(quality.issues.some((issue) => issue.code === 'edge-crossing'))
 })
 
+test('Canvas quality gate ignores intentional crossings inside one routed bundle', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Bundled crossing',
+    width: 1000,
+    height: 700,
+    architecture: { theme: 'enterprise', view: 'detail', density: 'compact' },
+    elements: [
+      { id: 'a', type: 'node', x: 60, y: 80, width: 120, height: 70, text: 'A' },
+      { id: 'b', type: 'node', x: 780, y: 500, width: 120, height: 70, text: 'B' },
+      { id: 'c', type: 'node', x: 60, y: 500, width: 120, height: 70, text: 'C' },
+      { id: 'd', type: 'node', x: 780, y: 80, width: 120, height: 70, text: 'D' },
+      { id: 'ab', type: 'arrow', from: 'a', to: 'b', routing: 'straight', bundleKey: 'group:left->right' },
+      { id: 'cd', type: 'arrow', from: 'c', to: 'd', routing: 'straight', bundleKey: 'group:left->right' },
+    ],
+  }
+
+  const quality = assessCanvasVisualQuality(scene)
+  assert.equal(quality.metrics.edgeCrossings, 0)
+  assert.equal(quality.issues.some((issue) => issue.code === 'edge-crossing'), false)
+})
+
 test('Canvas quality gate passes a simple clean diagram', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',

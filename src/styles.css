@@ -718,7 +718,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-editor.is-architecture-mode .freeform-bundle-trunk { stroke-width: 3; opacity: .11; }
 .freeform-editor.is-architecture-mode .freeform-bundle-trunk.emphasis-primary { stroke-width: 3.8; opacity: .17; }
 .freeform-editor.is-architecture-mode .freeform-bundle-trunk.emphasis-muted { stroke-width: 2.2; opacity: .055; }
+.freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus { stroke-width: 3.5; opacity: .24; }
+.freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus.emphasis-primary { stroke-width: 4.2; opacity: .34; }
+.freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus.emphasis-muted { stroke-width: 3; opacity: .14; }
+.freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle { opacity: 1; }
+.freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle .freeform-arrow-line { opacity: .5; }
+.freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle.emphasis-primary .freeform-arrow-line { opacity: .78; }
+.freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle.emphasis-muted .freeform-arrow-line { opacity: .22; }
 .freeform-editor.is-architecture-mode .freeform-arrow .freeform-arrow-label text { font-size: 12px; font-weight: 620; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus { opacity: .30; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus.emphasis-primary { opacity: .40; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-bundle-trunk.is-group-bus.emphasis-muted { opacity: .18; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle .freeform-arrow-line { opacity: .58; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-arrow.is-group-bundle.emphasis-primary .freeform-arrow-line { opacity: .84; }
+:root[data-theme='dark'] .freeform-editor.is-architecture-mode .freeform-arrow.is-collapsed-summary { opacity: .96; }
 .freeform-editor.is-architecture-mode .freeform-group-frame > rect:first-of-type { fill: color-mix(in srgb, var(--surface-muted) 12%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 38%, transparent); stroke-width: 1; }
 .freeform-editor.architecture-theme-enterprise .freeform-group-frame > rect:first-of-type { fill: color-mix(in srgb, var(--surface-muted) 8%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 28%, transparent); stroke-dasharray: 7 7; }
 .freeform-editor.architecture-theme-enterprise .freeform-grid-line { opacity: .18; }

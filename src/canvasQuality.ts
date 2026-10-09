@@ -86,6 +86,7 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
       const left = arrows[leftIndex]
       const right = arrows[rightIndex]
       if (shareEndpoint(left, right)) continue
+      if (left.bundleKey && left.bundleKey === right.bundleKey) continue
       const leftRoute = routes.get(left.id)
       const rightRoute = routes.get(right.id)
       if (!leftRoute || !rightRoute || !routesCross(leftRoute, rightRoute)) continue

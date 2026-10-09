@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { applyArchitectureTheme, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
 import { assessCanvasVisualQuality } from '../src/canvasQuality.js'
-import { anchorPoint, canvasBundleTrunks, type CanvasScene } from '../src/canvas.js'
+import { anchorPoint, canvasArrowRoutePoints, canvasBundleTrunks, canvasGroupFrames, type CanvasScene } from '../src/canvas.js'
 
 function sampleScene(): CanvasScene {
   return {
@@ -234,6 +234,54 @@ test('routes common architecture topology families without crossing nodes', () =
     assert.equal(quality.metrics.nodeOverlaps, 0, `${scene.title}: nodes should not overlap`)
     assert.equal(quality.metrics.edgeNodeIntersections, 0, `${scene.title}: relationships should not cross nodes`)
     assert.equal(quality.metrics.edgeCrossings, 0, `${scene.title}: common topology should route cleanly`)
+  }
+})
+
+test('dense cross-boundary relationships share a corridor and avoid unrelated boundaries', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Dense cross-boundary routing',
+    width: 1500,
+    height: 900,
+    groups: [
+      { id: 'apps', label: 'Applications', kind: 'boundary' },
+      { id: 'processing', label: 'Processing', kind: 'boundary' },
+      { id: 'data', label: 'Data', kind: 'boundary' },
+    ],
+    architecture: { theme: 'enterprise', view: 'detail', density: 'compact' },
+    elements: [
+      { id: 'app-a', type: 'node', x: 100, y: 150, width: 170, height: 70, text: 'App A', icon: 'service', groupId: 'apps' },
+      { id: 'app-b', type: 'node', x: 100, y: 270, width: 170, height: 70, text: 'App B', icon: 'service', groupId: 'apps' },
+      { id: 'app-c', type: 'node', x: 100, y: 390, width: 170, height: 70, text: 'App C', icon: 'service', groupId: 'apps' },
+      { id: 'processor-top', type: 'node', x: 590, y: 90, width: 210, height: 70, text: 'Processor A', icon: 'worker', groupId: 'processing' },
+      { id: 'processor-bottom', type: 'node', x: 590, y: 490, width: 210, height: 70, text: 'Processor B', icon: 'worker', groupId: 'processing' },
+      { id: 'db-a', type: 'node', x: 1120, y: 150, width: 170, height: 70, text: 'DB A', icon: 'database', groupId: 'data' },
+      { id: 'db-b', type: 'node', x: 1120, y: 270, width: 170, height: 70, text: 'DB B', icon: 'database', groupId: 'data' },
+      { id: 'db-c', type: 'node', x: 1120, y: 390, width: 170, height: 70, text: 'DB C', icon: 'database', groupId: 'data' },
+      { id: 'a-db', type: 'arrow', from: 'app-a', to: 'db-a', emphasis: 'secondary' },
+      { id: 'b-db', type: 'arrow', from: 'app-b', to: 'db-b', emphasis: 'secondary' },
+      { id: 'c-db', type: 'arrow', from: 'app-c', to: 'db-c', emphasis: 'secondary' },
+    ],
+  }
+
+  const result = routeArchitectureEdges(scene)
+  const boxes = new Map(result.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, item]))
+  const processingFrame = canvasGroupFrames(result).find((group) => group.id === 'processing')
+  assert.ok(processingFrame)
+  const crossBoundary = result.elements.filter((item) => item.type === 'arrow')
+  assert.ok(crossBoundary.every((arrow) => arrow.bundleKey === 'group:apps->data'))
+  assert.ok(canvasBundleTrunks(result).some((trunk) => trunk.id.startsWith('group:apps->data:')))
+
+  for (const arrow of crossBoundary) {
+    const from = boxes.get(arrow.from)!
+    const to = boxes.get(arrow.to)!
+    const start = anchorPoint(from, arrow.fromAnchor, to)
+    const end = anchorPoint(to, arrow.toAnchor, from)
+    const route = canvasArrowRoutePoints(start, end, arrow)
+    for (let index = 0; index < route.length - 1; index += 1) {
+      assert.equal(segmentCutsBox(route[index], route[index + 1], processingFrame), false)
+    }
   }
 })
 

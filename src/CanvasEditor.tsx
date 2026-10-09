@@ -2991,7 +2991,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <path
               key={bundle.id}
               d={bundle.path}
-              className={`freeform-bundle-trunk emphasis-${bundle.emphasis ?? 'secondary'}`}
+              className={`freeform-bundle-trunk emphasis-${bundle.emphasis ?? 'secondary'}${bundle.id.startsWith('group:') ? ' is-group-bus' : ''}`}
               pointerEvents="none"
             />
           ))}
@@ -3037,7 +3037,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 }
               : automaticLabelLayout
             return (
-              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path className="freeform-arrow-hit-path" d={path} />
                 <path className="freeform-arrow-line" d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
                 {displayArrow.label && labelLayout ? (
