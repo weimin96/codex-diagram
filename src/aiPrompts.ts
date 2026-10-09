@@ -1,5 +1,7 @@
-import type { DiagramDocument, DiagramType } from './types.js'
+import { isMermaidDiagramType, type DiagramDocument, type DiagramType } from './types.js'
 import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
+import { diagramIntentRoutingGuide, diagramSkill } from './diagramSkills/registry.js'
+import { skillPromptLines } from './diagramSkills/types.js'
 
 export interface DiagramGenerationRequest {
   type: DiagramType
@@ -33,6 +35,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
       ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise')] : []),
     ].filter(Boolean).join('\n')
   }
+  const skill = diagramSkill(request.type)
   return [
     '基于当前 Codex 工作空间生成一张 Mermaid 图表，并写回 Diagram 插件。',
     `工作空间：${workspacePath}`,
@@ -46,8 +49,12 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
     '执行要求：',
     '1. 先阅读真正相关的代码、配置或数据结构，不要凭文件名臆测。',
     '2. 调用 diagram.create 创建目标图，再调用 diagram.update 写入完整 Mermaid 源码。',
-    '3. 图表只保留有决策价值的结构、调用、状态或数据关系，避免把所有低级符号都画进去。',
+    '3. 图表类型已经明确，不要擅自换成另一种 Mermaid 类型；如果发现用户目标明显更适合 Architecture Canvas，应在结果说明中指出，但仍完成当前请求。',
     '4. Mermaid 必须可渲染；完成后简要说明分析范围和生成的图表路径。',
+    '',
+    ...diagramIntentRoutingGuide(),
+    '',
+    ...skillPromptLines(skill, 'generation'),
   ].filter(Boolean).join('\n')
 }
 
@@ -70,6 +77,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       '8. 如果用户随后明确要求把多个兼容候选合并，优先使用 diagram.composeProposalBranches 和 branchSet 中的 branch id，让服务端检查字段写冲突并生成新的组合候选；不要把互斥 A/B 方案自动合并，也不要自行用 last-write-wins 拼 Patch。',
     ].join('\n')
   }
+  const skill = isMermaidDiagramType(diagram.type) ? diagramSkill(diagram.type) : undefined
   return [
     '修改 Diagram 插件中当前选中的 Mermaid 图表。',
     `工作空间：${workspacePath}`,
@@ -82,6 +90,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
     '2. 只更新这张图，除非用户明确要求新建另一张图。',
     '3. 生成完整 Mermaid 候选源码后调用 diagram.proposeUpdate，不要直接 diagram.update；保证候选语法可渲染。',
     '4. 不要为了显得完整增加与当前问题无关的节点或说明。diagram.proposeUpdate 不会写盘，等待用户在 Diagram 面板接受或拒绝。',
+    ...(skill ? ['', ...skillPromptLines(skill, 'modification')] : []),
   ].join('\n')
 }
 

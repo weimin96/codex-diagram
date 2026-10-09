@@ -20,9 +20,13 @@ const quickModifications = [
 
 const generationTemplates: Array<{ label: string; type: DiagramType; title: string; instructions: string }> = [
   { label: '系统架构', type: 'canvas', title: '系统架构', instructions: '按软件架构图表达，不要退化成流程图。识别系统边界、Web/客户端、API/网关、核心服务、Worker、数据库、缓存、消息/检索/文件存储和外部系统；优先使用 C4 Container 语义、命名 boundary、技术 stencil 与正交依赖连线。' },
+  { label: '业务流程', type: 'flowchart', title: '核心业务流程', instructions: '从真实入口、关键决策、成功路径和异常/补偿路径还原流程；决策节点只表达一个条件，主路径保持连续阅读方向。' },
   { label: '调用链', type: 'sequence', title: '核心调用链', instructions: '沿真实调用顺序展示入口、服务、存储和外部依赖，并保留关键失败分支。' },
   { label: '数据模型', type: 'er', title: '数据模型', instructions: '从实体、表结构或模型定义提取核心实体、主外键和主要关系，不展开无关字段。' },
   { label: '状态流转', type: 'state', title: '状态流转', instructions: '从枚举、状态字段和业务分支还原合法状态、触发条件以及失败或终止状态。' },
+  { label: '功能脑图', type: 'mindmap', title: '功能与能力地图', instructions: '围绕一个中心主题按互斥维度拆成 3~7 个一级分支，同层保持相同抽象粒度，不按目录结构机械展开。' },
+  { label: '类关系', type: 'class', title: '核心类关系', instructions: '只保留有设计意义的类、接口、继承/实现/组合关系和关键公开成员，不展开 getter/setter、DTO 与无关工具类。' },
+  { label: '项目计划', type: 'gantt', title: '项目计划', instructions: '按真实阶段、依赖和里程碑组织计划；没有真实日期时不要编造日历日期，优先使用已知计划信息。' },
   { label: '架构画布', type: 'canvas', title: '架构画布', instructions: '用自由画布组织核心模块、外部系统、数据存储和关键说明，保持留白和清晰的空间分组。' },
   { label: 'C4 Context', type: 'canvas', title: 'C4 系统上下文', instructions: '按 C4 Context 层级只展示 Person、当前 Software System 和关键外部 Software System。使用 c4Type 明确语义；当前系统用 software-system boundary，外部系统保持独立节点，连线写明关系，不展开内部容器。' },
   { label: 'C4 Container', type: 'canvas', title: 'C4 容器架构', instructions: '按 C4 Container 层级识别 Web/客户端、API/网关、应用服务、数据库、缓存、消息队列和关键外部系统。使用 software-system 父边界 + container 子边界或 container 节点，保留 parentId 层级，节点绑定最相关源码路径，主要关系使用正交连线。' },

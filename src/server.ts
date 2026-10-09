@@ -17,6 +17,7 @@ import { readGitChanges } from './gitChanges.js'
 import { encodeToolResultFallback } from './toolResult.js'
 import { addProposalBranch, selectProposalBranch, type ProposalBranchSet } from './proposalBranches.js'
 import { buildCanvasPatchGraph, canvasPatchDependentClosure, composeCanvasSubgraphPatches, inferCanvasPatchDependencies } from './patchGraph.js'
+import { diagramIntentRoutingGuide } from './diagramSkills/registry.js'
 import { diagramTypes, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
@@ -55,6 +56,8 @@ const server = new McpServer(
       'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
       'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
+      ...diagramIntentRoutingGuide(),
+      'All exposed Mermaid diagram types have a type-specific Diagram Skill. Preserve each type’s semantic grammar, density policy and anti-pattern rules instead of treating every diagram as generic nodes and arrows.',
       'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put selected existing ids in elementIds; when the user intent explicitly changes a direct relationship, you may also include the relevant id returned in getSubgraph.directRelationshipIds. Treat getSubgraph.contextElementIds as read-only context unless the user clearly asks to expand the edit scope. Send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
       'Create multiple Canvas proposal branches only when the user explicitly asks for alternatives or A/B comparison. In that case call diagram.proposeSubgraphPatch multiple times against the same base revision with distinct branchLabel values. Otherwise omit branchLabel so normal proposal behavior remains single-candidate.',

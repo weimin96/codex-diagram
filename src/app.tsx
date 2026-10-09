@@ -14,6 +14,8 @@ import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from '
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
+import { mermaidVisualConfig } from './mermaidVisualGrammar.js'
+import { detectDiagramType } from './templates.js'
 import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
 import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
@@ -2935,20 +2937,24 @@ function MermaidPreview({ source }: { source: string }) {
 
 async function renderMermaidSvg(source: string, renderId: string): Promise<string> {
   const styles = getComputedStyle(document.documentElement)
+  const type = detectDiagramType(source)
+  const visualConfig = mermaidVisualConfig(type, {
+    background: resolveCssColor('--app-bg', '#ffffff'),
+    surface: resolveCssColor('--surface-panel', '#fafafa'),
+    raised: resolveCssColor('--surface-raised', '#f5f5f5'),
+    muted: resolveCssColor('--surface-muted', '#eeeeee'),
+    text: resolveCssColor('--text-primary', '#171717'),
+    secondaryText: resolveCssColor('--text-secondary', '#666666'),
+    border: resolveCssColor('--border', '#d4d4d4'),
+    strongBorder: resolveCssColor('--border-strong', '#b8b8b8'),
+    accent: resolveCssColor('--accent', '#2563eb'),
+    success: resolveCssColor('--editor-string', '#16803a'),
+    warning: resolveCssColor('--editor-type', '#b45309'),
+    danger: resolveCssColor('--danger', '#c9362b'),
+  }, source)
   mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    theme: 'base',
+    ...visualConfig,
     fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
-    themeVariables: {
-      background: resolveCssColor('--app-bg', '#ffffff'),
-      primaryColor: resolveCssColor('--surface-raised', '#f5f5f5'),
-      primaryTextColor: resolveCssColor('--text-primary', '#171717'),
-      primaryBorderColor: resolveCssColor('--border-strong', '#b8b8b8'),
-      lineColor: resolveCssColor('--text-secondary', '#666666'),
-      secondaryColor: resolveCssColor('--surface-muted', '#eeeeee'),
-      tertiaryColor: resolveCssColor('--surface-panel', '#fafafa'),
-    },
   })
   const result = await mermaid.render(renderId, source || 'flowchart LR\n  A[空图表]')
   return serializeSafeSvg(result.svg)

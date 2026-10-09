@@ -27,6 +27,22 @@ test('keeps Mermaid generation instructions for structured diagrams', () => {
   assert.match(prompt, /生成一张 Mermaid 图表/)
   assert.match(prompt, /diagram\.create/)
   assert.match(prompt, /Mermaid 必须可渲染/)
+  assert.match(prompt, /Sequence Diagram Skill/)
+  assert.match(prompt, /participant 按调用方向稳定排序/)
+})
+
+test('injects the matching professional skill for each primary Mermaid type', () => {
+  const expectations = [
+    ['flowchart', /Flowchart Skill/, /决策节点/],
+    ['er', /ER Diagram Skill/, /聚合根/],
+    ['state', /State Diagram Skill/, /正常终态/],
+    ['mindmap', /Mindmap Skill/, /一级分支/],
+  ] as const
+  for (const [type, skill, rule] of expectations) {
+    const prompt = buildGenerationPrompt('/workspace', { type, title: 'Test', scope: '', instructions: '' })
+    assert.match(prompt, skill)
+    assert.match(prompt, rule)
+  }
 })
 
 test('prefers incremental Canvas patches for finite conversational edits', () => {

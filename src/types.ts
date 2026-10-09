@@ -45,3 +45,9 @@ export const diagramTypes: Array<{ type: DiagramType; label: string }> = [
   ...mermaidDiagramTypes,
   { type: 'canvas', label: '自由画布' },
 ]
+
+const mermaidTypeSet = new Set<MermaidDiagramType>(mermaidDiagramTypes.map((item) => item.type))
+
+export function isMermaidDiagramType(value: string): value is MermaidDiagramType {
+  return mermaidTypeSet.has(value as MermaidDiagramType)
+}
