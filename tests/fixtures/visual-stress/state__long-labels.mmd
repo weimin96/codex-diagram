@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> Submitted : 提交审批并执行完整业务规则校验
+  Submitted --> Reviewing : 分配审核人员并锁定当前版本
+  Reviewing --> NeedMoreInfo : 需要补充额外材料或业务证明
+  NeedMoreInfo --> Reviewing : 用户补充材料后重新进入审核
+  Reviewing --> Approved : 所有审核规则均通过
+  Reviewing --> Rejected : 任一强制规则不通过
+  Approved --> Publishing : 生成发布版本并刷新相关索引
+  Publishing --> Published : 发布与索引刷新全部成功
+  Publishing --> PublishFailed : 发布流程出现可恢复异常
+  PublishFailed --> Publishing : 自动重试未超过最大次数
+  PublishFailed --> ManualIntervention : 自动重试已耗尽
+  Published --> Archived : 生命周期结束后归档
+  Rejected --> [*]
+  Archived --> [*]
+  ManualIntervention --> [*]

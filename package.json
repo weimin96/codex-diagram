@@ -1,6 +1,6 @@
 {
   "name": "codex-diagram",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "description": "Visual diagram workspace for Codex with Mermaid editing and MCP tools.",
@@ -12,6 +12,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
     "visual:smoke": "node scripts/visual-smoke.mjs",
+    "visual:benchmark": "node scripts/visual-smoke.mjs --source-dir tests/fixtures/visual-stress --quality-benchmark",
     "plugin:install": "pnpm build && node scripts/install-codex-plugin.mjs",
     "plugin:install:desktop": "pnpm plugin:install && node scripts/reload-codex-desktop.mjs"
   },

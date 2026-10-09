@@ -268,6 +268,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .canvas-controls button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .canvas-controls .zoom-value { min-width: 48px; font-variant-numeric: tabular-nums; }
 .canvas-control-separator { width: 1px; height: 18px; margin: 0 2px; background: var(--border); }
+.mermaid-quality-chip { position: absolute; z-index: 4; top: 12px; left: 12px; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--editor-type) 28%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--editor-type) 8%, var(--surface-panel)); color: color-mix(in srgb, var(--editor-type) 78%, var(--text-primary)); font-size: 11px; font-weight: 650; line-height: 1; box-shadow: 0 4px 14px rgba(0,0,0,.05); pointer-events: none; }
 .syntax-error { position: absolute; z-index: 5; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--surface-panel)); color: var(--danger); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.05); }
 .syntax-error strong { flex-shrink: 0; }
 .syntax-error span { color: var(--text-secondary); }

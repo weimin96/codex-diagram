@@ -1,0 +1,43 @@
+sequenceDiagram
+  participant User
+  participant Web
+  participant Gateway
+  participant Auth
+  participant Order
+  participant Inventory
+  participant Redis
+  participant DB
+  participant EventBus
+  participant Payment
+  participant Notify
+  User->>Web: 提交订单
+  Web->>Gateway: POST /orders
+  Gateway->>Auth: 校验 token
+  Auth-->>Gateway: 用户身份
+  Gateway->>Order: createOrder
+  Order->>Redis: 查询幂等键
+  alt 命中
+    Redis-->>Order: 已有订单
+  else 未命中
+    Order->>Inventory: reserve
+    Inventory->>DB: lock stock
+    DB-->>Inventory: locked
+    Inventory-->>Order: reserved
+    Order->>Payment: charge
+    alt 支付成功
+      Payment-->>Order: paid
+      Order->>DB: persist paid order
+      Order-)EventBus: publish OrderPaid
+      EventBus-)Notify: consume OrderPaid
+      Notify-->>User: 支付成功通知
+      Order->>Redis: 写入幂等结果
+    else 支付失败
+      Payment-->>Order: declined
+      Order->>Inventory: release
+      Inventory->>DB: unlock stock
+      Order-)EventBus: publish PaymentFailed
+    end
+  end
+  Order-->>Gateway: order result
+  Gateway-->>Web: HTTP result
+  Web-->>User: 展示结果

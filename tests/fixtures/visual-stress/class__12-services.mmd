@@ -1,0 +1,66 @@
+classDiagram
+direction LR
+class Service1 {
+  +String id
+  +execute1(): void
+}
+class Service2 {
+  +String id
+  +execute2(): void
+}
+class Service3 {
+  +String id
+  +execute3(): void
+}
+class Service4 {
+  +String id
+  +execute4(): void
+}
+class Service5 {
+  +String id
+  +execute5(): void
+}
+class Service6 {
+  +String id
+  +execute6(): void
+}
+class Service7 {
+  +String id
+  +execute7(): void
+}
+class Service8 {
+  +String id
+  +execute8(): void
+}
+class Service9 {
+  +String id
+  +execute9(): void
+}
+class Service10 {
+  +String id
+  +execute10(): void
+}
+class Service11 {
+  +String id
+  +execute11(): void
+}
+class Service12 {
+  +String id
+  +execute12(): void
+}
+Service1 --> Service2 : calls
+Service2 --> Service3 : calls
+Service3 --> Service4 : calls
+Service4 --> Service5 : calls
+Service5 --> Service6 : calls
+Service6 --> Service7 : calls
+Service7 --> Service8 : calls
+Service8 --> Service9 : calls
+Service9 --> Service10 : calls
+Service10 --> Service11 : calls
+Service11 --> Service12 : calls
+Service1 ..> Service7 : emits
+Service2 ..> Service8 : emits
+Service3 ..> Service9 : emits
+Service4 ..> Service10 : emits
+Service5 ..> Service11 : emits

@@ -4,7 +4,11 @@ Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagr
 
 v0.16 起 Mermaid 不再走单一通用生成 Prompt；v0.17 进一步扩展到 19 种正式 Mermaid 类型。Flowchart / Sequence / Mindmap / Class / ER / State / Gantt / Timeline / GitGraph / Journey / Quadrant / Kanban / Requirement / Sankey / XY Chart / Pie / Radar / Treemap / Ishikawa 全部进入 Diagram Skill Registry。每种类型都有独立的构图、密度、视觉、反模式、生成与修改规则；数据图额外禁止无依据编造数值。预览与 SVG/PNG 导出同时使用按图类型的 Visual Grammar，并根据源码规模自动切换 comfortable / compact / dense 间距，不修改 Mermaid 源文件。类型选择器按核心结构、分析规划、数据可视化和专业分析分组，避免类型扩展后形成长平铺菜单。
 
+v0.18 增加 Visual Quality Gate 与可重复压力基准。`pnpm visual:benchmark` 会在真实 Chrome 中以 light/dark 两套主题渲染复杂 Flowchart、Sequence、ER、Kanban、Sankey、Mindmap、Requirement、Treemap 等固定样例，同时检查尺寸、文字越界、节点重叠和关系标签重叠。结构复杂度超过单图可读上限时不会继续靠缩小字体硬塞，而是在预览左上角显示轻量“建议拆图”提示；例如 20+ 节点/多决策 Flowchart、10+ participant 或 24+ message Sequence、过大的 Class 图会进入拆图建议。Dense Treemap 会隐藏渲染层数值标签以避免小块越界，但源数据保持不变；Flowchart 的 `<br/>` 仅在渲染输入中规范为空格，源码不会被静默改写。
+
 开发回归除 `pnpm test` / `pnpm smoke` 外，还可运行 `pnpm visual:smoke`：它使用本机 Chrome/Chromium 在真实浏览器中按 light/dark 两套 Visual Grammar 渲染全部正式 Mermaid 模板，并检查渲染失败与异常超大 SVG，用于捕获 Node 单测难以发现的 Mermaid lexer、DOMPurify 和浏览器渲染兼容问题。
+
+复杂视觉回归运行 `pnpm visual:benchmark`。该命令使用仓库内 `tests/fixtures/visual-stress/` 压力集，并把“样式/几何回归”和“内容本身应该拆图”区分开：前者直接失败，后者输出 split recommendation 而不是鼓励继续压缩字体。
 
 当前支持：
 

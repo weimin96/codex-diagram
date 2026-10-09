@@ -15,6 +15,7 @@ export const sequenceSkill: DiagramSkill = {
   densityRules: [
     '参与者通常控制在 3~8 个；超过 10 个优先拆成总览时序与局部时序。',
     '消息超过约 24 条时优先按阶段用 rect/note/控制块收敛，不生成一屏几十条等权消息。',
+    '当参与者达到 9~10 个且消息接近 20~24 条时已经属于 dense 上限；优先删除无信息量返回或拆阶段，不继续增加 participant。',
   ],
   visualRules: [...commonMermaidVisualRules, '消息标签以“动作 + 核心参数/协议”表达，避免复制完整方法签名和长 JSON。'],
   antiPatterns: ['把静态模块依赖画成时序图', '同一服务重复 participant', '每个请求都强制画一条无信息量返回', '用 note 代替真实消息或控制块', '用服务发给自身的消息表示事件发布'],

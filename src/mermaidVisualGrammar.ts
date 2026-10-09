@@ -18,6 +18,32 @@ export interface MermaidVisualPalette {
 
 export type MermaidVisualDensity = 'comfortable' | 'compact' | 'dense'
 
+interface MermaidTreemapRuntimeConfig {
+  useMaxWidth?: boolean
+  padding?: number
+  diagramPadding?: number
+  showValues?: boolean
+  nodeWidth?: number
+  nodeHeight?: number
+  borderWidth?: number
+  valueFontSize?: number
+  labelFontSize?: number
+  valueFormat?: string
+}
+
+export type MermaidVisualConfig = MermaidConfig & {
+  /** Mermaid 11.17 supports this at runtime, but its public MermaidConfig typing omits it. */
+  treemap?: MermaidTreemapRuntimeConfig
+}
+
+export function normalizeMermaidSourceForRender(type: MermaidDiagramType | 'unknown', source: string): string {
+  if (type !== 'flowchart') return source
+  // Mermaid 11.17 can produce a zero-sized SVG for flowchart HTML line breaks in
+  // headless/browser measurement paths. Keep authored source untouched and only
+  // normalize the render input so preview and export stay deterministic.
+  return source.replace(/<br\s*\/?\s*>/gi, ' ')
+}
+
 export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown', source: string): MermaidVisualDensity {
   const lines = source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('%%'))
   if (type === 'flowchart') {
@@ -32,12 +58,13 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
   if (type === 'sequence') {
     const participants = lines.filter((line) => /^(participant|actor)\b/i.test(line)).length
     const messages = lines.filter((line) => /(?:--?>>|--?>|--?x|--?\)|--?\])/.test(line)).length
-    if (participants > 9 || messages > 28) return 'dense'
-    if (participants > 6 || messages > 16) return 'compact'
+    const controlBlocks = lines.filter((line) => /^(alt|opt|par|loop|critical|break|rect)\b/i.test(line)).length
+    if (participants > 9 || messages > 24 || (participants >= 9 && messages >= 20) || (controlBlocks >= 2 && messages >= 20)) return 'dense'
+    if (participants > 6 || messages > 16 || (controlBlocks >= 1 && messages >= 14)) return 'compact'
     return 'comfortable'
   }
   if (type === 'er') {
-    const entities = lines.filter((line) => /\{\s*$/.test(line)).length
+    const entities = lines.filter((line) => /^(?:"[^"]+"|[\w-]+)\s*\{/.test(line)).length
     if (entities > 16) return 'dense'
     if (entities > 9) return 'compact'
     return 'comfortable'
@@ -87,13 +114,15 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
   return 'comfortable'
 }
 
-export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palette: MermaidVisualPalette, source = ''): MermaidConfig {
+export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palette: MermaidVisualPalette, source = ''): MermaidVisualConfig {
   const density = resolveMermaidVisualDensity(type, source)
   const nodeSpacing = density === 'comfortable' ? 38 : density === 'compact' ? 30 : 24
   const rankSpacing = density === 'comfortable' ? 58 : density === 'compact' ? 48 : 40
   const flowchartRankSpacing = density === 'comfortable' ? 54 : density === 'compact' ? 42 : 32
   const actorMargin = density === 'comfortable' ? 72 : density === 'compact' ? 58 : 46
   const messageMargin = density === 'comfortable' ? 34 : density === 'compact' ? 29 : 24
+  const actorWidth = density === 'comfortable' ? 150 : density === 'compact' ? 136 : 118
+  const actorHeight = density === 'comfortable' ? 50 : density === 'compact' ? 47 : 44
   const entityPadding = density === 'comfortable' ? 12 : density === 'compact' ? 10 : 8
   const themeVariables = {
     fontSize: '13px',
@@ -255,27 +284,28 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       htmlLabels: true,
       nodeSpacing,
       rankSpacing: flowchartRankSpacing,
+      defaultRenderer: 'dagre-wrapper',
       curve: 'linear',
       padding: density === 'dense' ? 9 : 12,
       wrappingWidth: density === 'dense' ? 170 : 190,
     },
     sequence: {
-      diagramMarginX: 28,
-      diagramMarginY: 18,
-      actorMargin,
-      width: 150,
-      height: 50,
-      boxMargin: 10,
-      boxTextMargin: 6,
-      noteMargin: 14,
-      messageMargin,
+      diagramMarginX: density === 'dense' ? 18 : 28,
+      diagramMarginY: density === 'dense' ? 10 : 18,
+      actorMargin: density === 'dense' ? 34 : actorMargin,
+      width: actorWidth,
+      height: density === 'dense' ? 42 : actorHeight,
+      boxMargin: density === 'dense' ? 7 : 10,
+      boxTextMargin: density === 'dense' ? 4 : 6,
+      noteMargin: density === 'dense' ? 10 : 14,
+      messageMargin: density === 'dense' ? 16 : messageMargin,
       mirrorActors: false,
       bottomMarginAdj: 8,
       actorFontSize: 13,
       messageFontSize: 12,
       noteFontSize: 12,
       wrap: true,
-      wrapPadding: 10,
+      wrapPadding: density === 'dense' ? 7 : 10,
     },
     er: {
       diagramPadding: 18,
@@ -388,7 +418,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       text_color: palette.text,
       rect_border_size: '1',
       rect_border_color: palette.strongBorder,
-      rect_min_width: density === 'dense' ? 180 : 220,
+      rect_min_width: density === 'dense' ? 170 : density === 'compact' ? 195 : 220,
       rect_min_height: 70,
       fontSize: 12,
       rect_padding: density === 'dense' ? 8 : 10,
@@ -408,6 +438,18 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       nodeWidth: 12,
       nodePadding: density === 'dense' ? 8 : 14,
       labelStyle: 'outlined',
+    },
+    treemap: {
+      useMaxWidth: true,
+      padding: density === 'dense' ? 7 : 10,
+      diagramPadding: density === 'dense' ? 18 : 12,
+      showValues: density !== 'dense',
+      nodeWidth: density === 'dense' ? 92 : 100,
+      nodeHeight: density === 'dense' ? 36 : 40,
+      borderWidth: 1,
+      valueFontSize: density === 'dense' ? 10 : 12,
+      labelFontSize: density === 'dense' ? 12 : 14,
+      valueFormat: ',',
     },
     radar: {
       width: 620,

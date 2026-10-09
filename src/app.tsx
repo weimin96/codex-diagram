@@ -14,7 +14,8 @@ import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from '
 import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
-import { mermaidVisualConfig } from './mermaidVisualGrammar.js'
+import { assessMermaidVisualQuality } from './mermaidQuality.js'
+import { mermaidVisualConfig, normalizeMermaidSourceForRender } from './mermaidVisualGrammar.js'
 import { detectDiagramType } from './templates.js'
 import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
 import { diagramTypeGroups, diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
@@ -2803,6 +2804,7 @@ function MermaidPreview({ source }: { source: string }) {
   const [dragging, setDragging] = useState(false)
   const dragState = useRef<{ pointerId: number; x: number; y: number; originX: number; originY: number } | null>(null)
   const renderId = useMemo(() => `diagram-${Math.random().toString(36).slice(2)}`, [])
+  const quality = useMemo(() => assessMermaidVisualQuality(detectDiagramType(source), source), [source])
 
   function centerAt(nextZoom: number) {
     const surface = viewport.current
@@ -2924,6 +2926,9 @@ function MermaidPreview({ source }: { source: string }) {
         <span className="canvas-control-separator" />
         <button type="button" title="适配画布" onClick={fit}>适配</button>
       </div>
+      {!error && quality.splitRecommended ? (
+        <div className="mermaid-quality-chip" role="status" title={quality.reasons.join('；')}>建议拆图</div>
+      ) : null}
       {error ? <div className="syntax-error"><strong>预览渲染失败</strong><span>{error}</span></div> : null}
       <div
         className="mermaid-stage"
@@ -2942,6 +2947,7 @@ function MermaidPreview({ source }: { source: string }) {
 async function renderMermaidSvg(source: string, renderId: string): Promise<string> {
   const styles = getComputedStyle(document.documentElement)
   const type = detectDiagramType(source)
+  const renderSource = normalizeMermaidSourceForRender(type, source)
   const visualConfig = mermaidVisualConfig(type, {
     background: resolveCssColor('--app-bg', '#ffffff'),
     surface: resolveCssColor('--surface-panel', '#fafafa'),
@@ -2955,12 +2961,12 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
     success: resolveCssColor('--editor-string', '#16803a'),
     warning: resolveCssColor('--editor-type', '#b45309'),
     danger: resolveCssColor('--danger', '#c9362b'),
-  }, source)
+  }, renderSource)
   mermaid.initialize({
     ...visualConfig,
     fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
   })
-  const result = await mermaid.render(renderId, source || 'flowchart LR\n  A[空图表]')
+  const result = await mermaid.render(renderId, renderSource || 'flowchart LR\n  A[空图表]')
   return serializeSafeSvg(result.svg)
 }
 

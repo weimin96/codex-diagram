@@ -48,6 +48,14 @@ test('diagram type selector groups advanced types instead of flattening the menu
   assert.deepEqual(special?.items.map((item) => item.type), ['ishikawa'])
 })
 
+test('Mermaid skills keep theme colors in Visual Grammar by default', () => {
+  for (const type of ['flowchart', 'sequence', 'er', 'state', 'mindmap'] as const) {
+    const rules = diagramSkill(type).visualRules.join('\n')
+    assert.match(rules, /style\/classDef/)
+    assert.match(rules, /Visual Grammar/)
+  }
+})
+
 test('model-facing skills guard Mermaid 11.17 syntax traps found by browser benchmarks', () => {
   const sequence = diagramSkill('sequence')
   assert.ok(sequence.compositionRules.some((rule) => rule.includes('self-message') && rule.includes('EventBus')))

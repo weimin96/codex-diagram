@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mermaidVisualConfig, mermaidVisualProfile, resolveMermaidVisualDensity } from '../src/mermaidVisualGrammar.js'
+import { mermaidVisualConfig, mermaidVisualProfile, normalizeMermaidSourceForRender, resolveMermaidVisualDensity } from '../src/mermaidVisualGrammar.js'
 
 const palette = {
   background: '#ffffff', surface: '#fafafa', raised: '#f4f4f5', muted: '#eeeeef', text: '#18181b', secondaryText: '#6b7280',
@@ -41,11 +41,18 @@ test('planning and positioning diagrams share tokens but retain specialized geom
 test('visual density compacts large sequence and ER diagrams without changing source', () => {
   const sequence = ['sequenceDiagram', ...Array.from({ length: 10 }, (_, index) => `participant P${index}`), ...Array.from({ length: 32 }, (_, index) => `P${index % 10}->>P${(index + 1) % 10}: call`)].join('\n')
   assert.equal(resolveMermaidVisualDensity('sequence', sequence), 'dense')
-  assert.equal(mermaidVisualConfig('sequence', palette, sequence).sequence?.actorMargin, 46)
+  assert.equal(mermaidVisualConfig('sequence', palette, sequence).sequence?.actorMargin, 34)
+
+  const boundedDenseSequence = ['sequenceDiagram', ...Array.from({ length: 9 }, (_, index) => `participant P${index}`), ...Array.from({ length: 22 }, (_, index) => `P${index % 9}->>P${(index + 1) % 9}: call`), 'alt retry', 'P1->>P2: retry', 'end'].join('\n')
+  assert.equal(resolveMermaidVisualDensity('sequence', boundedDenseSequence), 'dense')
 
   const er = ['erDiagram', ...Array.from({ length: 12 }, (_, index) => `E${index} {\n string id PK\n}`)].join('\n')
   assert.equal(resolveMermaidVisualDensity('er', er), 'compact')
   assert.equal(mermaidVisualConfig('er', palette, er).er?.entityPadding, 10)
+
+  const inlineEr = ['erDiagram', ...Array.from({ length: 15 }, (_, index) => `E${index} { string id PK }`)].join('\n')
+  assert.equal(resolveMermaidVisualDensity('er', inlineEr), 'compact')
+  assert.equal(mermaidVisualConfig('er', palette, inlineEr).er?.entityPadding, 10)
 })
 
 test('data visualizations use dedicated chart grammar instead of generic Mermaid defaults', () => {
@@ -75,6 +82,13 @@ test('analysis diagrams receive specialized readable geometry', () => {
   const ishikawa = mermaidVisualConfig('ishikawa', palette)
   assert.equal(ishikawa.ishikawa?.useMaxWidth, true)
   assert.equal(mermaidVisualProfile('ishikawa'), 'root-cause')
+})
+
+test('dense treemaps preserve source values while hiding cramped numeric labels', () => {
+  const source = ['treemap-beta', '"Root"', ...Array.from({ length: 36 }, (_, index) => `  "Item ${index}": ${index + 1}`)].join('\n')
+  assert.equal(resolveMermaidVisualDensity('treemap', source), 'dense')
+  assert.equal(mermaidVisualConfig('treemap', palette, source).treemap?.showValues, false)
+  assert.equal(mermaidVisualConfig('treemap', palette, source).treemap?.labelFontSize, 12)
 })
 
 test('large Sankey and Radar diagrams compact independently', () => {
@@ -107,4 +121,12 @@ test('branch-heavy flowcharts compact before they become oversized', () => {
   ].join('\n')
   assert.equal(resolveMermaidVisualDensity('flowchart', source), 'dense')
   assert.equal(mermaidVisualConfig('flowchart', palette, source).flowchart?.rankSpacing, 32)
+})
+
+test('flowchart render normalization removes HTML line breaks without rewriting authored source', () => {
+  const source = 'flowchart TB\n  A["Parse<br/>retry"] --> B[Done]\n'
+  const normalized = normalizeMermaidSourceForRender('flowchart', source)
+  assert.equal(normalized, 'flowchart TB\n  A["Parse retry"] --> B[Done]\n')
+  assert.match(source, /<br\/>/)
+  assert.equal(normalizeMermaidSourceForRender('sequence', source), source)
 })

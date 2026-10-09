@@ -4,6 +4,7 @@ export const commonMermaidVisualRules = [
   '名称使用业务/技术事实，不使用“模块A / 服务B / 下一步”等占位词作为最终内容。',
   '同类元素命名和粒度保持一致；不要在同一张图里混用系统级、类级和方法级节点。',
   '当内容超过单屏可读密度时优先抽象、分区或拆图，不靠缩小字体硬塞。',
+  '默认不要在 Mermaid 源码里写固定颜色的 style/classDef 或 %%{init}%% 主题覆盖；明暗主题和视觉 token 由 Diagram Visual Grammar 统一管理。只有用户明确要求特殊语义高亮时才例外。',
 ]
 
 export const commonMermaidModificationRules = [

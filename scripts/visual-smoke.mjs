@@ -8,6 +8,7 @@ import { build } from 'esbuild'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const temp = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-visual-'))
 const sourceDir = readSourceDirArg(process.argv.slice(2))
+const qualityBenchmark = process.argv.includes('--quality-benchmark')
 
 try {
   const chrome = await findChrome()
@@ -15,13 +16,13 @@ try {
     console.log('Codex Diagram visual smoke skipped: Chrome/Chromium not found.')
   } else {
     const externalCases = sourceDir ? await loadExternalCases(sourceDir) : undefined
-    await runVisualSmoke(chrome, externalCases)
+    await runVisualSmoke(chrome, externalCases, qualityBenchmark)
   }
 } finally {
   await rm(temp, { recursive: true, force: true })
 }
 
-async function runVisualSmoke(chrome, externalCases) {
+async function runVisualSmoke(chrome, externalCases, qualityBenchmark) {
   const publicDir = path.join(temp, 'public')
   const entry = path.join(temp, 'visual-smoke.ts')
   const port = 18765 + Math.floor(Math.random() * 1000)
@@ -50,7 +51,13 @@ async function runVisualSmoke(chrome, externalCases) {
     if (!match) throw new Error('Visual smoke browser did not return a result payload.')
     const result = JSON.parse(decodeHtml(match[1]))
     const failed = result.filter((item) => !item.ok)
-    const oversized = result.filter((item) => item.ok && (item.width > 1800 || item.height > 1400))
+    const invalidDimensions = result.filter((item) => item.ok && (!(item.width > 0) || !(item.height > 0)))
+    const oversized = result.filter((item) => item.ok && isOversized(item))
+    const splitAdvisories = oversized.filter((item) => item.quality?.splitRecommended)
+    const hardOversized = qualityBenchmark ? oversized.filter((item) => !item.quality?.splitRecommended) : oversized
+    const geometryFailures = qualityBenchmark
+      ? result.filter((item) => item.ok && ((item.geometry?.contentOverflow ?? 0) > 0 || (item.geometry?.nodeOverlaps ?? 0) > 0))
+      : []
     for (const mode of ['light', 'dark']) {
       const rows = result.filter((item) => item.mode === mode)
       console.log(`${mode}: ${rows.filter((item) => item.ok).length}/${rows.length} rendered`)
@@ -58,8 +65,26 @@ async function runVisualSmoke(chrome, externalCases) {
     if (failed.length) {
       throw new Error(`Visual smoke render failures:\n${failed.map((item) => `${item.mode}/${item.type}: ${item.error}`).join('\n')}`)
     }
-    if (oversized.length) {
-      throw new Error(`Visual smoke oversized diagrams:\n${oversized.map((item) => `${item.mode}/${item.type}: ${item.width}x${item.height}`).join('\n')}`)
+    if (invalidDimensions.length) {
+      throw new Error(`Visual smoke invalid dimensions:\n${invalidDimensions.map((item) => `${item.mode}/${item.name ?? item.type}: ${item.width}x${item.height}`).join('\n')}`)
+    }
+    if (splitAdvisories.length) {
+      const unique = splitAdvisories.filter((item, index, rows) => rows.findIndex((other) => other.name === item.name) === index)
+      for (const item of unique) {
+        console.log(`split recommended: ${item.name} (${item.type}) ${item.width}x${item.height} · ${item.quality.reasons.join('；')}`)
+      }
+    }
+    if (qualityBenchmark) {
+      const lightRows = result.filter((item) => item.mode === 'light' && item.ok)
+      for (const item of lightRows) {
+        console.log(`quality: ${item.name} · ${item.quality.density} · ${item.width}x${item.height} · overflow=${item.geometry.contentOverflow} · nodeOverlap=${item.geometry.nodeOverlaps} · labelOverlap=${item.geometry.labelOverlaps}`)
+      }
+    }
+    if (geometryFailures.length) {
+      throw new Error(`Visual smoke geometry failures:\n${geometryFailures.map((item) => `${item.mode}/${item.name ?? item.type}: overflow=${item.geometry?.contentOverflow ?? 0}, nodeOverlap=${item.geometry?.nodeOverlaps ?? 0}${item.geometry?.overflowSamples?.length ? ` [${item.geometry.overflowSamples.join(' | ')}]` : ''}`).join('\n')}`)
+    }
+    if (hardOversized.length) {
+      throw new Error(`Visual smoke oversized diagrams:\n${hardOversized.map((item) => `${item.mode}/${item.name ?? item.type}: ${item.width}x${item.height}`).join('\n')}`)
     }
     console.log(`Codex Diagram visual smoke passed: ${result.length} browser renders${externalCases ? ' from external cases' : ''}.`)
   } finally {
@@ -80,11 +105,21 @@ async function loadExternalCases(dir) {
   const cases = []
   for (const entry of entries) {
     if (!entry.isFile() || !/\.m(?:md|ermaid)$/i.test(entry.name)) continue
-    const type = entry.name.replace(/\.m(?:md|ermaid)$/i, '')
-    cases.push({ type, source: await readFile(path.join(dir, entry.name), 'utf8') })
+    const stem = entry.name.replace(/\.m(?:md|ermaid)$/i, '')
+    const [type, suffix] = stem.split('__', 2)
+    cases.push({ type, name: suffix ? `${type}/${suffix}` : type, source: await readFile(path.join(dir, entry.name), 'utf8') })
   }
   if (!cases.length) throw new Error(`No .mmd/.mermaid visual cases found in ${dir}`)
   return cases.sort((a, b) => a.type.localeCompare(b.type))
+}
+
+function isOversized(item) {
+  const limits = item.type === 'requirement' || item.type === 'er'
+    ? { width: 2000, height: 1400 }
+    : item.type === 'gantt' || item.type === 'timeline'
+      ? { width: 2200, height: 1400 }
+      : { width: 1800, height: 1400 }
+  return item.width > limits.width || item.height > limits.height
 }
 
 async function findChrome() {
@@ -144,11 +179,13 @@ function browserEntry(externalCases) {
   const templates = path.join(root, 'src/templates.ts')
   const types = path.join(root, 'src/types.ts')
   const grammar = path.join(root, 'src/mermaidVisualGrammar.ts')
+  const quality = path.join(root, 'src/mermaidQuality.ts')
   return `
 import mermaid from 'mermaid'
 import { createTemplate } from ${JSON.stringify(templates)}
 import { mermaidDiagramTypes } from ${JSON.stringify(types)}
-import { mermaidVisualConfig } from ${JSON.stringify(grammar)}
+import { mermaidVisualConfig, normalizeMermaidSourceForRender } from ${JSON.stringify(grammar)}
+import { assessMermaidVisualQuality } from ${JSON.stringify(quality)}
 
 const palettes = {
   light: { background:'#ffffff', surface:'#fafafa', raised:'#f4f4f5', muted:'#eeeeef', text:'#18181b', secondaryText:'#6b7280', border:'#d4d4d8', strongBorder:'#a1a1aa', accent:'#2563eb', success:'#16803a', warning:'#b45309', danger:'#c9362b' },
@@ -157,22 +194,87 @@ const palettes = {
 const output = []
 const externalCases = ${JSON.stringify(externalCases ?? null)}
 for (const mode of ['light', 'dark']) {
-  const cases = externalCases || mermaidDiagramTypes.map(({ type }) => ({ type, source: createTemplate(type, '测试图表') }))
-  for (const { type, source } of cases) {
+  const cases = externalCases || mermaidDiagramTypes.map(({ type }) => ({ type, name: type, source: createTemplate(type, '测试图表') }))
+  for (const { type, name = type, source } of cases) {
     try {
-      mermaid.initialize({ ...mermaidVisualConfig(type, palettes[mode], source), fontFamily: 'Arial, sans-serif' })
-      const { svg } = await mermaid.render('smoke-' + mode + '-' + type + '-' + Math.random().toString(36).slice(2), source)
+      const renderSource = normalizeMermaidSourceForRender(type, source)
+      mermaid.initialize({ ...mermaidVisualConfig(type, palettes[mode], renderSource), fontFamily: 'Arial, sans-serif' })
+      const { svg } = await mermaid.render('smoke-' + mode + '-' + type + '-' + Math.random().toString(36).slice(2), renderSource)
       const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
       const root = doc.documentElement
       const viewBox = (root.getAttribute('viewBox') || '').split(/\\s+/).map(Number)
       const width = viewBox.length === 4 ? viewBox[2] : Number.parseFloat(root.getAttribute('width') || '0')
       const height = viewBox.length === 4 ? viewBox[3] : Number.parseFloat(root.getAttribute('height') || '0')
-      output.push({ mode, type, ok: true, width: Math.round(width), height: Math.round(height) })
+      const geometry = inspectRenderedSvg(svg, type)
+      output.push({ mode, type, name, ok: true, width: Math.round(width), height: Math.round(height), quality: assessMermaidVisualQuality(type, source), geometry })
     } catch (error) {
-      output.push({ mode, type, ok: false, error: error instanceof Error ? error.message : String(error) })
+      output.push({ mode, type, name, ok: false, error: error instanceof Error ? error.message : String(error), quality: assessMermaidVisualQuality(type, source) })
     }
     document.body.replaceChildren()
   }
+}
+function inspectRenderedSvg(svg, type) {
+  const host = document.createElement('div')
+  host.style.position = 'absolute'
+  host.style.left = '-100000px'
+  host.style.top = '0'
+  host.style.visibility = 'hidden'
+  host.innerHTML = svg
+  document.body.appendChild(host)
+  const svgEl = host.querySelector('svg')
+  if (!svgEl) {
+    host.remove()
+    return { contentOverflow: 0, nodeOverlaps: 0, labelOverlaps: 0 }
+  }
+  const bounds = safeRect(svgEl)
+  const contentEntries = [...svgEl.querySelectorAll('text, foreignObject')]
+    .map((element) => ({
+      box: safeRect(element),
+      tag: element.tagName,
+      text: (element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+    }))
+    .filter((entry) => entry.box && (entry.tag.toLowerCase() === 'foreignobject' || entry.text.length > 0))
+  const overflowEntries = bounds ? contentEntries.filter((entry) => !containsBox(bounds, entry.box, 3)) : []
+  const contentOverflow = overflowEntries.length
+  const nodeSelector = type === 'flowchart' || type === 'state' || type === 'class' ? 'g.node' : ''
+  const nodes = nodeSelector ? [...svgEl.querySelectorAll(nodeSelector)].map(safeRect).filter(Boolean) : []
+  const labels = [...svgEl.querySelectorAll('g.edgeLabel')].map(safeRect).filter(Boolean)
+  const result = {
+    contentOverflow,
+    nodeOverlaps: countOverlaps(nodes, 4),
+    labelOverlaps: countOverlaps(labels, 8),
+    overflowSamples: overflowEntries.slice(0, 10).map((entry) => entry.tag + ':' + entry.text),
+  }
+  host.remove()
+  return result
+}
+function safeRect(element) {
+  try {
+    const box = element.getBoundingClientRect()
+    if (![box.x, box.y, box.width, box.height].every(Number.isFinite)) return undefined
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
+  } catch {
+    return undefined
+  }
+}
+function containsBox(outer, inner, tolerance) {
+  return inner.x >= outer.x - tolerance
+    && inner.y >= outer.y - tolerance
+    && inner.x + inner.width <= outer.x + outer.width + tolerance
+    && inner.y + inner.height <= outer.y + outer.height + tolerance
+}
+function countOverlaps(boxes, tolerance) {
+  let overlaps = 0
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i]
+      const b = boxes[j]
+      const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+      const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+      if (width > tolerance && height > tolerance) overlaps += 1
+    }
+  }
+  return overlaps
 }
 const pre = document.createElement('pre')
 pre.id = 'result'

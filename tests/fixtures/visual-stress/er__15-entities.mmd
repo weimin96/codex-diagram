@@ -1,0 +1,34 @@
+erDiagram
+  USER { bigint id PK string email UK }
+  TENANT { bigint id PK string name }
+  MEMBERSHIP { bigint id PK bigint user_id FK bigint tenant_id FK }
+  DOCUMENT { bigint id PK bigint tenant_id FK bigint source_id FK }
+  SOURCE { bigint id PK bigint tenant_id FK string type }
+  CHUNK { bigint id PK bigint document_id FK int ordinal }
+  EMBEDDING { bigint id PK bigint chunk_id FK string model }
+  ENTITY { bigint id PK bigint tenant_id FK string name }
+  RELATION { bigint id PK bigint from_entity_id FK bigint to_entity_id FK }
+  TAG { bigint id PK string name }
+  DOCUMENT_TAG { bigint document_id FK bigint tag_id FK }
+  COMMENT { bigint id PK bigint document_id FK bigint user_id FK }
+  ACL { bigint id PK bigint document_id FK bigint subject_id FK }
+  QUERY_LOG { bigint id PK bigint user_id FK string query }
+  CITATION { bigint id PK bigint query_log_id FK bigint chunk_id FK }
+  USER ||--o{ MEMBERSHIP : joins
+  TENANT ||--o{ MEMBERSHIP : has
+  TENANT ||--o{ SOURCE : owns
+  SOURCE ||--o{ DOCUMENT : provides
+  TENANT ||--o{ DOCUMENT : owns
+  DOCUMENT ||--|{ CHUNK : splits
+  CHUNK ||--o{ EMBEDDING : embeds
+  TENANT ||--o{ ENTITY : owns
+  ENTITY ||--o{ RELATION : source
+  ENTITY ||--o{ RELATION : target
+  DOCUMENT ||--o{ DOCUMENT_TAG : tagged
+  TAG ||--o{ DOCUMENT_TAG : assigned
+  DOCUMENT ||--o{ COMMENT : discussed
+  USER ||--o{ COMMENT : writes
+  DOCUMENT ||--o{ ACL : protected
+  USER ||--o{ QUERY_LOG : asks
+  QUERY_LOG ||--o{ CITATION : cites
+  CHUNK ||--o{ CITATION : referenced
