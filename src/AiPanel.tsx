@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { diagramTypes, type DiagramDocument, type DiagramType } from './types.js'
+import { diagramTypeGroups, type DiagramDocument, type DiagramType } from './types.js'
 import type { DiagramGenerationRequest } from './aiPrompts.js'
 
 interface AiPanelProps {
@@ -27,6 +27,10 @@ const generationTemplates: Array<{ label: string; type: DiagramType; title: stri
   { label: '功能脑图', type: 'mindmap', title: '功能与能力地图', instructions: '围绕一个中心主题按互斥维度拆成 3~7 个一级分支，同层保持相同抽象粒度，不按目录结构机械展开。' },
   { label: '类关系', type: 'class', title: '核心类关系', instructions: '只保留有设计意义的类、接口、继承/实现/组合关系和关键公开成员，不展开 getter/setter、DTO 与无关工具类。' },
   { label: '项目计划', type: 'gantt', title: '项目计划', instructions: '按真实阶段、依赖和里程碑组织计划；没有真实日期时不要编造日历日期，优先使用已知计划信息。' },
+  { label: '需求追踪', type: 'requirement', title: '需求追踪', instructions: '从需求、测试和实现中提取稳定需求项、实现元素及 satisfies/verifies/traces 等真实追踪关系，不编造风险与验证方法。' },
+  { label: '指标趋势', type: 'xychart', title: '指标趋势', instructions: '只使用代码、评测、日志或上下文中存在的真实数值；趋势优先 line，离散比较优先 bar，不混用不同量纲。' },
+  { label: '流量去向', type: 'sankey', title: '流量去向', instructions: '只使用可加总且同量纲的真实流量、资金、容量或转化数据；保持主流向清晰，不为凑比例编造数值。' },
+  { label: '根因分析', type: 'ishikawa', title: '根因分析', instructions: '围绕一个明确问题，从日志、缺陷、复盘或上下文事实提炼原因类别和可验证具体原因；区分候选原因与已证实根因。' },
   { label: '架构画布', type: 'canvas', title: '架构画布', instructions: '用自由画布组织核心模块、外部系统、数据存储和关键说明，保持留白和清晰的空间分组。' },
   { label: 'C4 Context', type: 'canvas', title: 'C4 系统上下文', instructions: '按 C4 Context 层级只展示 Person、当前 Software System 和关键外部 Software System。使用 c4Type 明确语义；当前系统用 software-system boundary，外部系统保持独立节点，连线写明关系，不展开内部容器。' },
   { label: 'C4 Container', type: 'canvas', title: 'C4 容器架构', instructions: '按 C4 Container 层级识别 Web/客户端、API/网关、应用服务、数据库、缓存、消息队列和关键外部系统。使用 software-system 父边界 + container 子边界或 container 节点，保留 parentId 层级，节点绑定最相关源码路径，主要关系使用正交连线。' },
@@ -121,7 +125,11 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
           <label>
             <span>类型</span>
             <select value={type} onChange={(event) => setType(event.target.value as DiagramType)}>
-              {diagramTypes.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
+              {diagramTypeGroups.map((group) => (
+                <optgroup key={group.category} label={group.label}>
+                  {group.items.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
+                </optgroup>
+              ))}
             </select>
           </label>
           <label>

@@ -12,6 +12,14 @@ const templates: Record<MermaidDiagramType, (title: string) => string> = {
   gitgraph: (title) => `gitGraph\n  commit id: "Start"\n  branch feature\n  checkout feature\n  commit id: "${safeQuotedText(title)}"\n  checkout main\n  merge feature\n`,
   journey: (title) => `journey\n  title ${safeText(title)}\n  section 核心路径\n    进入: 5: User\n    操作: 4: User, System\n    完成: 5: User\n`,
   quadrant: (title) => `quadrantChart\n  title ${safeText(title)}\n  x-axis 低收益 --> 高收益\n  y-axis 低成本 --> 高成本\n  quadrant-1 谨慎投入\n  quadrant-2 战略投入\n  quadrant-3 低优先级\n  quadrant-4 快速推进\n  ${safeClassName(title)}: [0.72, 0.35]\n`,
+  kanban: () => `kanban\n  backlog[待处理]\n    item1[需求确认]\n  doing[进行中]\n    item2[核心实现]\n  done[已完成]\n    item3[验收发布]\n`,
+  requirement: (title) => `requirementDiagram\n\n  requirement core_req {\n    id: 1\n    text: ${safeRequirementText(title)}\n    risk: medium\n    verifymethod: test\n  }\n\n  element core_element {\n    type: service\n    docref: workspace\n  }\n\n  core_element - satisfies -> core_req\n`,
+  sankey: () => `sankey-beta\n\n用户,入口,100\n入口,完成,72\n入口,流失,28\n`,
+  xychart: (title) => `xychart-beta\n  title "${safeQuotedText(title)}"\n  x-axis [一月, 二月, 三月]\n  y-axis "数量" 0 --> 100\n  bar [42, 68, 81]\n  line [38, 64, 88]\n`,
+  pie: (title) => `pie showData\n  title ${safeText(title)}\n  "核心" : 55\n  "次要" : 30\n  "其他" : 15\n`,
+  radar: (title) => `radar-beta\n  title "${safeQuotedText(title)}"\n  axis speed["速度"], quality["质量"], cost["成本"], scale["规模"]\n  curve current["当前"]{72, 88, 64, 80}\n  curve target["目标"]{90, 92, 78, 90}\n  max 100\n  min 0\n`,
+  treemap: (title) => `treemap-beta\n  "${safeQuotedText(title)}"\n    "核心": 55\n    "增长": 30\n    "其他": 15\n`,
+  ishikawa: (title) => `ishikawa-beta\n  "${safeQuotedText(title)}"\n    "人员"\n      "能力与经验"\n    "流程"\n      "检查与反馈"\n    "工具"\n      "自动化与可观测性"\n`,
 }
 
 export function createTemplate(type: MermaidDiagramType, title: string): string {
@@ -36,6 +44,14 @@ export function detectDiagramType(source: string): MermaidDiagramType | 'unknown
   if (/^gitGraph\b/i.test(first)) return 'gitgraph'
   if (/^journey\b/i.test(first)) return 'journey'
   if (/^quadrantChart\b/i.test(first)) return 'quadrant'
+  if (/^kanban\b/i.test(first)) return 'kanban'
+  if (/^requirement(?:Diagram)?\b/i.test(first)) return 'requirement'
+  if (/^sankey(?:-beta)?\b/i.test(first)) return 'sankey'
+  if (/^xychart(?:-beta)?\b/i.test(first)) return 'xychart'
+  if (/^pie\b/i.test(first)) return 'pie'
+  if (/^radar-beta\b/i.test(first)) return 'radar'
+  if (/^treemap(?:-beta)?\b/i.test(first)) return 'treemap'
+  if (/^ishikawa(?:-beta)?\b/i.test(first)) return 'ishikawa'
   return 'unknown'
 }
 
@@ -58,4 +74,8 @@ function safeText(value: string): string {
 
 function safeQuotedText(value: string): string {
   return safeText(value).replace(/["\\]/g, '')
+}
+
+function safeRequirementText(value: string): string {
+  return safeText(value).replace(/[{}:]/g, ' ')
 }

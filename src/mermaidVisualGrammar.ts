@@ -44,6 +44,35 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
     if (lines.length > 24) return 'compact'
     return 'comfortable'
   }
+  if (type === 'kanban') {
+    const cards = lines.filter((line) => /^\w+\[/.test(line)).length
+    if (cards > 28) return 'dense'
+    if (cards > 16) return 'compact'
+    return 'comfortable'
+  }
+  if (type === 'requirement') {
+    const items = lines.filter((line) => /^(requirement|functionalRequirement|interfaceRequirement|performanceRequirement|physicalRequirement|designConstraint|element)\b/.test(line)).length
+    if (items > 20) return 'dense'
+    if (items > 11) return 'compact'
+    return 'comfortable'
+  }
+  if (type === 'sankey') {
+    const flows = Math.max(0, lines.length - 1)
+    if (flows > 28) return 'dense'
+    if (flows > 16) return 'compact'
+    return 'comfortable'
+  }
+  if (type === 'radar') {
+    const curves = lines.filter((line) => /^curve\b/i.test(line)).length
+    if (curves > 4) return 'dense'
+    if (curves > 2) return 'compact'
+    return 'comfortable'
+  }
+  if (type === 'treemap' || type === 'ishikawa') {
+    if (lines.length > 32) return 'dense'
+    if (lines.length > 18) return 'compact'
+    return 'comfortable'
+  }
   if (lines.length > 42) return 'dense'
   if (lines.length > 22) return 'compact'
   return 'comfortable'
@@ -155,6 +184,53 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
     tagLabelColor: palette.text,
     tagLabelBackground: palette.muted,
     tagLabelBorder: palette.border,
+    cScale0: palette.accent,
+    cScale1: palette.success,
+    cScale2: palette.warning,
+    cScale3: palette.danger,
+    cScale4: palette.secondaryText,
+    cScale5: palette.strongBorder,
+    pie1: palette.accent,
+    pie2: palette.success,
+    pie3: palette.warning,
+    pie4: palette.danger,
+    pie5: palette.secondaryText,
+    pie6: palette.strongBorder,
+    pieStrokeColor: palette.background,
+    pieOuterStrokeColor: palette.border,
+    pieSectionTextColor: palette.text,
+    pieLegendTextColor: palette.text,
+    requirementBackground: palette.raised,
+    requirementBorderColor: palette.strongBorder,
+    requirementBorderSize: '1',
+    requirementTextColor: palette.text,
+    xyChart: {
+      backgroundColor: palette.background,
+      titleColor: palette.text,
+      dataLabelColor: palette.text,
+      legendTextColor: palette.text,
+      xAxisTitleColor: palette.text,
+      xAxisLabelColor: palette.secondaryText,
+      xAxisTickColor: palette.border,
+      xAxisLineColor: palette.strongBorder,
+      yAxisTitleColor: palette.text,
+      yAxisLabelColor: palette.secondaryText,
+      yAxisTickColor: palette.border,
+      yAxisLineColor: palette.strongBorder,
+      plotColorPalette: [palette.accent, palette.success, palette.warning, palette.danger, palette.secondaryText].join(','),
+    },
+    radar: {
+      axisColor: palette.strongBorder,
+      axisStrokeWidth: 1,
+      axisLabelFontSize: 12,
+      curveOpacity: 0.34,
+      curveStrokeWidth: 2,
+      graticuleColor: palette.border,
+      graticuleStrokeWidth: 1,
+      graticuleOpacity: 0.6,
+      legendBoxSize: 11,
+      legendFontSize: 12,
+    },
   }
 
   return {
@@ -280,12 +356,71 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       quadrantInternalBorderStrokeWidth: 1,
       quadrantExternalBorderStrokeWidth: 1,
     },
+    pie: {
+      textPosition: 0.72,
+      donutHole: 0,
+      legendPosition: 'right',
+    },
+    xyChart: {
+      width: 720,
+      height: 460,
+      titleFontSize: 18,
+      titlePadding: 12,
+      showDataLabel: density === 'comfortable',
+      showDataLabelOutsideBar: false,
+      showTitle: true,
+      showLegend: true,
+      legendFontSize: 12,
+      legendPadding: 8,
+    },
+    requirement: {
+      rect_fill: palette.raised,
+      text_color: palette.text,
+      rect_border_size: '1',
+      rect_border_color: palette.strongBorder,
+      rect_min_width: density === 'dense' ? 180 : 220,
+      rect_min_height: 70,
+      fontSize: 12,
+      rect_padding: density === 'dense' ? 8 : 10,
+      line_height: 20,
+    },
+    kanban: {
+      padding: density === 'dense' ? 8 : 12,
+      sectionWidth: density === 'dense' ? 190 : density === 'compact' ? 220 : 250,
+    },
+    sankey: {
+      width: 760,
+      height: density === 'dense' ? 460 : 520,
+      linkColor: 'gradient',
+      nodeAlignment: 'justify',
+      useMaxWidth: true,
+      showValues: true,
+      nodeWidth: 12,
+      nodePadding: density === 'dense' ? 8 : 14,
+      labelStyle: 'outlined',
+    },
+    radar: {
+      width: 620,
+      height: 520,
+      marginTop: 44,
+      marginRight: 72,
+      marginBottom: 54,
+      marginLeft: 72,
+      axisScaleFactor: density === 'dense' ? 0.9 : 1,
+      axisLabelFactor: 1.08,
+      curveTension: 0.16,
+    },
+    ishikawa: {
+      diagramPadding: density === 'dense' ? 14 : 22,
+      useMaxWidth: true,
+    },
   }
 }
 
 export function mermaidVisualProfile(type: MermaidDiagramType | 'unknown'): string {
   return ({
     flowchart: 'process', sequence: 'interaction', er: 'schema', state: 'lifecycle', mindmap: 'hierarchy', class: 'structure',
-    gantt: 'planning', timeline: 'chronology', gitgraph: 'versioning', journey: 'experience', quadrant: 'positioning', unknown: 'generic',
+    gantt: 'planning', timeline: 'chronology', gitgraph: 'versioning', journey: 'experience', quadrant: 'positioning',
+    kanban: 'work-management', requirement: 'traceability', sankey: 'flow-quantity', xychart: 'metrics', pie: 'composition', radar: 'multi-axis', treemap: 'hierarchical-composition', ishikawa: 'root-cause', unknown: 'generic',
   } as const)[type]
 }

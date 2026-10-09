@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { allDiagramSkills, diagramSkill } from '../src/diagramSkills/registry.js'
-import { mermaidDiagramTypes } from '../src/types.js'
+import { diagramTypeGroups, mermaidDiagramTypes } from '../src/types.js'
 
 test('every exposed Mermaid diagram type has a registered skill', () => {
   const exposed = mermaidDiagramTypes.map((item) => item.type).sort()
@@ -26,4 +26,24 @@ test('secondary diagram types still have dedicated skill rules instead of generi
     assert.ok(skill.compositionRules.length > 0)
     assert.ok(skill.antiPatterns.length > 0)
   }
+})
+
+test('extended analysis and data diagram types have specialized skills', () => {
+  for (const type of ['kanban', 'requirement', 'sankey', 'xychart', 'pie', 'radar', 'treemap', 'ishikawa'] as const) {
+    const skill = diagramSkill(type)
+    assert.equal(skill.type, type)
+    assert.ok(skill.compositionRules.length >= 2, `${type} should have composition rules`)
+    assert.ok(skill.antiPatterns.length >= 2, `${type} should have anti-pattern rules`)
+    assert.ok(skill.generationRules.length >= 1, `${type} should have generation rules`)
+  }
+})
+
+test('diagram type selector groups advanced types instead of flattening the menu', () => {
+  const data = diagramTypeGroups.find((group) => group.category === 'data')
+  const analysis = diagramTypeGroups.find((group) => group.category === 'analysis')
+  const special = diagramTypeGroups.find((group) => group.category === 'special')
+  assert.deepEqual(data?.items.map((item) => item.type), ['sankey', 'xychart', 'pie', 'radar', 'treemap'])
+  assert.ok(analysis?.items.some((item) => item.type === 'kanban'))
+  assert.ok(analysis?.items.some((item) => item.type === 'requirement'))
+  assert.deepEqual(special?.items.map((item) => item.type), ['ishikawa'])
 })

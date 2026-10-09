@@ -724,10 +724,10 @@ server.registerTool('diagram.upsertSourceNodes', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat. IMPORTANT: use type=canvas for software/system/module/service architecture, service topology, dependency architecture and C4 views. Use type=flowchart only for explicit process/workflow/control-flow/decision-flow or Mermaid flowchart requests.',
+  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat. Use type=canvas for software architecture/C4, flowchart for process/decision flow, sequence for interactions, ER/state/mindmap/class for structural semantics, and the dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa) only when their semantic and data requirements are actually satisfied.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
-    type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]).describe('Diagram kind. Choose canvas for architecture/system/module/service/C4/topology diagrams. Choose flowchart only for explicit workflow/process/control-flow/decision-flow diagrams.'),
+    type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]).describe('Diagram kind. Choose canvas for architecture/system/module/service/C4/topology diagrams; otherwise choose the dedicated semantic or data visualization type rather than forcing the request into flowchart.'),
     title: z.string().min(1).max(120),
     animate: z.boolean().optional(),
   }),

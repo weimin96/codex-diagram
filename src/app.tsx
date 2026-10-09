@@ -17,7 +17,7 @@ import { MermaidEditor } from './MermaidEditor.js'
 import { mermaidVisualConfig } from './mermaidVisualGrammar.js'
 import { detectDiagramType } from './templates.js'
 import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
-import { diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { diagramTypeGroups, diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
@@ -2774,7 +2774,11 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
     >
       <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="图表名称" />
       <select value={type} onChange={(event) => setType(event.target.value as DiagramType)}>
-        {diagramTypes.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
+        {diagramTypeGroups.map((group) => (
+          <optgroup key={group.category} label={group.label}>
+            {group.items.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
+          </optgroup>
+        ))}
       </select>
       <div className="form-actions">
         <button type="button" onClick={onCancel}>取消</button>

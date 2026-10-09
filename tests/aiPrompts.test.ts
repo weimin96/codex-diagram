@@ -45,6 +45,17 @@ test('injects the matching professional skill for each primary Mermaid type', ()
   }
 })
 
+test('data visualization prompts enforce truthful quantitative semantics', () => {
+  const sankey = buildGenerationPrompt('/workspace', { type: 'sankey', title: 'Traffic', scope: '', instructions: '' })
+  assert.match(sankey, /Sankey Diagram Skill/)
+  assert.match(sankey, /同一量纲/)
+  assert.match(sankey, /不要为了图形丰富度编造数值/)
+
+  const requirement = buildGenerationPrompt('/workspace', { type: 'requirement', title: 'Requirements', scope: '', instructions: '' })
+  assert.match(requirement, /Requirement Diagram Skill/)
+  assert.match(requirement, /satisfies\/verifies/)
+})
+
 test('prefers incremental Canvas patches for finite conversational edits', () => {
   const diagram = {
     type: 'canvas',

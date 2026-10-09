@@ -47,3 +47,48 @@ test('visual density compacts large sequence and ER diagrams without changing so
   assert.equal(resolveMermaidVisualDensity('er', er), 'compact')
   assert.equal(mermaidVisualConfig('er', palette, er).er?.entityPadding, 10)
 })
+
+test('data visualizations use dedicated chart grammar instead of generic Mermaid defaults', () => {
+  const sankey = mermaidVisualConfig('sankey', palette)
+  assert.equal(sankey.sankey?.linkColor, 'gradient')
+  assert.equal(sankey.sankey?.showValues, true)
+  assert.equal(mermaidVisualProfile('sankey'), 'flow-quantity')
+
+  const xy = mermaidVisualConfig('xychart', palette)
+  assert.equal(xy.xyChart?.showLegend, true)
+  assert.equal(xy.themeVariables?.xyChart?.plotColorPalette, [palette.accent, palette.success, palette.warning, palette.danger, palette.secondaryText].join(','))
+
+  const radar = mermaidVisualConfig('radar', palette)
+  assert.equal(radar.radar?.width, 620)
+  assert.equal(radar.themeVariables?.radar?.curveStrokeWidth, 2)
+  assert.equal(mermaidVisualProfile('radar'), 'multi-axis')
+})
+
+test('analysis diagrams receive specialized readable geometry', () => {
+  const requirement = mermaidVisualConfig('requirement', palette)
+  assert.equal(requirement.requirement?.rect_fill, palette.raised)
+  assert.equal(requirement.themeVariables?.requirementBorderColor, palette.strongBorder)
+
+  const kanban = mermaidVisualConfig('kanban', palette)
+  assert.equal(kanban.kanban?.sectionWidth, 250)
+
+  const ishikawa = mermaidVisualConfig('ishikawa', palette)
+  assert.equal(ishikawa.ishikawa?.useMaxWidth, true)
+  assert.equal(mermaidVisualProfile('ishikawa'), 'root-cause')
+})
+
+test('large Sankey and Radar diagrams compact independently', () => {
+  const sankey = ['sankey-beta', '', ...Array.from({ length: 29 }, (_, index) => `A${index},B${index},${index + 1}`)].join('\n')
+  assert.equal(resolveMermaidVisualDensity('sankey', sankey), 'dense')
+  assert.equal(mermaidVisualConfig('sankey', palette, sankey).sankey?.nodePadding, 8)
+
+  const radar = ['radar-beta', 'axis a["A"],b["B"],c["C"]', ...Array.from({ length: 5 }, (_, index) => `curve c${index}["C${index}"]{1,2,3}`)].join('\n')
+  assert.equal(resolveMermaidVisualDensity('radar', radar), 'dense')
+  assert.equal(mermaidVisualConfig('radar', palette, radar).radar?.axisScaleFactor, 0.9)
+})
+
+test('large Kanban boards reduce column width without touching source', () => {
+  const kanban = ['kanban', 'todo[Todo]', ...Array.from({ length: 18 }, (_, index) => `task${index}[Task ${index}]`)].join('\n')
+  assert.equal(resolveMermaidVisualDensity('kanban', kanban), 'compact')
+  assert.equal(mermaidVisualConfig('kanban', palette, kanban).kanban?.sectionWidth, 220)
+})

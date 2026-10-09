@@ -22,7 +22,7 @@ for (const marker of [
   'preferredDisplayMode: "fullscreen"',
   'diagram.thread is only the UI-open action',
   'A software/system/module/service architecture request is NOT a flowchart request',
-  'use type=canvas for software/system/module/service architecture',
+  'dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa)',
   'diagram.beautifyArchitecture',
   'diagram.routeArchitectureEdges',
   'deterministically adds architecture partitions',
