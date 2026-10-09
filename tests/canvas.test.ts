@@ -135,6 +135,7 @@ test('renders compact presentation architecture without dashboard metadata in SV
       { id: 'api', type: 'node', x: 120, y: 180, width: 220, height: 100, text: 'Knowledge API', icon: 'api', stencil: 'grpc', emphasis: 'primary' },
       { id: 'db', type: 'node', x: 720, y: 180, width: 220, height: 100, text: 'PostgreSQL', icon: 'database', stencil: 'postgres' },
       { id: 'edge', type: 'arrow', from: 'api', to: 'db', label: 'gRPC', routing: 'orthogonal', emphasis: 'primary' },
+      { id: 'noise', type: 'arrow', from: 'api', to: 'db', label: '写入', routing: 'orthogonal', emphasis: 'secondary' },
     ],
   }
 
@@ -143,6 +144,7 @@ test('renders compact presentation architecture without dashboard metadata in SV
   assert.doesNotMatch(svg, /主链路/)
   assert.doesNotMatch(svg, />Container</)
   assert.match(svg, />gRPC</)
+  assert.doesNotMatch(svg, />写入</)
   assert.match(svg, /fill="#4169E1"/)
   assert.doesNotMatch(svg, />PG</)
 })

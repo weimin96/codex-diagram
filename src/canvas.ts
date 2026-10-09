@@ -292,9 +292,9 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const architectureHeader = canvasArchitectureHeader(sourceScene)
   const bundleTrunks = canvasBundleTrunks(scene).map((bundle) => {
     const opacity = architectureMode
-      ? bundle.emphasis === 'primary' ? '0.16' : bundle.emphasis === 'muted' ? '0.07' : '0.10'
+      ? bundle.emphasis === 'primary' ? '0.14' : bundle.emphasis === 'muted' ? '0.05' : '0.09'
       : bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
-    const width = architectureMode ? (bundle.emphasis === 'primary' ? 4 : 3) * architectureProfile.edgeScale : bundle.emphasis === 'primary' ? 7 : 5.5
+    const width = architectureMode ? (bundle.emphasis === 'primary' ? 3.4 : 2.7) * architectureProfile.edgeScale : bundle.emphasis === 'primary' ? 7 : 5.5
     return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
   }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
@@ -308,16 +308,16 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const dash = arrow.lineStyle === 'dashed' || (architectureMode && architectureProfile.sketchEdges) ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
     const strokeWidth = architectureMode
-      ? (arrow.emphasis === 'primary' ? 1.9 : arrow.emphasis === 'muted' ? 0.9 : 1.25) * architectureProfile.edgeScale
+      ? (arrow.emphasis === 'primary' ? 1.8 : arrow.emphasis === 'muted' ? 0.85 : 1.2) * architectureProfile.edgeScale
       : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
     const opacity = architectureMode
-      ? arrow.emphasis === 'muted' ? '0.42' : arrow.emphasis === 'secondary' ? '0.66' : '0.92'
+      ? arrow.emphasis === 'muted' ? '0.34' : arrow.emphasis === 'secondary' ? '0.72' : '0.94'
       : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
-    const visibleLabel = architectureMode && arrow.label && !shouldRenderArchitectureRelationLabel(arrow) ? undefined : arrow.label
+    const visibleLabel = architectureMode && arrow.label && !canvasArchitectureRelationLabelVisible(arrow) ? undefined : arrow.label
     const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
     const labelMarkup = visibleLabel && label
       ? architectureMode
-        ? `<text x="${label.x}" y="${label.y + 3}" text-anchor="middle" font-size="10.5" font-weight="550" fill="${escapeXml(text)}" stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${escapeXml(truncateCanvasText(visibleLabel, 26))}</text>`
+        ? `<text x="${label.x}" y="${label.y + 3}" text-anchor="middle" font-size="12" font-weight="620" fill="${escapeXml(text)}" stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${escapeXml(truncateCanvasText(visibleLabel, 26))}</text>`
         : `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(visibleLabel, 30))}</text></g>`
       : ''
     return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${labelMarkup}</g>`
@@ -375,7 +375,8 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const collapsed = group.collapsed ? ' · collapsed' : ''
     const fill = group.collapsed || softwareSystem || container ? escapeXml(palette.fill) : 'none'
     if (architectureMode) {
-      return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="${architectureProfile.groupRadius}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(softwareSystem ? architectureBorder : palette.stroke)}" stroke-opacity="${architectureProfile.groupStrokeOpacity}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${group.label ? `<text x="${group.x + 10}" y="${group.y + 18}" font-size="${softwareSystem ? 11.5 : 10.5}" font-weight="${softwareSystem ? 650 : 600}" fill="${escapeXml(text)}" opacity="${softwareSystem ? '0.82' : '0.72'}">${escapeXml(`${group.label}${collapsed}`)}</text>` : ''}</g>`
+      const groupStrokeOpacity = softwareSystem ? architectureProfile.groupStrokeOpacity * 0.78 : architectureProfile.groupStrokeOpacity
+      return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="${architectureProfile.groupRadius}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(softwareSystem ? architectureBorder : palette.stroke)}" stroke-opacity="${groupStrokeOpacity}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${group.label ? `<text x="${group.x + 10}" y="${group.y + 18}" font-size="${softwareSystem ? 10.5 : 10.5}" font-weight="${softwareSystem ? 620 : 600}" fill="${escapeXml(text)}" opacity="${softwareSystem ? '0.66' : '0.72'}">${escapeXml(`${group.label}${collapsed}`)}</text>` : ''}</g>`
     }
     const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
     const header = group.label && softwareSystem
@@ -1141,15 +1142,15 @@ function renderArchitectureCanvasNode(
 function canvasArchitectureThemeProfile(theme: CanvasArchitectureTheme) {
   switch (theme) {
     case 'cloud':
-      return { edgeScale: 1.04, sketchEdges: false, groupSolid: true, groupScale: 0.95, groupFillOpacity: 0.045, groupStrokeOpacity: 0.34, groupRadius: 14, nodePlateOpacity: 0.34, nodeStrokeOpacity: 0.22, nodeStrokeWidth: 0.9, nodeRadius: 11, titleWeight: 670, titleSizeDelta: 0.15, iconScale: 1.05, fontFamily: '', subtitleOpacity: 0.62 }
+      return { edgeScale: 1.02, sketchEdges: false, groupSolid: true, groupScale: 0.9, groupFillOpacity: 0.025, groupStrokeOpacity: 0.24, groupRadius: 16, nodePlateOpacity: 0.20, nodeStrokeOpacity: 0.14, nodeStrokeWidth: 0.85, nodeRadius: 12, titleWeight: 670, titleSizeDelta: 0.15, iconScale: 1.05, fontFamily: '', subtitleOpacity: 0.62 }
     case 'technical':
       return { edgeScale: 0.9, sketchEdges: false, groupSolid: false, groupScale: 0.72, groupFillOpacity: 0, groupStrokeOpacity: 0.42, groupRadius: 2, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 2, titleWeight: 620, titleSizeDelta: -0.65, iconScale: 0.78, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', subtitleOpacity: 0.50 }
     case 'presentation':
-      return { edgeScale: 1.08, sketchEdges: false, groupSolid: true, groupScale: 0.9, groupFillOpacity: 0.035, groupStrokeOpacity: 0.42, groupRadius: 12, nodePlateOpacity: 0.26, nodeStrokeOpacity: 0.20, nodeStrokeWidth: 0.9, nodeRadius: 9, titleWeight: 680, titleSizeDelta: 0.25, iconScale: 1.08, fontFamily: '', subtitleOpacity: 0.62 }
+      return { edgeScale: 1.12, sketchEdges: false, groupSolid: true, groupScale: 0.96, groupFillOpacity: 0.065, groupStrokeOpacity: 0.46, groupRadius: 12, nodePlateOpacity: 0.50, nodeStrokeOpacity: 0.22, nodeStrokeWidth: 1, nodeRadius: 14, titleWeight: 720, titleSizeDelta: 0.7, iconScale: 1.18, fontFamily: '', subtitleOpacity: 0.68 }
     case 'editorial':
-      return { edgeScale: 0.9, sketchEdges: false, groupSolid: true, groupScale: 0.75, groupFillOpacity: 0, groupStrokeOpacity: 0.32, groupRadius: 4, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 4, titleWeight: 720, titleSizeDelta: 0.75, iconScale: 1.08, fontFamily: '', subtitleOpacity: 0.52 }
+      return { edgeScale: 0.86, sketchEdges: false, groupSolid: true, groupScale: 0.72, groupFillOpacity: 0, groupStrokeOpacity: 0.28, groupRadius: 0, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 0, titleWeight: 760, titleSizeDelta: 1.1, iconScale: 0.95, fontFamily: 'ui-serif, Georgia, serif', subtitleOpacity: 0.48 }
     case 'sketch':
-      return { edgeScale: 1.06, sketchEdges: false, groupSolid: false, groupScale: 1.12, groupFillOpacity: 0, groupStrokeOpacity: 0.62, groupRadius: 2, nodePlateOpacity: 0.08, nodeStrokeOpacity: 0.48, nodeStrokeWidth: 1.15, nodeRadius: 3, titleWeight: 620, titleSizeDelta: 0.1, iconScale: 0.96, fontFamily: '', subtitleOpacity: 0.58 }
+      return { edgeScale: 1.06, sketchEdges: false, groupSolid: false, groupScale: 1.12, groupFillOpacity: 0, groupStrokeOpacity: 0.68, groupRadius: 2, nodePlateOpacity: 0.035, nodeStrokeOpacity: 0.62, nodeStrokeWidth: 1.25, nodeRadius: 3, titleWeight: 640, titleSizeDelta: 0.2, iconScale: 0.92, fontFamily: 'ui-rounded, system-ui, sans-serif', subtitleOpacity: 0.62 }
     default:
       return { edgeScale: 1, sketchEdges: false, groupSolid: false, groupScale: 0.9, groupFillOpacity: 0, groupStrokeOpacity: 0.50, groupRadius: 8, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 7, titleWeight: 650, titleSizeDelta: 0, iconScale: 1, fontFamily: '', subtitleOpacity: 0.58 }
   }
@@ -1159,7 +1160,7 @@ function isArchitectureTechnicalRole(icon: CanvasIcon | undefined): boolean {
   return Boolean(icon && icon !== 'user' && icon !== 'external')
 }
 
-function shouldRenderArchitectureRelationLabel(arrow: CanvasArrow): boolean {
+export function canvasArchitectureRelationLabelVisible(arrow: CanvasArrow): boolean {
   if (!arrow.label) return false
   if (arrow.emphasis === 'primary' && Array.from(arrow.label).length <= 10) return true
   return /\b(?:https?|rest|sse|grpc|websocket|oidc|oauth|sql|mcp|tcp|udp)\b|异步|事件|消息/i.test(arrow.label)

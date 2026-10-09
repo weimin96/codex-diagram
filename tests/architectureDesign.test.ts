@@ -178,6 +178,65 @@ test('shared data bus can exit a dense service cluster without falling back to c
   assert.ok(result.elements.filter((item) => item.type === 'arrow').every((item) => item.type === 'arrow' && item.routing === 'orthogonal'))
 })
 
+test('routes common architecture topology families without crossing nodes', () => {
+  const node = (id: string, x: number, y: number, icon: 'service' | 'gateway' | 'api' | 'database' | 'external' | 'ai' | 'web' | 'mcp' | 'queue' | 'worker' | 'search' = 'service') => ({
+    id,
+    type: 'node' as const,
+    x,
+    y,
+    width: 160,
+    height: 72,
+    text: id,
+    icon,
+  })
+  const arrow = (id: string, from: string, to: string, emphasis: 'primary' | 'secondary' = 'secondary') => ({
+    id,
+    type: 'arrow' as const,
+    from,
+    to,
+    emphasis,
+  })
+  const scenes: CanvasScene[] = [
+    {
+      type: 'codex-diagram-canvas', version: 1, title: 'Layered backbone', width: 1200, height: 700,
+      elements: [
+        node('entry', 80, 120, 'gateway'), node('api', 340, 120, 'api'), node('service', 600, 120), node('data', 900, 120, 'database'),
+        arrow('e1', 'entry', 'api', 'primary'), arrow('e2', 'api', 'service', 'primary'), arrow('e3', 'service', 'data', 'primary'),
+      ],
+    },
+    {
+      type: 'codex-diagram-canvas', version: 1, title: 'Convergence', width: 1200, height: 760,
+      elements: [
+        node('source-a', 80, 100, 'external'), node('source-b', 80, 300, 'external'), node('source-c', 80, 500, 'external'),
+        node('processor', 500, 300), node('store', 900, 300, 'database'),
+        arrow('c1', 'source-a', 'processor'), arrow('c2', 'source-b', 'processor'), arrow('c3', 'source-c', 'processor'), arrow('c4', 'processor', 'store', 'primary'),
+      ],
+    },
+    {
+      type: 'codex-diagram-canvas', version: 1, title: 'Hub and spoke', width: 1300, height: 800,
+      elements: [
+        node('hub', 560, 330, 'ai'), node('web', 120, 120, 'web'), node('tools', 1000, 120, 'mcp'), node('events', 120, 580, 'queue'), node('store', 1000, 580, 'database'),
+        arrow('h1', 'web', 'hub'), arrow('h2', 'hub', 'tools'), arrow('h3', 'hub', 'events'), arrow('h4', 'hub', 'store'),
+      ],
+    },
+    {
+      type: 'codex-diagram-canvas', version: 1, title: 'Async pipeline', width: 1400, height: 760,
+      elements: [
+        node('api', 80, 160, 'api'), node('queue', 400, 160, 'queue'), node('worker-a', 720, 80, 'worker'), node('worker-b', 720, 300, 'worker'),
+        node('database', 1060, 80, 'database'), node('index', 1060, 300, 'search'),
+        arrow('q1', 'api', 'queue', 'primary'), arrow('q2', 'queue', 'worker-a'), arrow('q3', 'queue', 'worker-b'), arrow('q4', 'worker-a', 'database'), arrow('q5', 'worker-b', 'index'),
+      ],
+    },
+  ]
+
+  for (const scene of scenes) {
+    const quality = assessCanvasVisualQuality(routeArchitectureEdges(scene))
+    assert.equal(quality.metrics.nodeOverlaps, 0, `${scene.title}: nodes should not overlap`)
+    assert.equal(quality.metrics.edgeNodeIntersections, 0, `${scene.title}: relationships should not cross nodes`)
+    assert.equal(quality.metrics.edgeCrossings, 0, `${scene.title}: common topology should route cleanly`)
+  }
+})
+
 test('uses tight local architecture boundaries by default while keeping external providers separate', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',

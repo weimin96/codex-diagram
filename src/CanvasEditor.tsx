@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -165,6 +165,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [layersOpen, setLayersOpen] = useState(false)
   const [layerQuery, setLayerQuery] = useState('')
   const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'analysis' | null>(null)
+  const [architecturePanel, setArchitecturePanel] = useState<'settings' | 'assets'>('settings')
   const [inspectorMenuOpen, setInspectorMenuOpen] = useState(false)
   const [selectedGroupTarget, setSelectedGroupTarget] = useState<string | null>(null)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
@@ -1215,14 +1216,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     ? []
     : canvasBundleTrunks(relationshipRenderScene)
   const selectedIdSet = new Set(selectedIds)
-  const relationshipLabelScene = semanticLodLevel === 'detail'
-    ? relationshipRenderScene
-    : {
-        ...relationshipRenderScene,
-        elements: relationshipRenderScene.elements.map((item) => item.type === 'arrow' && item.label && !semanticLodAllowsArrowLabel(semanticLodLevel, item, selectedIdSet)
-          ? { ...item, label: undefined }
-          : item),
-      }
+  const relationshipLabelScene = {
+    ...relationshipRenderScene,
+    elements: relationshipRenderScene.elements.map((item) => {
+      if (item.type !== 'arrow' || !item.label) return item
+      const visible = scene.architecture
+        ? selectedIdSet.has(item.id) || canvasArchitectureRelationLabelVisible(item)
+        : semanticLodAllowsArrowLabel(semanticLodLevel, item, selectedIdSet)
+      return visible ? item : { ...item, label: undefined }
+    }),
+  }
   const relationLabelLayouts = canvasArrowLabelLayouts(relationshipLabelScene)
   const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
@@ -2344,33 +2347,66 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               className={`${toolbarMenu === 'architecture' ? 'is-active' : ''}${scene.architecture ? ' has-mode-state' : ''}`}
               aria-expanded={toolbarMenu === 'architecture'}
               title={scene.architecture ? `${architectureView === 'overview' ? '总览视图' : '详情视图'} · ${architectureDensity === 'auto' ? '自动密度' : architectureDensity}${architectureScope ? ' · 当前处于局部视图' : ''}` : '架构工具'}
-              onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'architecture' ? null : 'architecture') }}
+              onClick={() => {
+                setLayersOpen(false)
+                if (toolbarMenu === 'architecture') setToolbarMenu(null)
+                else {
+                  setArchitecturePanel('settings')
+                  setToolbarMenu('architecture')
+                }
+              }}
             >
               <span className="freeform-toolbar-state-dot" />{architectureToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
             </button>
             {toolbarMenu === 'architecture' ? (
               <div className="freeform-toolbar-menu is-architecture" role="menu" aria-label="架构设置">
+                {scene.architecture && architecturePanel === 'assets' ? <>
+                  <div className="freeform-asset-library-head">
+                    <button type="button" aria-label="返回架构设置" onClick={() => setArchitecturePanel('settings')}>‹</button>
+                    <strong>素材库</strong>
+                    <span>{ARCHITECTURE_ASSETS.length}</span>
+                  </div>
+                  <div className="freeform-asset-library">
+                    {(['应用', '数据', 'AI / 集成'] as const).map((category) => (
+                      <div key={category}>
+                        <em>{category}</em>
+                        <div className="freeform-asset-grid">
+                          {ARCHITECTURE_ASSETS.filter((asset) => asset.category === category).map((asset) => (
+                            <button key={asset.id} type="button" title={asset.subtitle} onClick={() => insertArchitectureAsset(asset)}>
+                              {asset.stencil ? (() => {
+                                const visual = canvasStencilVisual(asset.stencil)
+                                return visual.path
+                                  ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
+                                  : <i>{visual.label}</i>
+                              })() : <svg viewBox="0 0 24 24" aria-hidden="true" className="is-role"><g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{canvasIconPaths(asset.icon).map((path, index) => <path key={`${asset.id}-${index}`} d={path} />)}</g></svg>}
+                              <span>{asset.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </> : <>
                 {scene.architecture ? <>
-                  <section>
+                  <section className="freeform-compact-control-row">
                     <span>视图</span>
                     <div className="freeform-menu-grid two">
                       <button type="button" aria-pressed={architectureView === 'overview'} className={architectureView === 'overview' ? 'is-selected' : ''} onClick={() => { setArchitectureView('overview'); updateArchitectureAppearance({ view: 'overview' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>总览</button>
                       <button type="button" aria-pressed={architectureView === 'detail'} className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
                     </div>
                   </section>
-                  <section>
+                  <section className="freeform-theme-section">
                     <span>主题</span>
                     <div className="freeform-theme-grid">
                       {ARCHITECTURE_THEME_OPTIONS.map((item) => (
-                        <button key={item.value} type="button" aria-pressed={architectureTheme === item.value} className={`freeform-theme-option theme-${item.value}${architectureTheme === item.value ? ' is-selected' : ''}`} onClick={() => applyArchitectureTheme(item.value)}>
+                        <button key={item.value} type="button" title={item.description} aria-pressed={architectureTheme === item.value} className={`freeform-theme-option theme-${item.value}${architectureTheme === item.value ? ' is-selected' : ''}`} onClick={() => applyArchitectureTheme(item.value)}>
                           <i aria-hidden="true"><b /><b /><b /></i>
                           <strong>{item.label}</strong>
-                          <small>{item.description}</small>
                         </button>
                       ))}
                     </div>
                   </section>
-                  <section>
+                  <section className="freeform-compact-control-row">
                     <span>密度</span>
                     <div className="freeform-menu-grid four">
                       {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
@@ -2378,29 +2414,25 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       ))}
                     </div>
                   </section>
-                  <section>
-                    <span>素材库</span>
-                    <div className="freeform-asset-library">
-                      {(['应用', '数据', 'AI / 集成'] as const).map((category) => (
-                        <div key={category}>
-                          <em>{category}</em>
-                          <div className="freeform-asset-grid">
-                            {ARCHITECTURE_ASSETS.filter((asset) => asset.category === category).map((asset) => (
-                              <button key={asset.id} type="button" title={asset.subtitle} onClick={() => insertArchitectureAsset(asset)}>
-                                {asset.stencil ? (() => {
-                                  const visual = canvasStencilVisual(asset.stencil)
-                                  return visual.path
-                                    ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
-                                    : <i>{visual.label}</i>
-                                })() : <svg viewBox="0 0 24 24" aria-hidden="true" className="is-role"><g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{canvasIconPaths(asset.icon).map((path, index) => <path key={`${asset.id}-${index}`} d={path} />)}</g></svg>}
-                                <span>{asset.label}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  <section className="freeform-asset-library-entry">
+                    <button type="button" onClick={() => setArchitecturePanel('assets')}>
+                      <span><strong>素材库</strong><small>应用、数据、AI / 集成</small></span>
+                      <b>{ARCHITECTURE_ASSETS.length} ›</b>
+                    </button>
                   </section>
+                </> : (
+                  <section className="freeform-architecture-entry">
+                    <span>架构模式</span>
+                    <p>识别节点角色与系统边界，并统一分区、层级、配色和连线。</p>
+                    <button type="button" className="is-primary" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>转换并自动整理</button>
+                  </section>
+                )}
+                <div className="freeform-architecture-actions">
+                  <button type="button" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>{scene.architecture ? '重新整理' : '架构化整理'}</button>
+                  <button type="button" onClick={() => { tidyArchitectureRoutes(); setToolbarMenu(null) }}>整理连线</button>
+                </div>
+                <details className="freeform-menu-more">
+                  <summary>更多布局与模板</summary>
                   {scene.groups?.some((group) => Boolean(group.c4Type)) ? (
                     <section>
                       <span>C4 层级</span>
@@ -2411,22 +2443,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       </div>
                     </section>
                   ) : null}
-                </> : (
-                  <section className="freeform-architecture-entry">
-                    <span>架构模式</span>
-                    <p>识别节点角色与系统边界，并统一分区、层级、配色和连线。</p>
-                    <button type="button" className="is-primary" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>转换并自动整理</button>
-                  </section>
-                )}
-                <section>
-                  <span>整理</span>
-                  <div className="freeform-menu-grid two">
-                    <button type="button" onClick={() => { beautifyArchitecture(); setToolbarMenu(null) }}>{scene.architecture ? '重新整理架构' : '架构化整理'}</button>
-                    <button type="button" onClick={() => { tidyArchitectureRoutes(); setToolbarMenu(null) }}>仅整理连线</button>
-                  </div>
-                </section>
-                <details className="freeform-menu-more">
-                  <summary>更多布局与模板</summary>
                   <section>
                     <span>布局</span>
                     <div className="freeform-menu-grid three">
@@ -2452,6 +2468,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     </div>
                   </section>
                 </details>
+                </>}
               </div>
             ) : null}
           </div>
@@ -2931,7 +2948,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 y={group.y}
                 width={group.width}
                 height={group.height}
-                rx="20"
+                rx={scene.architecture ? group.c4Type === 'software-system' ? 10 : 8 : 20}
                 pointerEvents={group.collapsed ? 'all' : 'none'}
                 onClick={group.collapsed ? (event) => {
                   event.stopPropagation()
@@ -2950,7 +2967,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   }
                 } : undefined}
               />
-              {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx="20" /> : null}
+              {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx={scene.architecture ? 10 : 20} /> : null}
               {!group.collapsed ? (
                 <rect
                   className={`freeform-group-navigation-hit${scene.architecture ? ' is-drillable' : ''}`}
@@ -3117,7 +3134,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const showCardMeta = !scene.architecture && (semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod)
             const showC4Badge = !scene.architecture && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod)
             const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
-            const showSourceBadge = semanticLodLevel === 'detail' || selectedForLod
+            const showSourceBadge = scene.architecture ? selectedForLod : semanticLodLevel === 'detail' || selectedForLod
             const showAnchorPoints = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id
             const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
             const architectureMarkSize = architectureProjection.density === 'dense' ? 30 : architectureProjection.density === 'compact' ? 34 : 38
@@ -3148,7 +3165,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onPointerCancel={cancelGesture}
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
-              <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : 14} />
+              <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14} />
               {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
               {architectureMark && stencilVisual && showRoleIcon ? (
