@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasSemanticLodProjection, canvasStencilLabel, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
@@ -84,6 +84,52 @@ type DragState =
 const GRID = 16
 const MIN_ZOOM = 0.45
 const MAX_ZOOM = 4
+
+const ARCHITECTURE_THEME_OPTIONS: Array<{ value: ArchitectureTheme; label: string; description: string }> = [
+  { value: 'enterprise', label: '工程', description: '工程蓝图' },
+  { value: 'cloud', label: '云平台', description: '云原生' },
+  { value: 'technical', label: '蓝图', description: '高密线路' },
+  { value: 'presentation', label: '汇报', description: '低噪总览' },
+  { value: 'editorial', label: '编辑', description: '留白叙事' },
+  { value: 'sketch', label: '草图', description: '白板讨论' },
+]
+
+type ArchitectureAsset = {
+  id: string
+  label: string
+  category: '应用' | '数据' | 'AI / 集成'
+  icon: CanvasIcon
+  stencil?: CanvasStencil
+  subtitle: string
+  groupId?: string
+  tone?: CanvasTone
+}
+
+const ARCHITECTURE_ASSETS: ArchitectureAsset[] = [
+  { id: 'react', label: 'React', category: '应用', icon: 'web', stencil: 'react', subtitle: 'Web / Console', groupId: 'arch-experience', tone: 'accent' },
+  { id: 'vue', label: 'Vue', category: '应用', icon: 'web', stencil: 'vue', subtitle: 'Web / Console', groupId: 'arch-experience', tone: 'accent' },
+  { id: 'spring', label: 'Spring Boot', category: '应用', icon: 'service', stencil: 'spring', subtitle: 'Backend Service', groupId: 'arch-application' },
+  { id: 'nginx', label: 'Nginx', category: '应用', icon: 'gateway', stencil: 'nginx', subtitle: 'Gateway / Proxy', groupId: 'arch-application' },
+  { id: 'docker', label: 'Docker', category: '应用', icon: 'cloud', stencil: 'docker', subtitle: 'Container Runtime', groupId: 'arch-application' },
+  { id: 'kubernetes', label: 'Kubernetes', category: '应用', icon: 'cloud', stencil: 'kubernetes', subtitle: 'Runtime / Cluster', groupId: 'arch-application' },
+  { id: 'postgres', label: 'PostgreSQL', category: '数据', icon: 'database', stencil: 'postgres', subtitle: 'Relational Database', groupId: 'arch-data', tone: 'success' },
+  { id: 'mysql', label: 'MySQL', category: '数据', icon: 'database', stencil: 'mysql', subtitle: 'Relational Database', groupId: 'arch-data', tone: 'success' },
+  { id: 'mongodb', label: 'MongoDB', category: '数据', icon: 'database', stencil: 'mongodb', subtitle: 'Document Database', groupId: 'arch-data', tone: 'success' },
+  { id: 'redis', label: 'Redis', category: '数据', icon: 'cache', stencil: 'redis', subtitle: 'Cache', groupId: 'arch-data', tone: 'success' },
+  { id: 'kafka', label: 'Kafka', category: '数据', icon: 'queue', stencil: 'kafka', subtitle: 'Event Stream', groupId: 'arch-processing', tone: 'warning' },
+  { id: 'rabbitmq', label: 'RabbitMQ', category: '数据', icon: 'queue', stencil: 'rabbitmq', subtitle: 'Message Broker', groupId: 'arch-processing', tone: 'warning' },
+  { id: 'opensearch', label: 'OpenSearch', category: '数据', icon: 'search', stencil: 'opensearch', subtitle: 'Search Index', groupId: 'arch-data', tone: 'success' },
+  { id: 'elasticsearch', label: 'Elasticsearch', category: '数据', icon: 'search', stencil: 'elasticsearch', subtitle: 'Search Index', groupId: 'arch-data', tone: 'success' },
+  { id: 'qdrant', label: 'Qdrant', category: '数据', icon: 'vector', stencil: 'qdrant', subtitle: 'Vector Database', groupId: 'arch-data', tone: 'success' },
+  { id: 'minio', label: 'MinIO', category: '数据', icon: 'file', stencil: 'minio', subtitle: 'Object Storage', groupId: 'arch-data', tone: 'success' },
+  { id: 'agent', label: 'Agent Runtime', category: 'AI / 集成', icon: 'ai', subtitle: 'Agent / Tool Runtime', groupId: 'arch-application', tone: 'accent' },
+  { id: 'openai', label: 'OpenAI', category: 'AI / 集成', icon: 'ai', stencil: 'openai', subtitle: 'Model Provider', groupId: 'arch-application', tone: 'accent' },
+  { id: 'mcp', label: 'MCP', category: 'AI / 集成', icon: 'mcp', stencil: 'mcp', subtitle: 'Tool Gateway', groupId: 'arch-application', tone: 'accent' },
+  { id: 'oidc', label: 'OIDC / SSO', category: 'AI / 集成', icon: 'auth', stencil: 'oidc', subtitle: 'Identity Provider', groupId: 'arch-external', tone: 'muted' },
+  { id: 'grpc', label: 'gRPC', category: 'AI / 集成', icon: 'api', stencil: 'grpc', subtitle: 'RPC Interface', groupId: 'arch-application' },
+  { id: 'worker', label: 'Worker', category: 'AI / 集成', icon: 'worker', subtitle: 'Async Worker', groupId: 'arch-processing', tone: 'warning' },
+  { id: 'llm', label: 'LLM', category: 'AI / 集成', icon: 'ai', subtitle: 'Model Service', groupId: 'arch-application', tone: 'accent' },
+]
 
 export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
   const parsed = useMemo(() => {
@@ -1304,16 +1350,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function applyArchitectureTheme(theme: ArchitectureTheme) {
-    const result = beautifyArchitectureScene(currentScene(), {
-      theme,
-      view: architectureView,
-      density: architectureDensity,
-    })
+    const current = currentScene()
+    const themed = applyArchitectureThemeToScene(current, theme)
     setArchitectureTheme(theme)
-    commit(result.scene)
+    commit({
+      ...themed,
+      architecture: {
+        theme,
+        ...(theme === 'presentation' ? { presentation: true } : {}),
+        view: current.architecture?.view ?? architectureView,
+        density: current.architecture?.density ?? architectureDensity,
+      },
+    })
     setSelectedIds([])
     setSelectedGroupTarget(null)
-    setViewport({ x: 0, y: 0, zoom: 1 })
   }
 
   function updateArchitectureAppearance(patch: { view?: CanvasArchitectureView; density?: CanvasArchitectureDensity }) {
@@ -1511,6 +1561,34 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const result = insertCanvasArchitectureTemplate(currentScene(), template)
     commit(result.scene)
     setSelectedIds(result.selectedIds)
+  }
+
+  function insertArchitectureAsset(asset: ArchitectureAsset) {
+    const live = currentScene()
+    const id = nextCanvasElementId('node', live.elements)
+    const viewWidth = live.width / viewport.zoom
+    const viewHeight = live.height / viewport.zoom
+    const width = 188
+    const height = 80
+    const groupId = asset.groupId && live.groups?.some((group) => group.id === asset.groupId) ? asset.groupId : undefined
+    const node: CanvasNode = {
+      id,
+      type: 'node',
+      x: clamp(snap(viewport.x + viewWidth / 2 - width / 2), 0, Math.max(0, live.width - width)),
+      y: clamp(snap(viewport.y + viewHeight / 2 - height / 2), 0, Math.max(0, live.height - height)),
+      width,
+      height,
+      text: asset.label,
+      subtitle: asset.subtitle,
+      icon: asset.icon,
+      ...(asset.stencil ? { stencil: asset.stencil } : {}),
+      ...(asset.tone ? { tone: asset.tone } : {}),
+      ...(groupId ? { groupId } : {}),
+      emphasis: 'secondary',
+    }
+    commit({ ...live, elements: [...live.elements, node] })
+    setSelectedIds([id])
+    setSelectedGroupTarget(null)
   }
 
   function removeLanes() {
@@ -2251,7 +2329,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} lod-${semanticLodLevel}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
+    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
@@ -2282,10 +2360,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </section>
                   <section>
                     <span>主题</span>
-                    <div className="freeform-menu-grid three">
-                      <button type="button" aria-pressed={architectureTheme === 'enterprise'} className={architectureTheme === 'enterprise' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('enterprise')}>企业</button>
-                      <button type="button" aria-pressed={architectureTheme === 'technical'} className={architectureTheme === 'technical' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('technical')}>技术</button>
-                      <button type="button" aria-pressed={architectureTheme === 'presentation'} className={architectureTheme === 'presentation' ? 'is-selected' : ''} onClick={() => applyArchitectureTheme('presentation')}>汇报</button>
+                    <div className="freeform-theme-grid">
+                      {ARCHITECTURE_THEME_OPTIONS.map((item) => (
+                        <button key={item.value} type="button" aria-pressed={architectureTheme === item.value} className={`freeform-theme-option theme-${item.value}${architectureTheme === item.value ? ' is-selected' : ''}`} onClick={() => applyArchitectureTheme(item.value)}>
+                          <i aria-hidden="true"><b /><b /><b /></i>
+                          <strong>{item.label}</strong>
+                          <small>{item.description}</small>
+                        </button>
+                      ))}
                     </div>
                   </section>
                   <section>
@@ -2293,6 +2375,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <div className="freeform-menu-grid four">
                       {([['auto', '自动'], ['comfortable', '舒适'], ['compact', '紧凑'], ['dense', '高密']] as const).map(([value, label]) => (
                         <button key={value} type="button" aria-pressed={architectureDensity === value} className={architectureDensity === value ? 'is-selected' : ''} onClick={() => applyArchitectureDensity(value)}>{label}</button>
+                      ))}
+                    </div>
+                  </section>
+                  <section>
+                    <span>素材库</span>
+                    <div className="freeform-asset-library">
+                      {(['应用', '数据', 'AI / 集成'] as const).map((category) => (
+                        <div key={category}>
+                          <em>{category}</em>
+                          <div className="freeform-asset-grid">
+                            {ARCHITECTURE_ASSETS.filter((asset) => asset.category === category).map((asset) => (
+                              <button key={asset.id} type="button" title={asset.subtitle} onClick={() => insertArchitectureAsset(asset)}>
+                                {asset.stencil ? (() => {
+                                  const visual = canvasStencilVisual(asset.stencil)
+                                  return visual.path
+                                    ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
+                                    : <i>{visual.label}</i>
+                                })() : <svg viewBox="0 0 24 24" aria-hidden="true" className="is-role"><g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{canvasIconPaths(asset.icon).map((path, index) => <path key={`${asset.id}-${index}`} d={path} />)}</g></svg>}
+                                <span>{asset.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </section>
@@ -2862,7 +2967,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   }}
                 />
               ) : null}
-              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{autoCollapsedGroupIds.has(group.id) ? ` · ${group.memberIds.length} 节点` : group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : autoCollapsedGroupIds.has(group.id) ? ' · 双击进入' : ' · 双击展开' : ''}</text> : null}
+              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{autoCollapsedGroupIds.has(group.id) ? ` · ${group.memberIds.length} 节点` : !scene.architecture && group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : autoCollapsedGroupIds.has(group.id) ? ' · 双击进入' : ' · 双击展开' : ''}</text> : null}
             </g>
           ))}
           {relationBundleTrunks.map((bundle) => (
@@ -3004,19 +3109,26 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const architectureCard = displayItem.type === 'node' && Boolean(displayItem.icon || displayItem.stencil || displayItem.c4Type)
             const cardTemplate = canvasArchitectureCardTemplate(displayItem)
             const cardMeta = displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
+            const architectureMark = Boolean(scene.architecture && architectureCard && (displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
+            const stencilVisual = displayItem.stencil ? canvasStencilVisual(displayItem.stencil) : undefined
             const selectedForLod = selectedIdSet.has(item.id)
             const showNodeTitle = semanticLodLevel !== 'regions' || selectedForLod || displayItem.emphasis === 'primary'
             const showRoleIcon = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || displayItem.emphasis === 'primary'
-            const showCardMeta = semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod
-            const showC4Badge = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod
+            const showCardMeta = !scene.architecture && (semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod)
+            const showC4Badge = !scene.architecture && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod)
             const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
             const showSourceBadge = semanticLodLevel === 'detail' || selectedForLod
             const showAnchorPoints = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id
             const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
+            const architectureMarkSize = architectureProjection.density === 'dense' ? 30 : architectureProjection.density === 'compact' ? 34 : 38
+            const architectureMarkX = 14
+            const architectureMarkY = (displayItem.height - architectureMarkSize) / 2
+            const architectureTextX = architectureMark ? architectureMarkX + architectureMarkSize + 12 : architectureCard ? 16 : displayItem.width / 2
+            const architectureTitleY = architectureMark ? displayItem.height / 2 + (showCardSubtitle ? -4 : 4) : architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -3037,9 +3149,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
               <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : 14} />
-              {displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
-              {architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
-              {displayItem.icon && showRoleIcon ? (
+              {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
+              {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
+              {architectureMark && stencilVisual && showRoleIcon ? (
+                <g className="freeform-stencil-logo" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
+                  {stencilVisual.path
+                    ? <path d={stencilVisual.path} fill={stencilVisual.color} data-stencil={displayItem.stencil} transform={`scale(${architectureMarkSize / 24})`} />
+                    : <><rect width={architectureMarkSize} height={architectureMarkSize} rx={7} /><text x={architectureMarkSize / 2} y={architectureMarkSize / 2 + 4} textAnchor="middle">{stencilVisual.label}</text></>}
+                </g>
+              ) : architectureMark && displayItem.icon && showRoleIcon ? (
+                <g className="freeform-node-role is-architecture-role" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
+                  <rect width={architectureMarkSize} height={architectureMarkSize} rx={7} />
+                  <g className="freeform-node-role-symbol" transform={`translate(${architectureMarkSize * .18} ${architectureMarkSize * .18}) scale(${architectureMarkSize * .64 / 24})`}>
+                    {canvasIconPaths(displayItem.icon).map((path, index) => <path key={`${displayItem.icon}-${index}`} d={path} />)}
+                  </g>
+                </g>
+              ) : displayItem.icon && showRoleIcon ? (
                 <g className="freeform-node-role" transform="translate(18 18)">
                   <circle r="10" />
                   <g className="freeform-node-role-symbol" transform="translate(-7 -7) scale(.5833)">
@@ -3049,10 +3174,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               ) : null}
               {cardMeta && showCardMeta ? <text className="freeform-node-icon" x={displayItem.icon && showRoleIcon ? 34 : 13} y="19">{cardMeta}</text> : null}
               {displayItem.c4Type && showC4Badge ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
-              {showNodeTitle ? <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureCard ? 16 : displayItem.width / 2} y={architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+              {showNodeTitle ? <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
                 {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text> : null}
-              {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureCard ? 16 : displayItem.width / 2} y={displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
+              {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
               {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
               {showAnchorPoints ? <g className="freeform-anchor-points">
                   <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />

@@ -7,6 +7,7 @@ export function isArchitectureIntent(value: string): boolean {
 export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise'): string[] {
   return [
     `架构视觉主题：${theme}。`,
+    architectureThemeRule(theme),
     '先选择构图原型，再放节点：端到端调用优先 backbone/linear，单源多依赖优先 fan-out，多源进入一个核心能力优先 convergence，中心平台连接多系统优先 hub-spoke，跨职责链路优先 layered/swimlane。不要默认把所有组件排成等权卡片矩阵。',
     '把架构图当作视觉论证：首先让读者看见“系统边界 → 主业务路径 → 关键依赖/结果”，外围配置、管理面和低频依赖降到第二层级；留白用于区分职责和系统边界。',
     '先表达系统边界和职责层次，再表达细节；不要把所有节点平铺成一层。',
@@ -20,15 +21,24 @@ export function architectureDesignSkill(theme: ArchitectureTheme = 'enterprise')
     '同一节点扇出到多个同层目标时允许共享一段关系 trunk 再分叉，形成 bundle/汇聚，而不是每条线从节点边缘独立炸开。',
     '关系线视觉权重应低于节点和边界：主链细而清晰，次要关系更淡，异步 dashed；关系标签只写协议、动作或关键语义，默认不使用胶囊底，不重复节点名称。',
     '图上文字保持短：节点标题表达职责，subtitle 表达技术/协议；长解释放 description，不把段落塞进节点。',
-    'presentation 主题仍保持工程架构画布形态，不生成 Dashboard 式大标题带/图例。标题优先落在 Software System boundary 上，画布尺寸由内容决定。',
+    'presentation 主题仍保持工程架构画布形态，不生成 Dashboard 式大标题带/图例。标题和分区标签保持轻量，画布尺寸由内容决定。',
     '当图超过约 20 个节点时优先使用 density=auto，让插件自动从 comfortable 切到 compact/dense；不要靠缩小字体硬塞节点。',
     '大型架构图需要先给 overview，再按需要切 detail：overview 只隐藏低优先级显示项，不删除节点数据，并保留主链路、直接依赖和每个区域的代表节点。',
-    '40 个节点以上优先建立稳定的 Software System / Container / Domain 边界和分组，使 Diagram 可以按区域下钻；不要生成 100+ 个无层级平铺节点，也不要用大泳道掩盖复杂度。',
-    'Container/Domain 边界必须对应真实职责、部署或运行边界；节点 Focus 由插件按 1~3 跳邻域完成，不要为了局部视图复制节点。',
+    '40 个节点以上优先建立稳定的职责/部署/运行边界和分组，使 Diagram 可以按区域下钻；不要生成 100+ 个无层级平铺节点，也不要用大泳道掩盖复杂度。只有明确 C4 请求才把这些边界编码为 Software System / Container。',
+    '普通 Boundary/Domain 边界必须对应真实职责、部署或运行边界；节点 Focus 由插件按 1~3 跳邻域完成，不要为了局部视图复制节点。',
     '节点使用紧凑工程图元而不是统一大卡片：Person/External、Gateway、Service/Worker、Queue、Database/Cache/Search/Vector/Storage 使用各自的 role glyph；已确认技术用 stencil 图形作为主要识别符。不要再额外显示 ACTOR/RUNTIME/DATA/Container 等模板 metadata。',
     '证据优先：sourcePaths、stencil、协议/事件标签、C4 类型只填写已经从代码、配置或用户输入确认的事实；未知技术保持中性角色，不为了“专业感”猜具体产品。',
     '完成语义内容后调用 diagram.beautifyArchitecture，让插件统一执行分区、配色、图标补全、布局和连线整理。',
     '如果节点位置和分区已经合适，只需要减少交叉/穿节点/叠线，则调用 diagram.routeArchitectureEdges，不要重新布局整张图。',
     '完成写回和美化后调用 diagram.inspectQuality 做一次质量回检；若 needsRevision=true，只修复报告出的重叠、穿节点、交叉过多、层级过平或标签过长问题，再回检一次，不做无关重写。',
   ]
+}
+
+function architectureThemeRule(theme: ArchitectureTheme): string {
+  if (theme === 'cloud') return 'cloud 主题强调云原生组件和技术 Logo，分组使用轻量边界与柔和蓝色材质；不要把每个服务重新包成厚重卡片。'
+  if (theme === 'technical') return 'technical 主题采用单色蓝图/高密线路语言：无卡片底、细虚线边界、小号技术标识和 monospace 辅助信息，优先扫描效率，并与 enterprise 的语义色工程图明显区分。'
+  if (theme === 'presentation') return 'presentation 主题用于汇报：保留真实架构关系，但降低次要依赖视觉权重，减少节点细节，让主链和关键区域先被读到。'
+  if (theme === 'editorial') return 'editorial 主题强调留白、排版尺度和 Logo/名称本身，尽量取消卡片底板和重边界，用空间关系形成层级。'
+  if (theme === 'sketch') return 'sketch 主题用于讨论草图：边界和关系使用轻量虚线/白板语法，但仍保持正交关系与真实节点语义，不制造手绘装饰噪声。'
+  return 'enterprise 主题采用专业工程蓝图语言：Logo/role glyph 主导、局部边界紧贴内容、主链清楚、辅助关系克制。'
 }

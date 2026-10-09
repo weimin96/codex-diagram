@@ -19,7 +19,7 @@ const quickModifications = [
 ]
 
 const generationTemplates: Array<{ label: string; type: DiagramType; title: string; instructions: string }> = [
-  { label: '系统架构', type: 'canvas', title: '系统架构', instructions: '按软件架构图表达，不要退化成流程图。识别系统边界、Web/客户端、API/网关、核心服务、Worker、数据库、缓存、消息/检索/文件存储和外部系统；优先使用 C4 Container 语义、命名 boundary、技术 stencil 与正交依赖连线。' },
+  { label: '系统架构', type: 'canvas', title: '系统架构', instructions: '按专业工程架构图表达，不要退化成流程图。识别 Web/客户端、API/网关、核心服务、Worker、数据库、缓存、消息/检索/文件存储和外部系统；默认使用紧贴内容的命名 boundary、技术 stencil 与正交依赖连线，不主动添加 C4 Software System / Container 元数据。只有用户明确要求 C4，或源码/已有图明确存在 C4 层级时才使用 C4。' },
   { label: '业务流程', type: 'flowchart', title: '核心业务流程', instructions: '从真实入口、关键决策、成功路径和异常/补偿路径还原流程；决策节点只表达一个条件，主路径保持连续阅读方向。' },
   { label: '调用链', type: 'sequence', title: '核心调用链', instructions: '沿真实调用顺序展示入口、服务、存储和外部依赖，并保留关键失败分支。' },
   { label: '数据模型', type: 'er', title: '数据模型', instructions: '从实体、表结构或模型定义提取核心实体、主外键和主要关系，不展开无关字段。' },

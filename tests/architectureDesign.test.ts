@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
+import { applyArchitectureTheme, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental } from '../src/architectureDesign.js'
+import { assessCanvasVisualQuality } from '../src/canvasQuality.js'
 import { anchorPoint, canvasBundleTrunks, type CanvasScene } from '../src/canvas.js'
 
 function sampleScene(): CanvasScene {
@@ -143,6 +144,38 @@ test('routes downward fan-out into one architecture group through a shared data 
   const firstBends = arrows.map((arrow) => arrow.points?.[0]).filter(Boolean)
   assert.equal(firstBends.length, 3)
   assert.ok(firstBends.every((point) => point?.x === firstBends[0]?.x && point?.y === firstBends[0]?.y))
+})
+
+test('shared data bus can exit a dense service cluster without falling back to crossing straight lines', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Dense data fanout',
+    width: 1400,
+    height: 900,
+    groups: [{ id: 'data', label: 'Data', kind: 'boundary' }],
+    elements: [
+      { id: 'core', type: 'node', x: 900, y: 100, width: 188, height: 80, text: 'Core', icon: 'service' },
+      { id: 'neighbor', type: 'node', x: 700, y: 200, width: 188, height: 80, text: 'Model', icon: 'ai' },
+      { id: 'worker', type: 'node', x: 780, y: 440, width: 188, height: 80, text: 'Worker', icon: 'worker' },
+      { id: 'redis', type: 'node', x: 480, y: 700, width: 180, height: 80, text: 'Redis', icon: 'cache', groupId: 'data' },
+      { id: 'search', type: 'node', x: 700, y: 700, width: 180, height: 80, text: 'Search', icon: 'search', groupId: 'data' },
+      { id: 'vector', type: 'node', x: 920, y: 700, width: 180, height: 80, text: 'Vector', icon: 'vector', groupId: 'data' },
+      { id: 'core-redis', type: 'arrow', from: 'core', to: 'redis' },
+      { id: 'core-search', type: 'arrow', from: 'core', to: 'search' },
+      { id: 'core-vector', type: 'arrow', from: 'core', to: 'vector' },
+      { id: 'worker-redis', type: 'arrow', from: 'worker', to: 'redis' },
+      { id: 'worker-search', type: 'arrow', from: 'worker', to: 'search' },
+      { id: 'worker-vector', type: 'arrow', from: 'worker', to: 'vector' },
+    ],
+    architecture: { theme: 'enterprise', view: 'detail', density: 'comfortable' },
+  }
+
+  const result = routeArchitectureEdges(scene)
+  const quality = assessCanvasVisualQuality(result)
+  assert.equal(quality.metrics.edgeNodeIntersections, 0)
+  assert.equal(quality.metrics.edgeCrossings, 0)
+  assert.ok(result.elements.filter((item) => item.type === 'arrow').every((item) => item.type === 'arrow' && item.routing === 'orthogonal'))
 })
 
 test('uses tight local architecture boundaries by default while keeping external providers separate', () => {
@@ -402,6 +435,24 @@ test('switching away from presentation removes presentation chrome without chang
 
   assert.equal(technical.version, 1)
   assert.deepEqual(technical.architecture, { theme: 'technical', view: 'detail', density: 'auto' })
+})
+
+test('applies all architecture themes without changing the canvas protocol', () => {
+  for (const theme of ['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch'] as const) {
+    const result = beautifyArchitectureScene(sampleScene(), { theme, relayout: false }).scene
+    assert.equal(result.version, 1)
+    assert.equal(result.architecture?.theme, theme)
+  }
+})
+
+test('theme-only appearance updates preserve authored geometry', () => {
+  const scene = beautifyArchitectureScene(sampleScene(), { theme: 'enterprise' }).scene
+  const before = new Map(scene.elements.filter((item) => item.type !== 'arrow').map((item) => [item.id, { x: item.x, y: item.y, width: item.width, height: item.height }]))
+  const themed = applyArchitectureTheme(scene, 'editorial')
+  for (const item of themed.elements) {
+    if (item.type === 'arrow') continue
+    assert.deepEqual({ x: item.x, y: item.y, width: item.width, height: item.height }, before.get(item.id))
+  }
 })
 
 test('auto density compacts large architecture layouts without changing canvas protocol', () => {

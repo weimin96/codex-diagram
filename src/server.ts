@@ -58,7 +58,7 @@ const server = new McpServer(
       'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
       'diagram.thread is only the UI-open action. Call it when the user explicitly asks to open/show the right-side Diagram panel, or once before the first diagram operation in a conversation when no prior diagram.thread call exists.',
       'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
-      'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default and use C4 boundaries/roles where useful.',
+      'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default. Ordinary architecture diagrams should use tight named boundaries and role/technology semantics without automatically adding C4 metadata. Use C4 person/software-system/container/component only when the user explicitly asks for C4 or the source/current diagram already establishes that hierarchy.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       ...diagramIntentRoutingGuide(),
       'Before a non-trivial diagram creation or whole-diagram redesign, call diagram.designGuide once for the chosen type. It returns only that type’s composition archetypes, evidence rules, visual grammar and quality loop so the model does not need every diagram skill in context.',
@@ -141,7 +141,7 @@ server.registerTool('diagram.designGuide', {
   inputSchema: z.object({
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]),
     intent: z.string().max(1_000).optional().describe('Short user intent. For canvas this is used to distinguish architecture/C4 from a generic freeform board.'),
-    architectureTheme: z.enum(['enterprise', 'technical', 'presentation']).default('enterprise'),
+    architectureTheme: z.enum(['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch']).default('enterprise'),
   }),
   annotations: readonly,
 }, async ({ type, intent, architectureTheme }) => {
@@ -803,7 +803,7 @@ server.registerTool('diagram.beautifyArchitecture', {
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().optional(),
-    theme: z.enum(['enterprise', 'technical', 'presentation']).default('enterprise'),
+    theme: z.enum(['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch']).default('enterprise'),
     view: z.enum(['overview', 'detail']).optional(),
     density: z.enum(['auto', 'comfortable', 'compact', 'dense']).optional(),
     repartition: z.boolean().default(true),

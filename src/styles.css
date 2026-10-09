@@ -356,6 +356,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-menu-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .freeform-menu-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .freeform-menu-grid button { text-align: center; padding: 0 6px; }
+.freeform-theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.freeform-theme-option { height: 48px !important; display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: 20px 16px; column-gap: 7px; align-items: center; padding: 5px 7px !important; text-align: left !important; }
+.freeform-theme-option > i { grid-row: 1 / 3; width: 34px; height: 30px; position: relative; display: block; border: 1px solid var(--border); border-radius: 5px; background: var(--app-bg); overflow: hidden; }
+.freeform-theme-option > i b { position: absolute; display: block; height: 5px; border-radius: 2px; background: var(--text-tertiary); opacity: .5; }
+.freeform-theme-option > i b:nth-child(1) { left: 4px; top: 5px; width: 11px; }
+.freeform-theme-option > i b:nth-child(2) { right: 4px; top: 12px; width: 14px; }
+.freeform-theme-option > i b:nth-child(3) { left: 6px; bottom: 5px; width: 20px; }
+.freeform-theme-option strong { align-self: end; color: var(--text-primary); font-size: 10px; font-weight: 680; }
+.freeform-theme-option small { align-self: start; color: var(--text-tertiary); font-size: 8px; line-height: 1; }
+.freeform-theme-option.theme-cloud > i { background: color-mix(in srgb, #60a5fa 9%, var(--app-bg)); }
+.freeform-theme-option.theme-cloud > i b { background: #60a5fa; }
+.freeform-theme-option.theme-presentation > i { background: color-mix(in srgb, #10b981 8%, var(--app-bg)); }
+.freeform-theme-option.theme-presentation > i b:first-child { width: 24px; background: #10b981; }
+.freeform-theme-option.theme-editorial > i b:nth-child(1) { width: 24px; height: 3px; opacity: .85; }
+.freeform-theme-option.theme-editorial > i b:nth-child(2) { width: 9px; right: 5px; }
+.freeform-theme-option.theme-sketch > i { transform: rotate(-1deg); border-style: dashed; }
+.freeform-theme-option.theme-sketch > i b { transform: rotate(1.5deg); border-radius: 0; }
+.freeform-asset-library { display: grid; gap: 7px; }
+.freeform-asset-library > div { display: grid; gap: 4px; }
+.freeform-asset-library em { color: var(--text-tertiary); font-size: 8px; font-style: normal; font-weight: 650; }
+.freeform-asset-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.freeform-asset-grid button { height: 48px !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 3px !important; text-align: center !important; }
+.freeform-asset-grid svg { width: 18px; height: 18px; flex: 0 0 18px; color: var(--text-secondary); }
+.freeform-asset-grid svg.is-role { padding: 1px; }
+.freeform-asset-grid i { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; background: var(--surface-muted); color: var(--text-secondary); font: 700 7px var(--font-mono); }
+.freeform-asset-grid span { max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .freeform-menu-stack { display: grid; gap: 3px; }
 .freeform-menu-depth { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 6px; color: var(--text-tertiary); font-size: 10px; }
 .freeform-menu-depth select { height: 27px; min-width: 0; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-secondary); font-size: 10px; }
@@ -612,6 +638,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-group-frame.c4-container rect { stroke-width: 1.7; stroke-dasharray: 10 6; }
 .freeform-group-frame.c4-container.has-parent rect { fill-opacity: .46; }
 .freeform-group-frame.c4-container.has-parent text { font-size: 11px; font-weight: 700; }
+.freeform-editor.is-architecture-mode .freeform-group-frame.c4-software-system > rect:first-of-type { fill: transparent; stroke-width: 1.1; stroke-dasharray: 10 7; opacity: .5; }
+.freeform-editor.is-architecture-mode .freeform-group-frame.c4-software-system .freeform-group-header { fill: transparent; opacity: 0; }
+.freeform-editor.is-architecture-mode .freeform-group-frame.c4-software-system text { font-size: 11px; font-weight: 650; fill: var(--text-tertiary); }
+.freeform-editor.is-architecture-mode .freeform-group-frame.c4-container > rect:first-of-type { fill: transparent; stroke-width: 1.05; stroke-dasharray: 7 5; opacity: .68; }
+.freeform-editor.is-architecture-mode .freeform-group-frame.c4-container.has-parent text { font-size: 10px; font-weight: 620; }
 .freeform-group-frame.is-collapsed { cursor: pointer; }
 .freeform-group-frame.is-collapsed rect { fill: color-mix(in srgb, var(--surface-raised) 88%, transparent); }
 .freeform-group-frame .freeform-group-navigation-hit { fill: transparent !important; stroke: none !important; stroke-dasharray: none !important; cursor: pointer; }
@@ -652,6 +683,40 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-node-icon { fill: var(--text-tertiary); font-size: 10px !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-weight: 700; letter-spacing: .3px; }
 .freeform-node-role circle { fill: color-mix(in srgb, var(--text-secondary) 10%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 42%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .freeform-node-role-symbol { fill: none; stroke: var(--text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.freeform-node-role.is-architecture-role > rect { fill: color-mix(in srgb, var(--text-secondary) 7%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 20%, transparent); stroke-width: 1; }
+.freeform-stencil-logo > rect { fill: color-mix(in srgb, var(--text-secondary) 7%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 18%, transparent); stroke-width: 1; }
+.freeform-stencil-logo > text { fill: var(--text-secondary); font: 700 9px var(--font-mono); }
+:root[data-theme='dark'] .freeform-stencil-logo path[data-stencil='kafka'],
+:root[data-theme='dark'] .freeform-asset-grid path[data-stencil='kafka'] { fill: #d4d4d8 !important; }
+.freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark > rect:first-of-type { fill: transparent; stroke: transparent; filter: none; }
+.freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark:hover > rect:first-of-type { fill: color-mix(in srgb, var(--surface-raised) 36%, transparent); stroke: color-mix(in srgb, var(--accent) 34%, transparent); stroke-width: 1; }
+.freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark.is-selected > rect:first-of-type { fill: color-mix(in srgb, var(--accent) 5%, transparent); stroke: var(--accent); stroke-width: 2; }
+.freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark .freeform-node-title { font-size: 13px; font-weight: 660; }
+.freeform-editor.is-architecture-mode .freeform-box.is-architecture-mark .freeform-node-subtitle { fill: var(--text-tertiary); font-size: 9px; }
+.freeform-editor.architecture-theme-cloud .freeform-box.is-architecture-mark > rect:first-of-type { fill: color-mix(in srgb, #60a5fa 8%, var(--surface-panel)); stroke: color-mix(in srgb, #60a5fa 25%, transparent); stroke-width: 1; }
+.freeform-editor.architecture-theme-cloud .freeform-group-frame rect { fill: color-mix(in srgb, #60a5fa 4%, transparent); stroke: color-mix(in srgb, #60a5fa 34%, var(--border)); stroke-dasharray: none; }
+.freeform-editor.architecture-theme-cloud .freeform-group-frame text { fill: color-mix(in srgb, #2563eb 58%, var(--text-secondary)); font-weight: 680; }
+.freeform-editor.architecture-theme-cloud .freeform-arrow.emphasis-primary path.freeform-arrow-line { stroke: color-mix(in srgb, #2563eb 66%, var(--border-strong)); }
+.freeform-editor.architecture-theme-technical .freeform-box.is-architecture-mark > rect:first-of-type { fill: transparent; stroke: transparent; }
+.freeform-editor.architecture-theme-technical .freeform-background { fill: color-mix(in srgb, #4f76a8 5%, var(--app-bg)); }
+.freeform-editor.architecture-theme-technical .freeform-grid-line { stroke: color-mix(in srgb, #6b8db7 28%, transparent); }
+.freeform-editor.architecture-theme-technical .freeform-group-frame rect { fill: transparent; stroke: color-mix(in srgb, var(--text-secondary) 38%, transparent); stroke-width: 1; stroke-dasharray: 4 5; }
+.freeform-editor.architecture-theme-technical .freeform-group-frame text { font: 650 10px var(--font-mono); letter-spacing: .02em; }
+.freeform-editor.architecture-theme-technical .freeform-box.is-architecture-mark .freeform-node-title { font-size: 12px; font-weight: 620; }
+.freeform-editor.architecture-theme-technical .freeform-box.is-architecture-mark .freeform-node-subtitle { font-family: var(--font-mono); font-size: 8.5px; }
+.freeform-editor.architecture-theme-presentation .freeform-box.is-architecture-mark > rect:first-of-type { fill: color-mix(in srgb, var(--surface-raised) 68%, transparent); stroke: color-mix(in srgb, var(--text-tertiary) 22%, transparent); stroke-width: 1; }
+.freeform-editor.architecture-theme-presentation .freeform-group-frame rect { fill: color-mix(in srgb, var(--surface-raised) 20%, transparent); stroke-opacity: .72; }
+.freeform-editor.architecture-theme-presentation .freeform-arrow.emphasis-muted { opacity: .22; }
+.freeform-editor.architecture-theme-editorial .freeform-grid-line { opacity: .35; }
+.freeform-editor.architecture-theme-editorial .freeform-group-frame rect { fill: transparent; stroke-dasharray: none; stroke-width: 1; stroke: color-mix(in srgb, var(--text-tertiary) 34%, transparent); }
+.freeform-editor.architecture-theme-editorial .freeform-group-frame text { fill: var(--text-secondary); font-size: 13px; font-weight: 700; }
+.freeform-editor.architecture-theme-editorial .freeform-box.is-architecture-mark .freeform-node-title { font-size: 14px; font-weight: 720; letter-spacing: -.015em; }
+.freeform-editor.architecture-theme-sketch .freeform-grid-line { opacity: .12; }
+.freeform-editor.architecture-theme-sketch .freeform-box.is-architecture-mark > rect:first-of-type { fill: color-mix(in srgb, var(--surface-raised) 22%, transparent); stroke: color-mix(in srgb, var(--text-secondary) 48%, transparent); stroke-width: 1.25; }
+.freeform-editor.architecture-theme-sketch .freeform-box.is-architecture-mark:nth-of-type(3n) > rect:first-of-type { stroke-dasharray: 7 4; }
+.freeform-editor.architecture-theme-sketch .freeform-group-frame rect { fill: transparent; stroke-dasharray: 11 6; stroke-width: 1.35; }
+.freeform-editor.architecture-theme-sketch .freeform-group-frame text { font-weight: 610; letter-spacing: .015em; }
+.freeform-editor.architecture-theme-sketch .freeform-arrow path.freeform-arrow-line { stroke-width: 1.9; }
 .freeform-box.tone-accent .freeform-node-role circle { fill: color-mix(in srgb, #818cf8 16%, transparent); stroke: #818cf8; }
 .freeform-box.tone-accent .freeform-node-role-symbol { stroke: #6366f1; }
 .freeform-box.tone-success .freeform-node-role circle { fill: color-mix(in srgb, #34d399 16%, transparent); stroke: #34d399; }

@@ -65,9 +65,9 @@ const themeTones: Record<ArchitectureTheme, Record<ArchitecturePartition, Canvas
   technical: {
     external: 'muted',
     experience: 'default',
-    application: 'accent',
+    application: 'default',
     processing: 'muted',
-    data: 'success',
+    data: 'default',
   },
   presentation: {
     external: 'muted',
@@ -75,6 +75,27 @@ const themeTones: Record<ArchitectureTheme, Record<ArchitecturePartition, Canvas
     application: 'success',
     processing: 'warning',
     data: 'accent',
+  },
+  cloud: {
+    external: 'muted',
+    experience: 'accent',
+    application: 'accent',
+    processing: 'default',
+    data: 'success',
+  },
+  editorial: {
+    external: 'muted',
+    experience: 'default',
+    application: 'accent',
+    processing: 'warning',
+    data: 'default',
+  },
+  sketch: {
+    external: 'muted',
+    experience: 'default',
+    application: 'default',
+    processing: 'muted',
+    data: 'default',
   },
 }
 
@@ -345,63 +366,79 @@ function routeArchitectureEdgeSubset(scene: CanvasScene, only?: Set<string>): Ca
     .sort((left, right) => architectureArrowRoutingPriority(left) - architectureArrowRoutingPriority(right))
 
   for (const arrow of routeOrder) {
-    const from = boxes.get(arrow.from)
-    const to = boxes.get(arrow.to)
-    if (!from || !to) continue
-    const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
-    const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
-    const dx = toCenter.x - fromCenter.x
-    const dy = toCenter.y - fromCenter.y
-    const asyncEdge = from.icon === 'queue' || to.icon === 'queue'
-      || from.stencil === 'kafka' || to.stencil === 'kafka'
-      || from.stencil === 'rabbitmq' || to.stencil === 'rabbitmq'
-    const obstacles = [...boxes.values()]
-      .filter((item) => item.id !== from.id && item.id !== to.id)
-      .map((item) => expandRect(item, 18))
-    const bundleKey = (fanout.get(arrow.from) ?? 0) >= 2
-      ? `from:${arrow.from}`
-      : (fanin.get(arrow.to) ?? 0) >= 2
-        ? `to:${arrow.to}`
-        : undefined
-    const pairs = preferredAnchorPairs(dx, dy)
-    let best: { score: number; fromAnchor: 'top' | 'right' | 'bottom' | 'left'; toAnchor: 'top' | 'right' | 'bottom' | 'left'; route: CanvasPoint[] } | undefined
-    for (const [fromAnchor, toAnchor] of pairs) {
-      const start = fixedAnchorPoint(from, fromAnchor)
-      const end = fixedAnchorPoint(to, toAnchor)
-      const route = findOrthogonalRoute(start, end, obstacles, occupied, bundleKey, fromAnchor, toAnchor)
-      const score = scoreRoute(route, obstacles, occupied, bundleKey)
-        + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
-      if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
-      if (bundleKey) {
-        const side = bundleKey.startsWith('from:') ? 'from' : 'to'
-        const bundled = buildBundleRoute(start, end, fromAnchor, toAnchor, side)
-        const bundleScore = scoreRoute(bundled, obstacles, occupied, bundleKey) - 72
-          + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
-        if (!best || bundleScore < best.score) best = { score: bundleScore, fromAnchor, toAnchor, route: bundled }
-      }
-    }
-    if (!best) continue
-    const simplified = simplifyRoute(best.route)
-    addOccupiedSegments(simplified, occupied, bundleKey)
-    routed.set(arrow.id, {
-      ...arrow,
-      routing: 'orthogonal',
-      fromAnchor: best.fromAnchor,
-      toAnchor: best.toAnchor,
-      lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
-      points: simplified.length > 2 ? simplified.slice(1, -1) : undefined,
-      bundleKey,
-    })
+    const result = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin)
+    if (result) routed.set(arrow.id, result)
   }
 
   if (!only && groupedFanoutIds.size) {
     const bundled = routeDownwardGroupFanouts(arrows.filter((arrow) => groupedFanoutIds.has(arrow.id)), boxes, occupied)
     for (const [id, arrow] of bundled) routed.set(id, arrow)
+    for (const arrow of arrows) {
+      if (!groupedFanoutIds.has(arrow.id) || routed.has(arrow.id)) continue
+      const fallback = routeArchitectureArrow(arrow, boxes, occupied, fanout, fanin)
+      if (fallback) routed.set(arrow.id, fallback)
+    }
   }
 
   return {
     ...scene,
     elements: scene.elements.map((item) => item.type === 'arrow' ? routed.get(item.id) ?? item : item),
+  }
+}
+
+function routeArchitectureArrow(
+  arrow: CanvasArrow,
+  boxes: Map<string, CanvasNode | CanvasNote>,
+  occupied: RouteSegment[],
+  fanout: Map<string, number>,
+  fanin: Map<string, number>,
+): CanvasArrow | undefined {
+  const from = boxes.get(arrow.from)
+  const to = boxes.get(arrow.to)
+  if (!from || !to) return undefined
+  const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+  const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
+  const dx = toCenter.x - fromCenter.x
+  const dy = toCenter.y - fromCenter.y
+  const asyncEdge = from.icon === 'queue' || to.icon === 'queue'
+    || from.stencil === 'kafka' || to.stencil === 'kafka'
+    || from.stencil === 'rabbitmq' || to.stencil === 'rabbitmq'
+  const obstacles = [...boxes.values()]
+    .filter((item) => item.id !== from.id && item.id !== to.id)
+    .map((item) => expandRect(item, 18))
+  const bundleKey = (fanout.get(arrow.from) ?? 0) >= 2
+    ? `from:${arrow.from}`
+    : (fanin.get(arrow.to) ?? 0) >= 2
+      ? `to:${arrow.to}`
+      : undefined
+  const pairs = preferredAnchorPairs(dx, dy)
+  let best: { score: number; fromAnchor: 'top' | 'right' | 'bottom' | 'left'; toAnchor: 'top' | 'right' | 'bottom' | 'left'; route: CanvasPoint[] } | undefined
+  for (const [fromAnchor, toAnchor] of pairs) {
+    const start = fixedAnchorPoint(from, fromAnchor)
+    const end = fixedAnchorPoint(to, toAnchor)
+    const route = findOrthogonalRoute(start, end, obstacles, occupied, bundleKey, fromAnchor, toAnchor)
+    const score = scoreRoute(route, obstacles, occupied, bundleKey)
+      + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
+    if (!best || score < best.score) best = { score, fromAnchor, toAnchor, route }
+    if (bundleKey) {
+      const side = bundleKey.startsWith('from:') ? 'from' : 'to'
+      const bundled = buildBundleRoute(start, end, fromAnchor, toAnchor, side)
+      const bundleScore = scoreRoute(bundled, obstacles, occupied, bundleKey) - 72
+        + (fromAnchor === pairs[0][0] && toAnchor === pairs[0][1] ? 0 : 42)
+      if (!best || bundleScore < best.score) best = { score: bundleScore, fromAnchor, toAnchor, route: bundled }
+    }
+  }
+  if (!best) return undefined
+  const simplified = simplifyRoute(best.route)
+  addOccupiedSegments(simplified, occupied, bundleKey)
+  return {
+    ...arrow,
+    routing: 'orthogonal',
+    fromAnchor: best.fromAnchor,
+    toAnchor: best.toAnchor,
+    lineStyle: asyncEdge ? 'dashed' : arrow.lineStyle ?? 'solid',
+    points: simplified.length > 2 ? simplified.slice(1, -1) : undefined,
+    bundleKey,
   }
 }
 
@@ -457,7 +494,11 @@ function routeDownwardGroupFanouts(
     const targetIds = new Set(targets.map((target) => target.id))
     const obstacles = [...boxes.values()]
       .filter((item) => item.id !== source.id && !targetIds.has(item.id))
-      .map((item) => expandRect(item, 18))
+      // Shared data buses need to leave dense service clusters without being
+      // rejected only because an adjacent card falls inside the generic 18px
+      // comfort margin. Keep a smaller visual clearance here; the quality gate
+      // still rejects any route that crosses the actual node geometry.
+      .map((item) => expandRect(item, 8))
     const intermediate = obstacles.filter((item) => item.y < branchY && item.y + item.height > sourceBottom)
     const corridorCandidates = uniqueNumbers([
       start.x,

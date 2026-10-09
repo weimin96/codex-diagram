@@ -24,7 +24,7 @@ export type CanvasLineStyle = 'solid' | 'dashed'
 export type CanvasEmphasis = 'primary' | 'secondary' | 'muted'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
-export type CanvasArchitectureTheme = 'enterprise' | 'technical' | 'presentation'
+export type CanvasArchitectureTheme = 'enterprise' | 'technical' | 'presentation' | 'cloud' | 'editorial' | 'sketch'
 export type CanvasArchitectureView = 'overview' | 'detail'
 export type CanvasArchitectureDensity = 'auto' | 'comfortable' | 'compact' | 'dense'
 export type CanvasArchitectureCardKind = 'actor' | 'entry' | 'compute' | 'messaging' | 'data' | 'external' | 'generic'
@@ -271,9 +271,14 @@ export function serializeCanvasScene(scene: CanvasScene): string {
 export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: string; panel?: string; text?: string; border?: string; note?: string }): string {
   const sourceScene = scene
   const architectureMode = Boolean(sourceScene.architecture)
+  const architectureTheme = sourceScene.architecture?.theme ?? 'enterprise'
+  const architectureProfile = canvasArchitectureThemeProfile(architectureTheme)
   const projection = canvasArchitectureProjection(scene)
   scene = projection.scene
-  const background = colors?.background || '#ffffff'
+  const baseBackground = colors?.background || '#ffffff'
+  const background = architectureMode && architectureTheme === 'technical'
+    ? hexLuminance(baseBackground) < 0.18 ? '#111827' : '#f5f8fc'
+    : baseBackground
   const panel = colors?.panel || '#f8f8f8'
   const text = colors?.text || '#171717'
   const border = colors?.border || '#8a8a8a'
@@ -289,7 +294,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const opacity = architectureMode
       ? bundle.emphasis === 'primary' ? '0.16' : bundle.emphasis === 'muted' ? '0.07' : '0.10'
       : bundle.emphasis === 'primary' ? '0.24' : bundle.emphasis === 'muted' ? '0.10' : '0.16'
-    const width = architectureMode ? bundle.emphasis === 'primary' ? 4 : 3 : bundle.emphasis === 'primary' ? 7 : 5.5
+    const width = architectureMode ? (bundle.emphasis === 'primary' ? 4 : 3) * architectureProfile.edgeScale : bundle.emphasis === 'primary' ? 7 : 5.5
     return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
   }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
@@ -300,10 +305,10 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const toCenter = centerOfCanvasBox(to)
     const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
     const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
-    const dash = arrow.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : ''
+    const dash = arrow.lineStyle === 'dashed' || (architectureMode && architectureProfile.sketchEdges) ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
     const strokeWidth = architectureMode
-      ? arrow.emphasis === 'primary' ? 1.9 : arrow.emphasis === 'muted' ? 0.9 : 1.25
+      ? (arrow.emphasis === 'primary' ? 1.9 : arrow.emphasis === 'muted' ? 0.9 : 1.25) * architectureProfile.edgeScale
       : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
     const opacity = architectureMode
       ? arrow.emphasis === 'muted' ? '0.42' : arrow.emphasis === 'secondary' ? '0.66' : '0.92'
@@ -333,7 +338,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
       : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     const architectureCard = item.type === 'node' && Boolean(item.icon || item.stencil || item.c4Type)
-    if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density)
+    if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme)
     const cardTemplate = canvasArchitectureCardTemplate(item)
     const showSubtitle = Boolean(item.subtitle && (!architectureCard || projection.density !== 'dense'))
     const cardTitleLimit = projection.density === 'dense' ? 22 : projection.density === 'compact' ? 26 : 30
@@ -361,16 +366,16 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const softwareSystem = group.c4Type === 'software-system'
     const container = group.c4Type === 'container'
     const dash = architectureMode
-      ? softwareSystem ? '10 7' : container ? '8 6' : group.kind === 'boundary' ? '6 5' : '5 5'
+      ? architectureProfile.groupSolid ? '' : softwareSystem ? '10 7' : container ? '8 6' : group.kind === 'boundary' ? '6 5' : '5 5'
       : softwareSystem ? '' : container ? '10 6' : group.kind === 'boundary' ? '12 6' : '8 6'
-    const strokeWidth = architectureMode ? softwareSystem ? 1.35 : container ? 1.15 : 1 : softwareSystem ? 2.4 : container ? 1.7 : 1.4
+    const strokeWidth = architectureMode ? (softwareSystem ? 1.35 : container ? 1.15 : 1) * architectureProfile.groupScale : softwareSystem ? 2.4 : container ? 1.7 : 1.4
     const fillOpacity = architectureMode
-      ? group.collapsed ? '0.34' : softwareSystem ? '0.025' : container ? '0.018' : '0'
+      ? group.collapsed ? '0.34' : String(architectureProfile.groupFillOpacity)
       : group.collapsed ? '0.5' : softwareSystem ? '0.10' : container ? '0.05' : '0'
     const collapsed = group.collapsed ? ' · collapsed' : ''
     const fill = group.collapsed || softwareSystem || container ? escapeXml(palette.fill) : 'none'
     if (architectureMode) {
-      return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="8" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(softwareSystem ? architectureBorder : palette.stroke)}" stroke-opacity="${softwareSystem ? '0.68' : '0.54'}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${group.label ? `<text x="${group.x + 10}" y="${group.y + 18}" font-size="${softwareSystem ? 11.5 : 10.5}" font-weight="${softwareSystem ? 650 : 600}" fill="${escapeXml(text)}" opacity="${softwareSystem ? '0.82' : '0.72'}">${escapeXml(`${group.label}${collapsed}`)}</text>` : ''}</g>`
+      return `<g><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="${architectureProfile.groupRadius}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${escapeXml(softwareSystem ? architectureBorder : palette.stroke)}" stroke-opacity="${architectureProfile.groupStrokeOpacity}" stroke-width="${strokeWidth}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>${group.label ? `<text x="${group.x + 10}" y="${group.y + 18}" font-size="${softwareSystem ? 11.5 : 10.5}" font-weight="${softwareSystem ? 650 : 600}" fill="${escapeXml(text)}" opacity="${softwareSystem ? '0.82' : '0.72'}">${escapeXml(`${group.label}${collapsed}`)}</text>` : ''}</g>`
     }
     const c4 = group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''
     const header = group.label && softwareSystem
@@ -1098,9 +1103,12 @@ function renderArchitectureCanvasNode(
   item: CanvasNode,
   palette: { fill: string; text: string; stroke: string },
   density: Exclude<CanvasArchitectureDensity, 'auto'>,
+  theme: CanvasArchitectureTheme,
 ): string {
+  const profile = canvasArchitectureThemeProfile(theme)
   const compact = density === 'dense'
-  const iconSize = item.stencil ? compact ? 32 : 40 : compact ? 28 : 34
+  const baseIconSize = item.stencil ? compact ? 32 : 40 : compact ? 28 : 34
+  const iconSize = baseIconSize * profile.iconScale
   const iconX = item.x + (compact ? 10 : 12)
   const iconY = item.y + (item.height - iconSize) / 2
   const textX = iconX + iconSize + (compact ? 9 : 11)
@@ -1114,16 +1122,37 @@ function renderArchitectureCanvasNode(
     : item.icon
       ? architectureRoleMark(item.icon, iconX, iconY, iconSize, palette.stroke)
       : ''
+  const fontFamily = profile.fontFamily ? ` font-family="${profile.fontFamily}"` : ''
   const subtitle = item.subtitle
-    ? `<text x="${textX}" y="${subtitleY}" font-size="${subtitleSize}" fill="${escapeXml(palette.text)}" opacity="0.58">${escapeXml(truncateCanvasText(item.subtitle, compact ? 20 : 26))}</text>`
+    ? `<text x="${textX}" y="${subtitleY}" font-size="${subtitleSize}" fill="${escapeXml(palette.text)}" opacity="${profile.subtitleOpacity}"${fontFamily}>${escapeXml(truncateCanvasText(item.subtitle, compact ? 20 : 26))}</text>`
     : ''
   if (item.stencil || isArchitectureTechnicalRole(item.icon)) {
-    return `<g opacity="${opacity}">${mark}<text x="${textX}" y="${titleY}" font-size="${titleSize}" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(item.text.replace(/\n/g, ' '), compact ? 20 : 26))}</text>${subtitle}</g>`
+    const plate = profile.nodePlateOpacity > 0
+      ? `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${profile.nodeRadius}" fill="${escapeXml(palette.fill)}" fill-opacity="${profile.nodePlateOpacity}" stroke="${escapeXml(palette.stroke)}" stroke-opacity="${profile.nodeStrokeOpacity}" stroke-width="${profile.nodeStrokeWidth}"${profile.sketchEdges ? ' stroke-dasharray="6 5"' : ''}/>`
+      : ''
+    return `<g opacity="${opacity}">${plate}${mark}<text x="${textX}" y="${titleY}" font-size="${titleSize + profile.titleSizeDelta}" font-weight="${profile.titleWeight}" fill="${escapeXml(palette.text)}"${fontFamily}>${escapeXml(truncateCanvasText(item.text.replace(/\n/g, ' '), compact ? 20 : 26))}</text>${subtitle}</g>`
   }
   const borderDash = item.icon === 'external' || item.c4Type === 'software-system' ? ' stroke-dasharray="5 4"' : ''
   const fillOpacity = item.emphasis === 'primary' ? '0.54' : '0.32'
   const strokeOpacity = item.emphasis === 'primary' ? '0.50' : '0.30'
   return `<g opacity="${opacity}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="7" fill="${escapeXml(palette.fill)}" fill-opacity="${fillOpacity}" stroke="${escapeXml(palette.stroke)}" stroke-opacity="${strokeOpacity}" stroke-width="${item.emphasis === 'primary' ? 1.25 : 0.9}"${borderDash}/>${mark}<text x="${textX}" y="${titleY}" font-size="${titleSize}" font-weight="650" fill="${escapeXml(palette.text)}">${escapeXml(truncateCanvasText(item.text.replace(/\n/g, ' '), compact ? 20 : 26))}</text>${subtitle}</g>`
+}
+
+function canvasArchitectureThemeProfile(theme: CanvasArchitectureTheme) {
+  switch (theme) {
+    case 'cloud':
+      return { edgeScale: 1.04, sketchEdges: false, groupSolid: true, groupScale: 0.95, groupFillOpacity: 0.045, groupStrokeOpacity: 0.34, groupRadius: 14, nodePlateOpacity: 0.34, nodeStrokeOpacity: 0.22, nodeStrokeWidth: 0.9, nodeRadius: 11, titleWeight: 670, titleSizeDelta: 0.15, iconScale: 1.05, fontFamily: '', subtitleOpacity: 0.62 }
+    case 'technical':
+      return { edgeScale: 0.9, sketchEdges: false, groupSolid: false, groupScale: 0.72, groupFillOpacity: 0, groupStrokeOpacity: 0.42, groupRadius: 2, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 2, titleWeight: 620, titleSizeDelta: -0.65, iconScale: 0.78, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', subtitleOpacity: 0.50 }
+    case 'presentation':
+      return { edgeScale: 1.08, sketchEdges: false, groupSolid: true, groupScale: 0.9, groupFillOpacity: 0.035, groupStrokeOpacity: 0.42, groupRadius: 12, nodePlateOpacity: 0.26, nodeStrokeOpacity: 0.20, nodeStrokeWidth: 0.9, nodeRadius: 9, titleWeight: 680, titleSizeDelta: 0.25, iconScale: 1.08, fontFamily: '', subtitleOpacity: 0.62 }
+    case 'editorial':
+      return { edgeScale: 0.9, sketchEdges: false, groupSolid: true, groupScale: 0.75, groupFillOpacity: 0, groupStrokeOpacity: 0.32, groupRadius: 4, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 4, titleWeight: 720, titleSizeDelta: 0.75, iconScale: 1.08, fontFamily: '', subtitleOpacity: 0.52 }
+    case 'sketch':
+      return { edgeScale: 1.06, sketchEdges: false, groupSolid: false, groupScale: 1.12, groupFillOpacity: 0, groupStrokeOpacity: 0.62, groupRadius: 2, nodePlateOpacity: 0.08, nodeStrokeOpacity: 0.48, nodeStrokeWidth: 1.15, nodeRadius: 3, titleWeight: 620, titleSizeDelta: 0.1, iconScale: 0.96, fontFamily: '', subtitleOpacity: 0.58 }
+    default:
+      return { edgeScale: 1, sketchEdges: false, groupSolid: false, groupScale: 0.9, groupFillOpacity: 0, groupStrokeOpacity: 0.50, groupRadius: 8, nodePlateOpacity: 0, nodeStrokeOpacity: 0, nodeStrokeWidth: 0, nodeRadius: 7, titleWeight: 650, titleSizeDelta: 0, iconScale: 1, fontFamily: '', subtitleOpacity: 0.58 }
+  }
 }
 
 function isArchitectureTechnicalRole(icon: CanvasIcon | undefined): boolean {
@@ -1191,6 +1220,16 @@ function architectureSimpleIcon(stencil: CanvasStencil): { path: string; hex: st
   return icons[stencil]
 }
 
+export function canvasStencilVisual(stencil: CanvasStencil, darkSurface = false): { path?: string; color: string; label: string } {
+  const simpleIcon = architectureSimpleIcon(stencil)
+  const original = simpleIcon ? `#${simpleIcon.hex}` : architectureStencilColor(stencil, '#64748b')
+  return {
+    ...(simpleIcon ? { path: simpleIcon.path } : {}),
+    color: darkSurface && hexLuminance(original) < 0.07 ? '#d1d5db' : original,
+    label: architectureStencilAbbreviation(stencil),
+  }
+}
+
 function architectureStencilAbbreviation(stencil: CanvasStencil): string {
   return ({
     spring: 'S', react: 'R', vue: 'V', postgres: 'PG', mysql: 'MY', redis: 'R', kafka: 'K', rabbitmq: 'MQ', docker: 'D', kubernetes: 'K8S', qdrant: 'Q', opensearch: 'OS', elasticsearch: 'ES', mongodb: 'M', minio: 'S3', nginx: 'N', grpc: 'gR', oidc: 'ID', openai: 'AI', mcp: 'MCP',
@@ -1254,7 +1293,7 @@ function positive(value: unknown, fallback: number): number {
 function normalizeArchitectureAppearance(value: unknown): CanvasScene['architecture'] | undefined {
   if (!value || typeof value !== 'object') return undefined
   const item = value as Record<string, unknown>
-  const themes: CanvasArchitectureTheme[] = ['enterprise', 'technical', 'presentation']
+  const themes: CanvasArchitectureTheme[] = ['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch']
   const views: CanvasArchitectureView[] = ['overview', 'detail']
   const densities: CanvasArchitectureDensity[] = ['auto', 'comfortable', 'compact', 'dense']
   if (typeof item.theme !== 'string' || !themes.includes(item.theme as CanvasArchitectureTheme)) return undefined

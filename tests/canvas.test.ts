@@ -37,6 +37,46 @@ test('round-trips optional architecture presentation metadata on version 1 canva
   assert.deepEqual(parsed.architecture, { theme: 'presentation', presentation: true, view: 'overview', density: 'compact' })
 })
 
+test('round-trips every built-in architecture visual theme', () => {
+  for (const theme of ['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch'] as const) {
+    const scene: CanvasScene = {
+      type: 'codex-diagram-canvas',
+      version: 1,
+      title: theme,
+      width: 960,
+      height: 620,
+      architecture: { theme },
+      elements: [],
+    }
+    assert.equal(parseCanvasScene(serializeCanvasScene(scene)).architecture?.theme, theme)
+  }
+})
+
+test('architecture themes produce distinct SVG treatments without changing node semantics', () => {
+  const base: Omit<CanvasScene, 'architecture'> = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Theme treatments',
+    width: 960,
+    height: 620,
+    groups: [{ id: 'app', label: 'Application', kind: 'boundary' }],
+    elements: [
+      { id: 'api', type: 'node', x: 180, y: 220, width: 188, height: 80, text: 'Spring API', icon: 'service', stencil: 'spring', groupId: 'app' },
+      { id: 'db', type: 'node', x: 590, y: 220, width: 188, height: 80, text: 'PostgreSQL', icon: 'database', stencil: 'postgres', groupId: 'app' },
+      { id: 'edge', type: 'arrow', from: 'api', to: 'db', routing: 'orthogonal', emphasis: 'secondary' },
+    ],
+  }
+  const engineering = canvasSceneToSvg({ ...base, architecture: { theme: 'enterprise' } })
+  const cloud = canvasSceneToSvg({ ...base, architecture: { theme: 'cloud' } })
+  const sketch = canvasSceneToSvg({ ...base, architecture: { theme: 'sketch' } })
+
+  assert.notEqual(engineering, cloud)
+  assert.notEqual(cloud, sketch)
+  assert.match(engineering, /Spring API/)
+  assert.match(cloud, /Spring API/)
+  assert.match(sketch, /stroke-opacity="0.62"/)
+})
+
 test('places relationship labels on routed segments without stacking them at the same point', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',

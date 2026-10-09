@@ -30,7 +30,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
       '3. 保持 type=codex-diagram-canvas、version=1。elements 只使用 node、note、arrow。',
       '4. node/note 使用 id,type,x,y,width,height,text；可选 tone(default/accent/success/warning/danger/muted)、shape(rounded/square/pill)、icon(user/web/api/gateway/service/worker/database/cache/queue/search/vector/cloud/file/auth/ai/mcp/scheduler/external)、stencil(spring/react/vue/postgres/mysql/redis/kafka/rabbitmq/docker/kubernetes/qdrant/opensearch/elasticsearch/mongodb/minio/nginx/grpc/oidc/openai/mcp)、c4Type(person/software-system/container/component)、subtitle、description、tags、locked、groupId、laneId、sourcePaths、emphasis(primary/secondary/muted)。scene.groups 可配置 id,label,tone,kind(group/boundary),collapsed,parentId,c4Type(software-system/container),description，以 parentId 表达系统→容器的嵌套边界；scene.lanes 可配置 id,label,axis(horizontal/vertical),start,size,tone。arrow 使用 id,type=arrow,from,to，可选 label、lineStyle(solid/dashed)、routing(straight/orthogonal)、fromAnchor/toAnchor(auto/top/right/bottom/left)、points、labelPosition({x,y})、emphasis；from/to 必须引用现有 node/note id。labelPosition 属于用户手调标签位置，已有值应尽量保留；bundleKey 由插件理线器生成，不要手工编造。',
       '5. 只在视觉语义明确时使用 tone：主路径可 accent，成功/完成可 success，风险可 warning/danger，次要信息可 muted；不要把每个节点都染色。架构/流程图优先用 orthogonal 路由，简单关系可以 straight。',
-      '6. 画布默认 1600x1000。按从左到右或从上到下的主要阅读方向布置，节点不要明显重叠。C4/系统架构优先用 kind=boundary 的命名容器；跨角色流程适合 lanes；技术组件只在事实明确时填写 stencil 和真实 sourcePaths。',
+      '6. 画布默认 1600x1000。按从左到右或从上到下的主要阅读方向布置，节点不要明显重叠。普通系统架构默认用紧贴内容的 kind=boundary 命名容器，不主动添加 software-system/container C4 元数据；只有用户明确要求 C4，或源码/已有图明确存在 C4 层级时才使用 C4。跨角色流程适合 lanes；技术组件只在事实明确时填写 stencil 和真实 sourcePaths。',
       '7. 初次新建图使用 diagram.update 写回完整 JSON；不要写 Mermaid 语法。完成后简要说明分析范围和图表路径。',
       ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise')] : []),
     ].filter(Boolean).join('\n')
@@ -71,7 +71,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       '2. 保留 codex-diagram-canvas version 1 JSON 结构，只操作 node、note、arrow 元素。',
       '3. 保留现有节点的 tone/shape/locked/groupId/laneId/icon/stencil/subtitle/description/tags/sourcePaths/emphasis、scene.groups/scene.lanes 以及连线 lineStyle/routing/anchors/points/labelPosition/emphasis/bundleKey，除非修改要求明确涉及这些属性；不要重排 locked 元素。',
       '4. 如果本次只涉及有限节点/关系，优先调用 diagram.proposeSubgraphPatch：elementIds 只放允许修改的已有 id，updates 只发送真正变化的字段，adds 只发送新增元素，removeIds 只发送删除项。不要把未变化的 x/y/width/height、arrow.points、labelPosition 重复发送。只有修改标题/画布尺寸/Group/Lane 元数据或确实需要整图重构时才调用 diagram.proposeUpdate。',
-      '5. 合理使用 C4 person/software-system/container/component 语义，以及 icon 标明运行角色、stencil 标明真实技术栈；不要为了装饰给所有节点重复相同图标或技术标签。',
+      '5. icon 用于标明运行角色、stencil 用于标明真实技术栈。普通架构图不要为了显得专业主动补 software-system/container/component C4 元数据；只有用户明确要求 C4，或当前图/源码已经明确存在 C4 层级时才保留或调整 C4。不要为了装饰给所有节点重复相同图标或技术标签。',
       '6. diagram.proposeSubgraphPatch 的 layout 默认 preserve；只有用户明确要求整理/重排当前局部结构时才用 local。服务端会保留未声明的人工布局和 Label，并自动计算受影响关系。不要把 Mermaid 语法写进自由画布文件。Proposal 不会直接覆盖文件，等待用户在右侧 Diagram 接受或拒绝。',
       '7. 默认只提交一个候选。只有用户明确要求多个方案、A/B 对比或备选实现时，才对同一 base revision 分别调用 diagram.proposeSubgraphPatch，并为每个候选设置不同 branchLabel（例如“保守方案”“重构方案”）；不要为了显得丰富自动制造分支。',
       '8. 如果用户随后明确要求把多个兼容候选合并，优先使用 diagram.composeProposalBranches 和 branchSet 中的 branch id，让服务端检查字段写冲突并生成新的组合候选；不要把互斥 A/B 方案自动合并，也不要自行用 last-write-wins 拼 Patch。',
