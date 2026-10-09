@@ -22,6 +22,7 @@ export const supplementalSkills: DiagramSkill[] = [
   ], ['超过约 15 个类时按 package/domain 拆图。'], ['把每个 DTO/工具类都加入类图', '列出完整 getter/setter'], ['优先读取真实类型定义和继承关系。']),
   skill('gantt', 'Gantt', [
     '任务按阶段 section 分组，明确依赖关系、里程碑和关键交付；日期必须来自真实计划或用户给定假设。',
+    'Mermaid 11.17 的多前置依赖在同一个 after 子句里用空格分隔 task id，例如 after backend frontend；禁止写 after backend, frontend，逗号会被解析成新的 task data 字段并导致渲染失败。',
   ], ['单图控制在约 5~25 个任务；更细任务拆到子计划。'], ['编造日期', '所有任务都并行', '把状态说明写成长任务名'], ['没有真实日期时先使用相对依赖，不虚构具体日历日期。']),
   skill('timeline', 'Timeline', [
     '按真实时间顺序保留关键事件、版本、决策和里程碑；相近事件合并为阶段，不记录琐碎提交。',

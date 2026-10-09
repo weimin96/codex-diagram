@@ -25,3 +25,10 @@ test('keeps lexer-sensitive extended templates browser-safe', () => {
   const xy = createTemplate('xychart', '指标趋势')
   assert.match(xy, /x-axis \["一月", "二月", "三月"\]/)
 })
+
+test('requirement template avoids inventing risk and verification facts', () => {
+  const source = createTemplate('requirement', '下单必须校验库存')
+  assert.match(source, /text: "下单必须校验库存"/)
+  assert.doesNotMatch(source, /\brisk:/)
+  assert.doesNotMatch(source, /\bverifymethod:/i)
+})

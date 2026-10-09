@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -7,24 +7,26 @@ import { build } from 'esbuild'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const temp = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-visual-'))
+const sourceDir = readSourceDirArg(process.argv.slice(2))
 
 try {
   const chrome = await findChrome()
   if (!chrome) {
     console.log('Codex Diagram visual smoke skipped: Chrome/Chromium not found.')
   } else {
-    await runVisualSmoke(chrome)
+    const externalCases = sourceDir ? await loadExternalCases(sourceDir) : undefined
+    await runVisualSmoke(chrome, externalCases)
   }
 } finally {
   await rm(temp, { recursive: true, force: true })
 }
 
-async function runVisualSmoke(chrome) {
+async function runVisualSmoke(chrome, externalCases) {
   const publicDir = path.join(temp, 'public')
   const entry = path.join(temp, 'visual-smoke.ts')
   const port = 18765 + Math.floor(Math.random() * 1000)
   await mkdir(publicDir, { recursive: true })
-  await writeFile(entry, browserEntry(), 'utf8')
+  await writeFile(entry, browserEntry(externalCases), 'utf8')
   await build({
     entryPoints: [entry],
     outfile: path.join(publicDir, 'test.js'),
@@ -59,10 +61,30 @@ async function runVisualSmoke(chrome) {
     if (oversized.length) {
       throw new Error(`Visual smoke oversized diagrams:\n${oversized.map((item) => `${item.mode}/${item.type}: ${item.width}x${item.height}`).join('\n')}`)
     }
-    console.log(`Codex Diagram visual smoke passed: ${result.length} browser renders.`)
+    console.log(`Codex Diagram visual smoke passed: ${result.length} browser renders${externalCases ? ' from external cases' : ''}.`)
   } finally {
     server.kill('SIGTERM')
   }
+}
+
+function readSourceDirArg(args) {
+  const index = args.indexOf('--source-dir')
+  if (index < 0) return undefined
+  const value = args[index + 1]
+  if (!value) throw new Error('--source-dir requires a directory path.')
+  return path.resolve(value)
+}
+
+async function loadExternalCases(dir) {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const cases = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.m(?:md|ermaid)$/i.test(entry.name)) continue
+    const type = entry.name.replace(/\.m(?:md|ermaid)$/i, '')
+    cases.push({ type, source: await readFile(path.join(dir, entry.name), 'utf8') })
+  }
+  if (!cases.length) throw new Error(`No .mmd/.mermaid visual cases found in ${dir}`)
+  return cases.sort((a, b) => a.type.localeCompare(b.type))
 }
 
 async function findChrome() {
@@ -118,7 +140,7 @@ function decodeHtml(value) {
     .replaceAll('&amp;', '&')
 }
 
-function browserEntry() {
+function browserEntry(externalCases) {
   const templates = path.join(root, 'src/templates.ts')
   const types = path.join(root, 'src/types.ts')
   const grammar = path.join(root, 'src/mermaidVisualGrammar.ts')
@@ -133,9 +155,10 @@ const palettes = {
   dark: { background:'#18181b', surface:'#202024', raised:'#27272a', muted:'#303036', text:'#f4f4f5', secondaryText:'#a1a1aa', border:'#3f3f46', strongBorder:'#52525b', accent:'#60a5fa', success:'#4ade80', warning:'#f59e0b', danger:'#f87171' },
 }
 const output = []
+const externalCases = ${JSON.stringify(externalCases ?? null)}
 for (const mode of ['light', 'dark']) {
-  for (const { type } of mermaidDiagramTypes) {
-    const source = createTemplate(type, '测试图表')
+  const cases = externalCases || mermaidDiagramTypes.map(({ type }) => ({ type, source: createTemplate(type, '测试图表') }))
+  for (const { type, source } of cases) {
     try {
       mermaid.initialize({ ...mermaidVisualConfig(type, palettes[mode], source), fontFamily: 'Arial, sans-serif' })
       const { svg } = await mermaid.render('smoke-' + mode + '-' + type + '-' + Math.random().toString(36).slice(2), source)

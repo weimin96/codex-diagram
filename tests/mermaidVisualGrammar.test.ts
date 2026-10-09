@@ -92,3 +92,19 @@ test('large Kanban boards reduce column width without touching source', () => {
   assert.equal(resolveMermaidVisualDensity('kanban', kanban), 'compact')
   assert.equal(mermaidVisualConfig('kanban', palette, kanban).kanban?.sectionWidth, 220)
 })
+
+test('branch-heavy flowcharts compact before they become oversized', () => {
+  const source = [
+    'flowchart TB',
+    'subgraph approval[Approval]',
+    'A --> B{Valid?}',
+    'B -- yes --> C{Small?}',
+    'C -- no --> D{Approved?}',
+    'D -- yes --> E{Success?}',
+    'E -- no --> F{Retry limit?}',
+    'F -- no --> E',
+    'end',
+  ].join('\n')
+  assert.equal(resolveMermaidVisualDensity('flowchart', source), 'dense')
+  assert.equal(mermaidVisualConfig('flowchart', palette, source).flowchart?.rankSpacing, 32)
+})

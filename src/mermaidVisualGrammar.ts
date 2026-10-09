@@ -20,6 +20,15 @@ export type MermaidVisualDensity = 'comfortable' | 'compact' | 'dense'
 
 export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown', source: string): MermaidVisualDensity {
   const lines = source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('%%'))
+  if (type === 'flowchart') {
+    const decisions = lines.filter((line) => /\w+\s*\{[^}]+\}/.test(line)).length
+    const relations = lines.filter((line) => /-->|---|==>|-.->/.test(line)).length
+    const groups = lines.filter((line) => /^subgraph\b/i.test(line)).length
+    if (decisions >= 5 || relations > 18 || groups >= 4) return 'dense'
+    if (decisions >= 3 || relations > 11 || groups >= 2) return 'compact'
+    if (lines.length > 24) return 'compact'
+    return 'comfortable'
+  }
   if (type === 'sequence') {
     const participants = lines.filter((line) => /^(participant|actor)\b/i.test(line)).length
     const messages = lines.filter((line) => /(?:--?>>|--?>|--?x|--?\)|--?\])/.test(line)).length
@@ -39,7 +48,7 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
     if (nodes > 28) return 'compact'
     return 'comfortable'
   }
-  if (type === 'flowchart' || type === 'state' || type === 'class') {
+  if (type === 'state' || type === 'class') {
     if (lines.length > 46) return 'dense'
     if (lines.length > 24) return 'compact'
     return 'comfortable'
@@ -82,6 +91,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
   const density = resolveMermaidVisualDensity(type, source)
   const nodeSpacing = density === 'comfortable' ? 38 : density === 'compact' ? 30 : 24
   const rankSpacing = density === 'comfortable' ? 58 : density === 'compact' ? 48 : 40
+  const flowchartRankSpacing = density === 'comfortable' ? 54 : density === 'compact' ? 42 : 32
   const actorMargin = density === 'comfortable' ? 72 : density === 'compact' ? 58 : 46
   const messageMargin = density === 'comfortable' ? 34 : density === 'compact' ? 29 : 24
   const entityPadding = density === 'comfortable' ? 12 : density === 'compact' ? 10 : 8
@@ -244,7 +254,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       diagramPadding: 16,
       htmlLabels: true,
       nodeSpacing,
-      rankSpacing,
+      rankSpacing: flowchartRankSpacing,
       curve: 'linear',
       padding: density === 'dense' ? 9 : 12,
       wrappingWidth: density === 'dense' ? 170 : 190,

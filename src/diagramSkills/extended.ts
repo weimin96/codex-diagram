@@ -42,7 +42,9 @@ export const extendedSkills: DiagramSkill[] = [
   extendedSkill('requirement', 'Requirement Diagram', ['需求追踪', '需求关系', '验证方法', '满足关系', '追踪矩阵'], [
     '以 requirement 为中心表达 requirement、element 及 contains/copies/derives/satisfies/verifies/refines/traces 关系。',
     'requirement id 使用稳定、简单且 Mermaid 可解析的值；复杂业务编号放在 text 中，不把带连字符的字符串硬塞进裸 id 字段。',
-    'risk 与 verifymethod 必须来自需求事实；没有依据时不要凭空设为 high 或 inspection。',
+    'requirement 的 text 值统一使用双引号包裹，尤其中文或包含空格/标点时禁止裸写；例如 text: "下单必须校验库存"。element 的 type/docref 若包含空格或非 ASCII 文本也使用双引号。',
+    'risk 与 verifymethod 必须来自需求事实；没有依据时直接省略字段，不得输出 unknown/none/unspecified。risk 只允许 low/medium/high，verifymethod 只允许 analysis/demonstration/inspection/test。',
+    '实现、测试、文档等验证对象一律使用 element 块表达；Mermaid Requirement 不存在 test_case/testCase 这类元素语法。测试可以写成 element CheckoutIT { type: integration_test } 后用 verifies 关联 requirement。',
   ], [
     '单图优先 5~25 个需求与实现元素；更大的需求集按 feature/domain 拆分。',
   ], [
@@ -50,6 +52,7 @@ export const extendedSkills: DiagramSkill[] = [
   ], [
     '把普通依赖关系都写成 satisfies',
     '编造验证方法和风险等级',
+    '输出 risk: unknown 或 test_case 等 Mermaid Requirement 不支持的语法',
     '使用无法稳定解析的 requirement id',
   ], [
     '优先读取需求文档、测试、接口契约和实现元素之间的真实追踪关系。',
@@ -135,6 +138,7 @@ export const extendedSkills: DiagramSkill[] = [
   extendedSkill('ishikawa', 'Ishikawa / Fishbone', ['鱼骨图', '根因分析', '原因分析', '故障原因', '质量问题'], [
     '鱼头只描述一个明确问题/结果；一级骨表示互斥度较高的原因类别，二三级骨表示可验证的具体原因。',
     '原因分类根据领域选择，例如人/流程/技术/环境/数据/管理，不机械套用 6M。',
+    'Mermaid 11.17 Ishikawa 使用缩进式 quoted DSL：ishikawa-beta 后第一层直接写问题字符串，下一层写原因类别，再下一层写具体原因；不要输出 title/effect/category/cause 关键字，它们不是 Mermaid Ishikawa 语法。',
   ], [
     '建议 3~8 个一级原因，每类 1~6 个具体原因；过多原因先聚类再展示。',
   ], [
@@ -143,6 +147,7 @@ export const extendedSkills: DiagramSkill[] = [
     '把解决措施写成原因',
     '一级分类互相重叠严重',
     '没有证据就把某个原因标成根因',
+    '生成 title/effect/category/cause 伪 DSL',
   ], [
     '优先从事故复盘、日志、缺陷记录和用户提供事实中提炼候选原因；区分已证实与待验证原因。',
   ]),

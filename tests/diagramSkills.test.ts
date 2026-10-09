@@ -47,3 +47,20 @@ test('diagram type selector groups advanced types instead of flattening the menu
   assert.ok(analysis?.items.some((item) => item.type === 'requirement'))
   assert.deepEqual(special?.items.map((item) => item.type), ['ishikawa'])
 })
+
+test('model-facing skills guard Mermaid 11.17 syntax traps found by browser benchmarks', () => {
+  const sequence = diagramSkill('sequence')
+  assert.ok(sequence.compositionRules.some((rule) => rule.includes('self-message') && rule.includes('EventBus')))
+
+  const requirement = diagramSkill('requirement')
+  assert.ok(requirement.compositionRules.some((rule) => rule.includes('text: "下单必须校验库存"')))
+  assert.ok(requirement.compositionRules.some((rule) => rule.includes('unknown/none/unspecified')))
+  assert.ok(requirement.compositionRules.some((rule) => rule.includes('test_case')))
+
+  const ishikawa = diagramSkill('ishikawa')
+  assert.ok(ishikawa.compositionRules.some((rule) => rule.includes('title/effect/category/cause')))
+
+  const gantt = diagramSkill('gantt')
+  assert.ok(gantt.compositionRules.some((rule) => rule.includes('after backend frontend')))
+  assert.ok(gantt.compositionRules.some((rule) => rule.includes('after backend, frontend')))
+})
