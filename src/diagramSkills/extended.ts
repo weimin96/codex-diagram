@@ -58,6 +58,7 @@ export const extendedSkills: DiagramSkill[] = [
   extendedSkill('sankey', 'Sankey Diagram', ['流量', '资金流', '能量流', '转化流', '去向分布'], [
     'Sankey 只用于可加总的流量守恒/分配问题；source→target 的 value 必须是同一量纲。',
     '主流向从左到右，节点命名保持同一业务层级；需要对比两个完全不同指标时拆图而不是混在一张流图里。',
+    'Mermaid 11.17 的 Sankey CSV lexer 对 Unicode 标签支持不可靠；节点名使用简短 ASCII-safe 标识，中文语义放在图外说明，避免生成后无法解析。',
   ], [
     '通常控制在 4~20 个节点、5~30 条流；长尾类别合并为“其他”但必须说明聚合口径。',
   ], [
@@ -73,6 +74,7 @@ export const extendedSkills: DiagramSkill[] = [
   extendedSkill('xychart', 'XY Chart', ['趋势', '柱线图', '时间序列', '指标对比', '数值走势'], [
     '先确定 x 轴是有序时间/类别还是连续数值，再选择 bar、line 或二者组合；趋势优先 line，离散量比较优先 bar。',
     '同图多序列必须共享可比较的 y 轴量纲；不同单位不要伪装成同一尺度。',
+    '分类横轴包含中文或其他 Unicode 文本时使用带引号的类别，例如 x-axis ["一月", "二月"]，避免 Mermaid lexer 解析失败。',
   ], [
     '推荐 3~24 个 x 点、1~4 条序列；超过后优先缩短时间窗口或拆图。',
   ], [
