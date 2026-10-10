@@ -153,17 +153,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-follow-toggle.is-active { color: var(--text-secondary); background: color-mix(in srgb, #22a06b 7%, transparent); }
 .thread-link-status { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: #22a06b; box-shadow: 0 0 0 3px color-mix(in srgb, #22a06b 12%, transparent); }
 .thread-follow-toggle:not(.is-active) .thread-link-status { background: var(--text-tertiary); box-shadow: none; }
-.thread-diagram-menu { position: relative; min-width: 180px; width: clamp(280px, 48vw, 420px); max-width: 100%; flex: 0 1 auto; }
+.thread-diagram-menu { position: relative; min-width: 200px; width: 300px; max-width: calc(100% - 94px); flex: 0 1 300px; }
 .thread-diagram-menu > summary { min-width: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 9px 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-primary); cursor: pointer; list-style: none; }
 .thread-diagram-menu > summary::-webkit-details-marker, .thread-new-menu > summary::-webkit-details-marker { display: none; }
 .thread-diagram-menu > summary:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .thread-diagram-menu[open] > summary { border-color: color-mix(in srgb, var(--accent) 50%, var(--border-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
-.thread-diagram-current { min-width: 0; flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
-.thread-diagram-current strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 620; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-.thread-diagram-current small { flex: 0 0 auto; color: var(--text-tertiary); font-size: 10px; font-weight: 500; white-space: nowrap; }
+.thread-diagram-current { min-width: 0; flex: 1 1 auto; display: block; }
+.thread-diagram-current strong { display: block; min-width: 0; overflow: hidden; font-size: 12px; font-weight: 620; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .thread-menu-chevron { width: 7px; height: 7px; flex: 0 0 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; color: var(--text-tertiary); transform: translateY(-2px) rotate(45deg); transition: transform 120ms ease; }
 .thread-diagram-menu[open] .thread-menu-chevron { transform: translateY(2px) rotate(225deg); }
-.thread-diagram-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); left: 0; right: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
+.thread-diagram-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); left: 0; width: min(420px, calc(100vw - 28px)); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
 .thread-menu-head { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }
 .thread-menu-head strong { color: var(--text-secondary); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
 .thread-menu-head span { font-size: 10px; font-variant-numeric: tabular-nums; }
@@ -1335,8 +1334,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .thread-companion-head { padding: 6px; }
   .thread-companion-primary { gap: 4px; }
   .thread-follow-toggle { width: 32px; padding: 0; justify-content: center; font-size: 0; }
-  .thread-diagram-menu { min-width: 0; width: auto; flex: 1 1 auto; }
-  .thread-diagram-current small { display: none; }
+  .thread-diagram-menu { min-width: 0; width: auto; max-width: none; flex: 1 1 auto; }
   .thread-current-close { width: 30px; flex-basis: 30px; }
   .thread-new-menu > summary { padding-inline: 8px; }
   .thread-new-menu-popover { width: min(230px, calc(100vw - 20px)); }

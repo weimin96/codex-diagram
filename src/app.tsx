@@ -1932,13 +1932,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <summary aria-label="选择图表">
                   <span className="thread-diagram-current">
                     <strong>{selected?.name ?? '选择图表'}</strong>
-                    <small>{selected
-                      ? diagramLabel(selected.type)
-                      : threadMenuGroups.currentTotal
-                        ? `${threadMenuGroups.currentTotal} 个当前对话图表`
-                        : snapshot.diagrams.length
-                          ? `${snapshot.diagrams.length} 个项目图表`
-                          : '暂无图表'}</small>
                   </span>
                   <span className="thread-menu-chevron" aria-hidden="true" />
                 </summary>
