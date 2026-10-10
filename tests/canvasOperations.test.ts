@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, searchArchitectureNodeTemplates } from '../src/architectureNodeTemplates.js'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
+import { alignCanvasSelection, computeCanvasSmartSnap, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -38,6 +38,42 @@ test('copies and pastes a connected canvas selection with unique remapped arrows
     assert.ok(newIds.has(arrow.from))
     assert.ok(newIds.has(arrow.to))
   }
+})
+
+test('smart snap aligns edges and centers against nearby shapes and boundary targets', () => {
+  const edge = computeCanvasSmartSnap(
+    { x: 292, y: 210, width: 100, height: 80 },
+    [{ x: 400, y: 100, width: 120, height: 80 }],
+    10,
+  )
+  assert.equal(edge.delta.x, 8)
+  assert.equal(edge.xGuide, 400)
+
+  const boundary = computeCanvasSmartSnap(
+    { x: 94, y: 220, width: 100, height: 80 },
+    [],
+    8,
+    [100],
+    [],
+  )
+  assert.equal(boundary.delta.x, 6)
+  assert.equal(boundary.xGuide, 100)
+})
+
+test('smart snap equalizes spacing between neighboring shapes and reports matching size', () => {
+  const result = computeCanvasSmartSnap(
+    { x: 205, y: 100, width: 100, height: 80 },
+    [
+      { x: 0, y: 100, width: 100, height: 80 },
+      { x: 400, y: 100, width: 100, height: 80 },
+    ],
+    12,
+  )
+  assert.equal(result.delta.x, -5)
+  assert.equal(result.spacingGuides.length, 2)
+  assert.deepEqual(result.spacingGuides.map((guide) => guide.distance), [100, 100])
+  assert.equal(result.sameWidth, true)
+  assert.equal(result.sameHeight, true)
 })
 
 test('copies standalone drawing lines with their absolute geometry', () => {

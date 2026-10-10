@@ -4,7 +4,7 @@ import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchit
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasSpacingGuide, type CanvasTraceDirection } from './canvasOperations.js'
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
 import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
@@ -43,7 +43,13 @@ interface CanvasEditorProps {
 type Viewport = { x: number; y: number; zoom: number }
 type SelectionRect = { x1: number; y1: number; x2: number; y2: number }
 type ContextMenuState = { x: number; y: number }
-type SnapGuides = { x?: number; y?: number }
+type SnapGuides = {
+  x?: number
+  y?: number
+  spacing?: CanvasSpacingGuide[]
+  sizeLabel?: string
+  sizePoint?: CanvasPoint
+}
 type InsertTarget = { arrowId: string; point: CanvasPoint }
 type GestureVisualDraft = { positions: Record<string, CanvasPoint>; guides: SnapGuides; insertTarget: InsertTarget | null }
 type PlaybackState = {
@@ -2332,29 +2338,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     let dx = event.altKey || !referenceOrigin ? rawDx : snap(referenceOrigin.x + rawDx) - referenceOrigin.x
     let dy = event.altKey || !referenceOrigin ? rawDy : snap(referenceOrigin.y + rawDy) - referenceOrigin.y
     let guides: SnapGuides = {}
-    if (!event.altKey && moving.length && others.length) {
+    if (!event.altKey && moving.length) {
       const originRects = moving.map((candidate) => {
         const origin = active.positions.get(candidate.id)!
         return { x: origin.x, y: origin.y, width: candidate.width, height: candidate.height }
       })
-      const left = Math.min(...originRects.map((rect) => rect.x)) + rawDx
-      const top = Math.min(...originRects.map((rect) => rect.y)) + rawDy
-      const right = Math.max(...originRects.map((rect) => rect.x + rect.width)) + rawDx
-      const bottom = Math.max(...originRects.map((rect) => rect.y + rect.height)) + rawDy
-      const horizontal = [left, (left + right) / 2, right]
-      const vertical = [top, (top + bottom) / 2, bottom]
-      const targetHorizontal = others.flatMap((candidate) => [candidate.x, candidate.x + candidate.width / 2, candidate.x + candidate.width])
-      const targetVertical = others.flatMap((candidate) => [candidate.y, candidate.y + candidate.height / 2, candidate.y + candidate.height])
-      const threshold = Math.max(4, 8 / Math.max(viewport.zoom, 0.5))
-      const xSnap = nearestSnap(horizontal, targetHorizontal, threshold)
-      const ySnap = nearestSnap(vertical, targetVertical, threshold)
-      if (xSnap) {
-        dx = rawDx + xSnap.delta
-        guides.x = xSnap.target
+      const originLeft = Math.min(...originRects.map((rect) => rect.x))
+      const originTop = Math.min(...originRects.map((rect) => rect.y))
+      const originRight = Math.max(...originRects.map((rect) => rect.x + rect.width))
+      const originBottom = Math.max(...originRects.map((rect) => rect.y + rect.height))
+      const proposed = {
+        x: originLeft + dx,
+        y: originTop + dy,
+        width: originRight - originLeft,
+        height: originBottom - originTop,
       }
-      if (ySnap) {
-        dy = rawDy + ySnap.delta
-        guides.y = ySnap.target
+      const threshold = Math.max(4, 8 / Math.max(viewport.zoom, 0.5))
+      const snapFrames = groupBounds.filter((frame) => !frame.memberIds.some((id) => movingIds.has(id)))
+      const extraXTargets = [live.width / 2, ...snapFrames.flatMap((frame) => [frame.x, frame.x + frame.width])]
+      const extraYTargets = [live.height / 2, ...snapFrames.flatMap((frame) => [frame.y, frame.y + frame.height])]
+      for (const lane of live.lanes ?? []) {
+        if (lane.axis === 'vertical') extraXTargets.push(lane.start, lane.start + lane.size)
+        else extraYTargets.push(lane.start, lane.start + lane.size)
+      }
+      const smartSnap = computeCanvasSmartSnap(proposed, others, threshold, extraXTargets, extraYTargets)
+      dx += smartSnap.delta.x
+      dy += smartSnap.delta.y
+      guides = {
+        ...(smartSnap.xGuide !== undefined ? { x: smartSnap.xGuide } : {}),
+        ...(smartSnap.yGuide !== undefined ? { y: smartSnap.yGuide } : {}),
+        ...(smartSnap.spacingGuides.length ? { spacing: smartSnap.spacingGuides } : {}),
+      }
+      if (moving.length === 1 && (smartSnap.sameWidth || smartSnap.sameHeight)) {
+        const origin = active.positions.get(moving[0].id)!
+        guides.sizeLabel = smartSnap.sameWidth && smartSnap.sameHeight ? '同宽 · 同高' : smartSnap.sameWidth ? '同宽' : '同高'
+        guides.sizePoint = { x: origin.x + dx + moving[0].width, y: origin.y + dy - 12 }
       }
     }
     let insertCandidate: InsertTarget | null = null
@@ -2493,6 +2511,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         recordGesture(active.before)
       }
       clearGeometryDrafts()
+      setSnapGuides({})
     } else if (active.kind === 'arrow-point') {
       const draft = arrowPointDraftRef.current
       if (draft) {
@@ -2520,10 +2539,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       const preview = arrowEndpointPreviewRef.current
       const source = currentScene().elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === active.id)
       if (source?.start && source.end && preview) {
+        const endpointPoint = preview.targetId
+          ? preview.point
+          : event.altKey
+            ? preview.point
+            : { x: snap(preview.point.x), y: snap(preview.point.y) }
         const next: CanvasScene = {
           ...currentScene(),
           elements: currentScene().elements.map((item) => item.type === 'arrow' && item.id === active.id
-            ? { ...item, [active.endpoint === 'from' ? 'start' : 'end']: { x: snap(preview.point.x), y: snap(preview.point.y) }, points: undefined }
+            ? { ...item, [active.endpoint === 'from' ? 'start' : 'end']: endpointPoint, points: undefined }
             : item),
         }
         commit(next, false)
@@ -2566,6 +2590,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     if (active.kind === 'move') clearGestureVisual()
     if (active.kind === 'resize' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
+    if (active.kind === 'resize') setSnapGuides({})
     if (active.kind === 'arrow-endpoint') {
       arrowEndpointPreviewRef.current = null
       setArrowEndpointPreview(null)
@@ -2589,7 +2614,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       return
     }
     if (tool === 'line' || tool === 'arrow') {
-      const snapped = { x: snap(point.x), y: snap(point.y) }
+      const anchor = event.altKey ? null : nearestNodeAnchor(live, point, new Set(), Math.max(14, 24 / Math.max(viewport.zoom, 0.5)))
+      const snapped = anchor?.point ?? (event.altKey ? point : { x: snap(point.x), y: snap(point.y) })
       const draft = { start: snapped, end: snapped, markerEnd: tool === 'arrow' ? 'arrow' as const : 'none' as const }
       lineDraftRef.current = draft
       setLineDraft(draft)
@@ -2625,7 +2651,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       const point = scenePoint(event.clientX, event.clientY, event.currentTarget, live, viewport)
       const start = lineDraftRef.current?.start
       if (!start) return
-      let end = { x: snap(point.x), y: snap(point.y) }
+      const anchor = event.altKey ? null : nearestNodeAnchor(live, point, new Set(), Math.max(14, 24 / Math.max(viewport.zoom, 0.5)))
+      let end = anchor?.point ?? (event.altKey ? point : { x: snap(point.x), y: snap(point.y) })
       if (event.shiftKey) {
         if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) end = { x: end.x, y: start.y }
         else end = { x: start.x, y: end.y }
@@ -2681,11 +2708,34 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!active || active.kind !== 'resize' || active.pointerId !== event.pointerId) return
     const live = currentScene()
     const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    const draft = {
-      id: active.id,
-      width: Math.max(100, snap(active.width + point.x - active.startX)),
-      height: Math.max(60, snap(active.height + point.y - active.startY)),
+    const rawWidth = Math.max(100, active.width + point.x - active.startX)
+    const rawHeight = Math.max(60, active.height + point.y - active.startY)
+    let width = event.altKey ? rawWidth : snap(rawWidth)
+    let height = event.altKey ? rawHeight : snap(rawHeight)
+    let sameWidth = false
+    let sameHeight = false
+    if (!event.altKey) {
+      const others = live.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id !== active.id)
+      const threshold = Math.max(4, 8 / Math.max(viewport.zoom, 0.5))
+      const widthTarget = nearestValue(width, others.map((item) => item.width), threshold)
+      const heightTarget = nearestValue(height, others.map((item) => item.height), threshold)
+      if (widthTarget !== undefined) {
+        width = widthTarget
+        sameWidth = true
+      }
+      if (heightTarget !== undefined) {
+        height = heightTarget
+        sameHeight = true
+      }
+      const source = others.length ? live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === active.id) : undefined
+      setSnapGuides(source && (sameWidth || sameHeight) ? {
+        sizeLabel: sameWidth && sameHeight ? '同宽 · 同高' : sameWidth ? '同宽' : '同高',
+        sizePoint: { x: source.x + width, y: source.y - 12 },
+      } : {})
+    } else {
+      setSnapGuides({})
     }
+    const draft = { id: active.id, width, height }
     resizeDraftRef.current = draft
     scheduleGeometryDraftRender()
   }
@@ -2732,13 +2782,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const currentPreview = arrowEndpointPreviewRef.current
     if (!arrow || !currentPreview) return
     if (arrow.start && arrow.end) {
-      const nextPreview = { ...currentPreview, point: { x: snap(point.x), y: snap(point.y) }, targetId: undefined, targetAnchor: undefined }
+      const target = event.altKey ? null : nearestNodeAnchor(live, point, new Set(), Math.max(18, 30 / Math.max(viewport.zoom, 0.5)))
+      const nextPreview = {
+        ...currentPreview,
+        point: target?.point ?? (event.altKey ? point : { x: snap(point.x), y: snap(point.y) }),
+        ...(target ? { targetId: target.nodeId, targetAnchor: target.anchor } : { targetId: undefined, targetAnchor: undefined }),
+      }
       arrowEndpointPreviewRef.current = nextPreview
       setArrowEndpointPreview(nextPreview)
       return
     }
     const excluded = new Set([active.endpoint === 'from' ? arrow.to : arrow.from])
-    const target = nearestNodeAnchor(live, point, excluded, Math.max(18, 30 / Math.max(viewport.zoom, 0.5)))
+    const target = event.altKey ? null : nearestNodeAnchor(live, point, excluded, Math.max(18, 30 / Math.max(viewport.zoom, 0.5)))
     const nextPreview = {
       ...currentPreview,
       point: target?.point ?? point,
@@ -3671,6 +3726,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           })() : null}
           {snapGuides.x !== undefined ? <path className="freeform-snap-guide" d={`M ${snapGuides.x} 0 V ${scene.height}`} /> : null}
           {snapGuides.y !== undefined ? <path className="freeform-snap-guide" d={`M 0 ${snapGuides.y} H ${scene.width}`} /> : null}
+          {snapGuides.spacing?.map((guide, index) => guide.axis === 'x' ? (
+            <g key={`spacing-x-${index}`} className="freeform-spacing-guide" pointerEvents="none">
+              <path d={`M ${guide.from} ${guide.cross} H ${guide.to} M ${guide.from} ${guide.cross - 5} V ${guide.cross + 5} M ${guide.to} ${guide.cross - 5} V ${guide.cross + 5}`} />
+              <text x={(guide.from + guide.to) / 2} y={guide.cross - 7} textAnchor="middle">{guide.distance}</text>
+            </g>
+          ) : (
+            <g key={`spacing-y-${index}`} className="freeform-spacing-guide" pointerEvents="none">
+              <path d={`M ${guide.cross} ${guide.from} V ${guide.to} M ${guide.cross - 5} ${guide.from} H ${guide.cross + 5} M ${guide.cross - 5} ${guide.to} H ${guide.cross + 5}`} />
+              <text x={guide.cross + 8} y={(guide.from + guide.to) / 2 + 4}>{guide.distance}</text>
+            </g>
+          ))}
+          {snapGuides.sizeLabel && snapGuides.sizePoint ? <text className="freeform-size-guide" x={snapGuides.sizePoint.x + 8} y={snapGuides.sizePoint.y} pointerEvents="none">{snapGuides.sizeLabel}</text> : null}
           {architectureHeader ? (
             <g className="freeform-architecture-header" pointerEvents="none">
               <rect width={scene.width} height={architectureHeader.height} />
@@ -4758,17 +4825,14 @@ function semanticLodAllowsArrowLabel(level: CanvasSemanticLodLevel, arrow: Canva
   return false
 }
 
-function nearestSnap(sources: number[], targets: number[], threshold: number): { delta: number; target: number } | null {
-  let best: { delta: number; target: number; distance: number } | null = null
-  for (const source of sources) {
-    for (const target of targets) {
-      const delta = target - source
-      const distance = Math.abs(delta)
-      if (distance > threshold || (best && distance >= best.distance)) continue
-      best = { delta, target, distance }
-    }
+function nearestValue(value: number, targets: number[], threshold: number): number | undefined {
+  let best: { value: number; distance: number } | undefined
+  for (const target of targets) {
+    const distance = Math.abs(target - value)
+    if (distance > threshold || (best && distance >= best.distance)) continue
+    best = { value: target, distance }
   }
-  return best ? { delta: best.delta, target: best.target } : null
+  return best?.value
 }
 
 function nearestNodeAnchor(

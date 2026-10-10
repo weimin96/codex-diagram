@@ -1,5 +1,146 @@
-import type { CanvasArrow, CanvasC4Type, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasScene, CanvasStencil } from './canvas.js'
+import type { CanvasArrow, CanvasC4Type, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasPoint, CanvasScene, CanvasStencil } from './canvas.js'
 import type { ArchitectureNodeTemplate } from './architectureNodeTemplates.js'
+
+export interface CanvasSnapRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface CanvasSpacingGuide {
+  axis: 'x' | 'y'
+  from: number
+  to: number
+  cross: number
+  distance: number
+}
+
+export interface CanvasSmartSnapResult {
+  delta: CanvasPoint
+  xGuide?: number
+  yGuide?: number
+  spacingGuides: CanvasSpacingGuide[]
+  sameWidth: boolean
+  sameHeight: boolean
+}
+
+export function computeCanvasSmartSnap(
+  proposed: CanvasSnapRect,
+  targets: CanvasSnapRect[],
+  threshold: number,
+  extraXTargets: number[] = [],
+  extraYTargets: number[] = [],
+): CanvasSmartSnapResult {
+  const sourceX = [proposed.x, proposed.x + proposed.width / 2, proposed.x + proposed.width]
+  const sourceY = [proposed.y, proposed.y + proposed.height / 2, proposed.y + proposed.height]
+  const targetX = [...targets.flatMap((target) => [target.x, target.x + target.width / 2, target.x + target.width]), ...extraXTargets]
+  const targetY = [...targets.flatMap((target) => [target.y, target.y + target.height / 2, target.y + target.height]), ...extraYTargets]
+  const xSnap = nearestSnapDelta(sourceX, targetX, threshold)
+  const ySnap = nearestSnapDelta(sourceY, targetY, threshold)
+  let dx = xSnap?.delta ?? 0
+  let dy = ySnap?.delta ?? 0
+  let xGuide = xSnap?.target
+  let yGuide = ySnap?.target
+  const spacingGuides: CanvasSpacingGuide[] = []
+
+  let adjusted = { ...proposed, x: proposed.x + dx, y: proposed.y + dy }
+  if (!xSnap) {
+    const spacing = equalSpacingSnap(adjusted, targets, 'x', threshold)
+    if (spacing) {
+      dx += spacing.delta
+      adjusted = { ...adjusted, x: adjusted.x + spacing.delta }
+      spacingGuides.push(...spacing.guides)
+    }
+  }
+  if (!ySnap) {
+    const spacing = equalSpacingSnap(adjusted, targets, 'y', threshold)
+    if (spacing) {
+      dy += spacing.delta
+      adjusted = { ...adjusted, y: adjusted.y + spacing.delta }
+      spacingGuides.push(...spacing.guides)
+    }
+  }
+
+  const nearby = targets.filter((target) => {
+    const dx = target.x + target.width / 2 - (adjusted.x + adjusted.width / 2)
+    const dy = target.y + target.height / 2 - (adjusted.y + adjusted.height / 2)
+    return Math.hypot(dx, dy) <= 480
+  })
+  return {
+    delta: { x: dx, y: dy },
+    ...(xGuide !== undefined ? { xGuide } : {}),
+    ...(yGuide !== undefined ? { yGuide } : {}),
+    spacingGuides,
+    sameWidth: nearby.some((target) => Math.abs(target.width - adjusted.width) < 0.5),
+    sameHeight: nearby.some((target) => Math.abs(target.height - adjusted.height) < 0.5),
+  }
+}
+
+function nearestSnapDelta(sources: number[], targets: number[], threshold: number): { delta: number; target: number } | null {
+  let best: { delta: number; target: number; distance: number } | null = null
+  for (const source of sources) {
+    for (const target of targets) {
+      const delta = target - source
+      const distance = Math.abs(delta)
+      if (distance > threshold || (best && distance >= best.distance)) continue
+      best = { delta, target, distance }
+    }
+  }
+  return best ? { delta: best.delta, target: best.target } : null
+}
+
+function equalSpacingSnap(
+  proposed: CanvasSnapRect,
+  targets: CanvasSnapRect[],
+  axis: 'x' | 'y',
+  threshold: number,
+): { delta: number; guides: CanvasSpacingGuide[] } | null {
+  if (axis === 'x') {
+    const overlaps = targets.filter((target) => rangesOverlap(proposed.y, proposed.y + proposed.height, target.y, target.y + target.height, threshold))
+    const left = overlaps.filter((target) => target.x + target.width <= proposed.x + threshold).sort((a, b) => (b.x + b.width) - (a.x + a.width))[0]
+    const right = overlaps.filter((target) => target.x >= proposed.x + proposed.width - threshold).sort((a, b) => a.x - b.x)[0]
+    if (!left || !right) return null
+    const leftGap = proposed.x - (left.x + left.width)
+    const rightGap = right.x - (proposed.x + proposed.width)
+    const delta = (rightGap - leftGap) / 2
+    if (leftGap < -threshold || rightGap < -threshold || Math.abs(delta) > threshold) return null
+    const snappedLeft = proposed.x + delta
+    const snappedRight = snappedLeft + proposed.width
+    const distance = Math.max(0, Math.round((leftGap + rightGap) / 2))
+    const cross = proposed.y + proposed.height / 2
+    return {
+      delta,
+      guides: [
+        { axis, from: left.x + left.width, to: snappedLeft, cross, distance },
+        { axis, from: snappedRight, to: right.x, cross, distance },
+      ],
+    }
+  }
+  const overlaps = targets.filter((target) => rangesOverlap(proposed.x, proposed.x + proposed.width, target.x, target.x + target.width, threshold))
+  const top = overlaps.filter((target) => target.y + target.height <= proposed.y + threshold).sort((a, b) => (b.y + b.height) - (a.y + a.height))[0]
+  const bottom = overlaps.filter((target) => target.y >= proposed.y + proposed.height - threshold).sort((a, b) => a.y - b.y)[0]
+  if (!top || !bottom) return null
+  const topGap = proposed.y - (top.y + top.height)
+  const bottomGap = bottom.y - (proposed.y + proposed.height)
+  const delta = (bottomGap - topGap) / 2
+  if (topGap < -threshold || bottomGap < -threshold || Math.abs(delta) > threshold) return null
+  const snappedTop = proposed.y + delta
+  const snappedBottom = snappedTop + proposed.height
+  const distance = Math.max(0, Math.round((topGap + bottomGap) / 2))
+  const cross = proposed.x + proposed.width / 2
+  return {
+    delta,
+    guides: [
+      { axis, from: top.y + top.height, to: snappedTop, cross, distance },
+      { axis, from: snappedBottom, to: bottom.y, cross, distance },
+    ],
+  }
+}
+
+function rangesOverlap(a1: number, a2: number, b1: number, b2: number, padding: number): boolean {
+  return a1 <= b2 + padding && a2 + padding >= b1
+}
 
 export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasElement[] {
   const chosen = new Set(ids)

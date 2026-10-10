@@ -994,6 +994,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes freeform-ai-selection-pulse { from { stroke-opacity: .58; } to { stroke-opacity: 1; } }
 @keyframes freeform-ai-delete { 0% { opacity: .55; } 100% { opacity: 0; } }
 .freeform-snap-guide { fill: none; stroke: color-mix(in srgb, var(--accent) 78%, transparent); stroke-width: 1; stroke-dasharray: 5 5; pointer-events: none; vector-effect: non-scaling-stroke; }
+.freeform-spacing-guide path { fill: none; stroke: color-mix(in srgb, var(--accent) 72%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.freeform-spacing-guide text,
+.freeform-size-guide { fill: var(--accent); font-size: 10px; font-weight: 700; paint-order: stroke; stroke: var(--surface-panel); stroke-width: 4px; stroke-linejoin: round; }
 .freeform-connect-preview path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 6; vector-effect: non-scaling-stroke; }
 .freeform-connect-preview circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-panel)); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .freeform-insert-target circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-panel)); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
