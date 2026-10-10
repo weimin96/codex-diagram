@@ -29,6 +29,8 @@ test('keeps Canvas workbench intent explicit for architecture and flowchart boar
   })
   assert.match(flowchart, /canvasWorkbench 使用 flowchart/)
   assert.match(flowchart, /跨角色流程可使用 lanes/)
+  assert.match(flowchart, /flowchart:decision/)
+  assert.match(flowchart, /shapeRef/)
   assert.doesNotMatch(flowchart, /Architecture Diagram Skill/)
 })
 

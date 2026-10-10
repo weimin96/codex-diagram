@@ -11,6 +11,7 @@ import {
   type CanvasStencilId,
 } from './iconRegistry.js'
 import { cloudArchitectureIconData } from './cloudIconPacks.js'
+import { canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeRef } from './shapeRegistry.js'
 
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
@@ -81,6 +82,7 @@ export interface CanvasNode {
   text: string
   tone?: CanvasTone
   shape?: CanvasShape
+  shapeRef?: CanvasShapeRef
   locked?: boolean
   groupId?: string
   sourcePaths?: string[]
@@ -105,6 +107,7 @@ export interface CanvasNote {
   text: string
   tone?: CanvasTone
   shape?: CanvasShape
+  shapeRef?: CanvasShapeRef
   locked?: boolean
   groupId?: string
   sourcePaths?: string[]
@@ -378,10 +381,16 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const subtitle = showSubtitle ? `<text x="${architectureCard ? item.x + 16 : item.x + item.width / 2}" y="${item.y + item.height - 16}"${architectureCard ? '' : ' text-anchor="middle"'} font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(truncateCanvasText(item.subtitle!, 34))}</text>` : ''
     const strokeWidth = item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5
     const opacity = item.emphasis === 'muted' ? '0.72' : '1'
-    const accent = item.emphasis === 'primary' ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
+    const accent = item.emphasis === 'primary' && !item.shapeRef ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
     const cardBand = architectureCard ? `<rect x="${item.x + 12}" y="${item.y + item.height - 4}" width="${Math.max(24, item.width - 24)}" height="2" rx="1" fill="${escapeXml(architectureCardBandColor(cardTemplate.kind, palette.stroke, border))}" fill-opacity="0.72"/>` : ''
     const dash = cardTemplate.kind === 'external' || cardTemplate.kind === 'messaging' ? ' stroke-dasharray="7 5"' : ''
-    return `<g opacity="${opacity}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`
+    const shapeMarkup = item.shapeRef
+      ? (() => {
+          const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height)
+          return `<g transform="translate(${item.x} ${item.y})"><path d="${geometry.bodyPath}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="${Math.max(1, strokeWidth * 0.86)}"/>`).join('')}</g>`
+        })()
+      : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>`
+    return `<g opacity="${opacity}">${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = architectureMode
@@ -1163,20 +1172,28 @@ function isInsideCollapsedAncestor(groupId: string, groups: CanvasGroup[]): bool
   return false
 }
 
-function centerOfCanvasBox(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>) {
+type CanvasAnchorBox = Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'> & Partial<Pick<CanvasNode, 'shapeRef'>>
+
+function centerOfCanvasBox(item: CanvasAnchorBox) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
 }
 
-function edgePoint(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>, toward: CanvasPoint) {
+function edgePoint(item: CanvasAnchorBox, toward: CanvasPoint) {
   const origin = centerOfCanvasBox(item)
   const dx = toward.x - origin.x
   const dy = toward.y - origin.y
   if (dx === 0 && dy === 0) return origin
-  const scale = 1 / Math.max(Math.abs(dx) / Math.max(1, item.width / 2), Math.abs(dy) / Math.max(1, item.height / 2))
+  const halfWidth = Math.max(1, item.width / 2)
+  const halfHeight = Math.max(1, item.height / 2)
+  const scale = item.shapeRef === 'basic:ellipse'
+    ? 1 / Math.sqrt((dx / halfWidth) ** 2 + (dy / halfHeight) ** 2)
+    : item.shapeRef === 'basic:diamond' || item.shapeRef === 'flowchart:decision'
+      ? 1 / (Math.abs(dx) / halfWidth + Math.abs(dy) / halfHeight)
+      : 1 / Math.max(Math.abs(dx) / halfWidth, Math.abs(dy) / halfHeight)
   return { x: origin.x + dx * scale, y: origin.y + dy * scale }
 }
 
-export function anchorPoint(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
+export function anchorPoint(item: CanvasAnchorBox, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
   const center = centerOfCanvasBox(item)
   switch (anchor) {
     case 'top': return { x: center.x, y: item.y }
@@ -1491,6 +1508,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     text: item.text,
     ...(item.tone && tones.includes(item.tone) ? { tone: item.tone } : {}),
     ...(item.shape && shapes.includes(item.shape) ? { shape: item.shape } : {}),
+    ...(isCanvasShapeRef(item.shapeRef) ? { shapeRef: item.shapeRef } : {}),
     ...(item.locked === true ? { locked: true } : {}),
     ...(typeof item.groupId === 'string' && item.groupId.trim() ? { groupId: item.groupId.trim() } : {}),
     ...(Array.isArray(item.sourcePaths) ? { sourcePaths: item.sourcePaths.filter((path) => typeof path === 'string' && path.trim()).map((path) => path.trim()).slice(0, 12) } : {}),

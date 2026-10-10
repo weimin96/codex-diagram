@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -31,6 +31,42 @@ test('persists Canvas workbench mode while keeping legacy canvases compatible', 
     type: 'codex-diagram-canvas', version: 1, title: 'Legacy', width: 800, height: 600, elements: [], architecture: { theme: 'enterprise' },
   }))
   assert.equal(legacyArchitecture.workbench, 'architecture')
+})
+
+test('round-trips registered shape refs and renders their geometry', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    workbench: 'flowchart',
+    title: 'Flow shapes',
+    width: 800,
+    height: 500,
+    elements: [
+      { id: 'decision', type: 'node', x: 120, y: 100, width: 140, height: 104, text: '是否通过？', shapeRef: 'flowchart:decision' },
+      { id: 'database', type: 'node', x: 420, y: 100, width: 156, height: 108, text: '订单库', shapeRef: 'flowchart:database' },
+    ],
+  }
+  const parsed = parseCanvasScene(serializeCanvasScene(scene))
+  assert.equal(parsed.elements[0].type === 'node' ? parsed.elements[0].shapeRef : undefined, 'flowchart:decision')
+  const svg = canvasSceneToSvg(parsed)
+  assert.match(svg, /M 70 0 L 140 52 L 70 104 L 0 52 Z/)
+  assert.match(svg, /C 0 0, 156 0, 156 14\.04/)
+
+  const invalid = parseCanvasScene(JSON.stringify({ ...scene, elements: [{ ...scene.elements[0], shapeRef: 'flowchart:not-real' }] }))
+  assert.equal(invalid.elements[0].type === 'node' ? invalid.elements[0].shapeRef : undefined, undefined)
+})
+
+test('auto anchors respect ellipse and decision geometry instead of the bounding rectangle', () => {
+  const decision = { x: 100, y: 100, width: 140, height: 100, shapeRef: 'flowchart:decision' as const }
+  const decisionPoint = anchorPoint(decision, 'auto', { x: 300, y: 220 })
+  const decisionCenter = { x: 170, y: 150 }
+  const diamondEquation = Math.abs(decisionPoint.x - decisionCenter.x) / 70 + Math.abs(decisionPoint.y - decisionCenter.y) / 50
+  assert.ok(Math.abs(diamondEquation - 1) < 1e-9)
+
+  const ellipse = { x: 100, y: 100, width: 160, height: 100, shapeRef: 'basic:ellipse' as const }
+  const ellipsePoint = anchorPoint(ellipse, 'auto', { x: 320, y: 210 })
+  const ellipseEquation = ((ellipsePoint.x - 180) / 80) ** 2 + ((ellipsePoint.y - 150) / 50) ** 2
+  assert.ok(Math.abs(ellipseEquation - 1) < 1e-9)
 })
 
 test('rejects malformed Canvas documents', () => {

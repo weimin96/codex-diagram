@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ArrowRight, Hand, MousePointer2, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
+import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -109,12 +112,18 @@ const ICON_SOURCE_OPTIONS: ReadonlyArray<readonly ['all' | CanvasIconSource, str
 const TEMPLATE_FAVORITES_STORAGE_KEY = 'codex-diagram:architecture-template-favorites'
 const TEMPLATE_RECENTS_STORAGE_KEY = 'codex-diagram:architecture-template-recents'
 const TEMPLATE_DRAG_MIME = 'application/x-codex-diagram-architecture-template'
+const SHAPE_DRAG_MIME = 'application/x-codex-diagram-shape'
 const TEMPLATE_RECENT_LIMIT = 8
 
 type ArchitectureTemplateDragState = {
   templateId: string
   point?: CanvasPoint
   groupId?: string
+}
+
+type ShapeDragState = {
+  shapeRef: CanvasShapeRef
+  point?: CanvasPoint
 }
 
 function readStoredTemplateIds(key: string): string[] {
@@ -166,6 +175,22 @@ function IconRefGlyph({ refValue, className }: { refValue: CanvasIconRef; classN
   return <svg className={className} viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: canvasIconRefMarkup(refValue, false, 'currentColor') }} />
 }
 
+function ToolbarGlyph({ icon }: { icon: IconNode }) {
+  const markup = icon.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([key, value]) => `${key}="${String(value)}"`).join(' ')}/>`).join('')
+  return <svg viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: markup }} />
+}
+
+function CanvasBoxShape({ item }: { item: CanvasNode | CanvasNote }) {
+  if (item.shapeRef) {
+    const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height)
+    return <>
+      <path d={geometry.bodyPath} className="freeform-shape-body" />
+      {geometry.detailPaths.map((path, index) => <path key={index} d={path} className="freeform-shape-detail" />)}
+    </>
+  }
+  return <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
+}
+
 export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
   const parsed = useMemo(() => {
     try {
@@ -206,6 +231,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [favoriteTemplateIds, setFavoriteTemplateIds] = useState<string[]>(() => readStoredTemplateIds(TEMPLATE_FAVORITES_STORAGE_KEY))
   const [recentTemplateIds, setRecentTemplateIds] = useState<string[]>(() => readStoredTemplateIds(TEMPLATE_RECENTS_STORAGE_KEY))
   const [architectureTemplateDrag, setArchitectureTemplateDrag] = useState<ArchitectureTemplateDragState | null>(null)
+  const [shapeLibraryOpen, setShapeLibraryOpen] = useState(parsed.scene?.workbench === 'flowchart' || parsed.scene?.workbench === 'freeform')
+  const [activeShapeRef, setActiveShapeRef] = useState<CanvasShapeRef>(parsed.scene?.workbench === 'flowchart' ? 'flowchart:process' : 'basic:rectangle')
+  const [shapeDrag, setShapeDrag] = useState<ShapeDragState | null>(null)
   const [inspectorMenuOpen, setInspectorMenuOpen] = useState(false)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [iconPickerQuery, setIconPickerQuery] = useState('')
@@ -248,6 +276,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setArchitectureView(parsed.scene.architecture.view ?? 'detail')
     setArchitectureDensity(parsed.scene.architecture.density ?? 'auto')
   }, [parsed.scene?.architecture?.density, parsed.scene?.architecture?.theme, parsed.scene?.architecture?.view])
+
+  useEffect(() => {
+    if (!parsed.scene) return
+    const workbench = parsed.scene.workbench ?? (parsed.scene.architecture ? 'architecture' : 'freeform')
+    if (workbench === 'flowchart' && !activeShapeRef.startsWith('flowchart:')) setActiveShapeRef('flowchart:process')
+    if (workbench === 'freeform' && activeShapeRef.startsWith('flowchart:')) setActiveShapeRef('basic:rectangle')
+    if (workbench === 'architecture') setShapeLibraryOpen(false)
+  }, [activeShapeRef, parsed.scene?.architecture, parsed.scene?.workbench])
 
   useEffect(() => {
     if (!parsed.scene || !architectureScope) return
@@ -829,7 +865,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       } : current)
       for (let index = 0; index < rows.length; index += 1) {
         if (playbackRun.current !== runId) return
-        const dropdown = ['语义色', '形状', '角色', '技术栈', 'C4'].includes(rows[index].label)
+        const dropdown = ['语义色', '形状', '图形', '角色', '技术栈', 'C4'].includes(rows[index].label)
         setPlayback((current) => current?.inspectorPreview ? {
           ...current,
           intent: `设置 ${rows[index].label} · ${rows[index].value}`,
@@ -1125,6 +1161,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const workbench = scene.workbench ?? (scene.architecture ? 'architecture' : 'freeform')
   const architectureWorkbench = workbench === 'architecture'
   const flowchartWorkbench = workbench === 'flowchart'
+  const shapeLibraryPacks = flowchartWorkbench ? ['flowchart', 'basic'] as const : ['basic', 'flowchart'] as const
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const baseArchitectureProjection = staticArchitectureProjection!
@@ -1493,14 +1530,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function addBox(kind: 'node' | 'note', x: number, y: number) {
     const live = currentScene()
     const id = nextCanvasElementId(kind, live.elements)
+    const shape = kind === 'node' && live.workbench !== 'architecture' ? canvasShapeDefinition(activeShapeRef) : undefined
+    const width = shape?.width ?? 200
+    const height = shape?.height ?? 90
     const element: CanvasNode | CanvasNote = {
       id,
       type: kind,
-      x: clamp(snap(x - 100), 0, live.width - 200),
-      y: clamp(snap(y - 45), 0, live.height - 90),
-      width: 200,
-      height: 90,
-      text: kind === 'node' ? '新节点' : '备注',
+      x: clamp(snap(x - width / 2), 0, live.width - width),
+      y: clamp(snap(y - height / 2), 0, live.height - height),
+      width,
+      height,
+      text: kind === 'node' ? (live.workbench === 'flowchart' ? shape?.label ?? '流程块' : '新图形') : live.workbench === 'flowchart' ? '文字' : '备注',
+      ...(shape ? { shapeRef: shape.ref } : {}),
     }
     commit({ ...live, elements: [...live.elements, element] })
     setSelectedIds([id])
@@ -1653,7 +1694,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     })
   }
 
-  function architectureGroupAtPoint(point: CanvasPoint): string | undefined {
+  function canvasGroupAtPoint(point: CanvasPoint): string | undefined {
     return groupBounds
       .filter((group) => !currentScene().groups?.find((candidate) => candidate.id === group.id)?.collapsed)
       .filter((group) => point.x >= group.x && point.x <= group.x + group.width && point.y >= group.y && point.y <= group.y + group.height)
@@ -1687,7 +1728,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     event.dataTransfer.dropEffect = 'copy'
     const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
     const snapped = { x: snap(point.x), y: snap(point.y) }
-    setArchitectureTemplateDrag((current) => current ? { ...current, point: snapped, groupId: architectureGroupAtPoint(snapped) } : current)
+    setArchitectureTemplateDrag((current) => current ? { ...current, point: snapped, groupId: canvasGroupAtPoint(snapped) } : current)
   }
 
   function dropArchitectureTemplate(event: React.DragEvent<SVGSVGElement>) {
@@ -1700,8 +1741,70 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     event.preventDefault()
     const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
     const snapped = { x: snap(point.x), y: snap(point.y) }
-    insertArchitectureAsset(asset, snapped, architectureGroupAtPoint(snapped))
+    insertArchitectureAsset(asset, snapped, canvasGroupAtPoint(snapped))
     setArchitectureTemplateDrag(null)
+  }
+
+  function insertShape(shape: CanvasShapeDefinition, center?: CanvasPoint) {
+    const live = currentScene()
+    const id = nextCanvasElementId('node', live.elements)
+    const viewWidth = live.width / viewport.zoom
+    const viewHeight = live.height / viewport.zoom
+    const point = center ?? { x: viewport.x + viewWidth / 2, y: viewport.y + viewHeight / 2 }
+    const x = clamp(snap(point.x - shape.width / 2), 0, Math.max(0, live.width - shape.width))
+    const y = clamp(snap(point.y - shape.height / 2), 0, Math.max(0, live.height - shape.height))
+    const groupId = canvasGroupAtPoint({ x: x + shape.width / 2, y: y + shape.height / 2 })
+    const node: CanvasNode = {
+      id,
+      type: 'node',
+      x,
+      y,
+      width: shape.width,
+      height: shape.height,
+      text: live.workbench === 'flowchart' ? shape.label : '新图形',
+      shapeRef: shape.ref,
+      ...(groupId ? { groupId } : {}),
+    }
+    commit({ ...live, elements: [...live.elements, node] })
+    setSelectedIds([id])
+    setActiveShapeRef(shape.ref)
+    setTool('select')
+  }
+
+  function beginShapeDrag(event: React.DragEvent<HTMLButtonElement>, shape: CanvasShapeDefinition) {
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(SHAPE_DRAG_MIME, shape.ref)
+    event.dataTransfer.setData('text/plain', shape.label)
+    setShapeDrag({ shapeRef: shape.ref })
+  }
+
+  function moveExternalDrag(event: React.DragEvent<SVGSVGElement>) {
+    if (architectureTemplateDrag) {
+      moveArchitectureTemplateDrag(event)
+      return
+    }
+    if (!shapeDrag) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+    setShapeDrag((current) => current ? { ...current, point: { x: snap(point.x), y: snap(point.y) } } : current)
+  }
+
+  function dropExternalDrag(event: React.DragEvent<SVGSVGElement>) {
+    if (architectureTemplateDrag || event.dataTransfer.getData(TEMPLATE_DRAG_MIME)) {
+      dropArchitectureTemplate(event)
+      return
+    }
+    const ref = event.dataTransfer.getData(SHAPE_DRAG_MIME) || shapeDrag?.shapeRef
+    if (!isCanvasShapeRef(ref)) {
+      setShapeDrag(null)
+      return
+    }
+    const shape = canvasShapeDefinition(ref)
+    event.preventDefault()
+    const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+    insertShape(shape, { x: snap(point.x), y: snap(point.y) })
+    setShapeDrag(null)
   }
 
   function removeLanes() {
@@ -2434,9 +2537,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : semanticLodLevel === 'compact' ? '紧凑'
       : semanticLodLevel === 'overview' ? '概览'
         : '区域'
-  const nodeToolLabel = architectureWorkbench ? '组件' : flowchartWorkbench ? '流程块' : '图形'
   const noteToolLabel = flowchartWorkbench ? '文字' : '备注'
   const draggedArchitectureTemplate = architectureTemplateDrag ? architectureNodeTemplate(architectureTemplateDrag.templateId) : undefined
+  const draggedShape = shapeDrag ? canvasShapeDefinition(shapeDrag.shapeRef) : undefined
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
     const presentation = playback?.boxOverrides?.[item.id] ?? item
@@ -2479,11 +2582,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
-          <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
-          <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}>抓手</ToolButton>
-          <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title={`${nodeToolLabel} (N)`} onClick={() => { setTool('node'); setConnectFrom(null) }}>{nodeToolLabel}</ToolButton>
-          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title={`${noteToolLabel} (T)`} onClick={() => { setTool('note'); setConnectFrom(null) }}>{noteToolLabel}</ToolButton>
-          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
+          <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
+          <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}><ToolbarGlyph icon={Hand} /></ToolButton>
+          {architectureWorkbench ? (
+            <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="组件 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}><ToolbarGlyph icon={Shapes} /></ToolButton>
+          ) : (
+            (flowchartWorkbench ? ['flowchart:process', 'flowchart:decision', 'flowchart:terminator'] : ['basic:rectangle', 'basic:ellipse', 'basic:diamond']).map((ref) => {
+              const shape = canvasShapeDefinition(ref as CanvasShapeRef)
+              return <ToolButton key={ref} active={tool === 'node' && activeShapeRef === ref} title={`${shape.label} (N)`} onClick={() => { setActiveShapeRef(shape.ref); setTool('node'); setConnectFrom(null) }}><span className="freeform-toolbar-shape"><ShapePreview shape={shape} /></span></ToolButton>
+            })
+          )}
+          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title={`${noteToolLabel} (T)`} onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={flowchartWorkbench ? Type : StickyNote} /></ToolButton>
+          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton>
+          {!architectureWorkbench ? <ToolButton active={shapeLibraryOpen} title="图形库" onClick={() => { setLayersOpen(false); setToolbarMenu(null); setShapeLibraryOpen((value) => !value) }}><ToolbarGlyph icon={Shapes} /></ToolButton> : null}
           <span className="freeform-toolbar-separator" />
           {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
             <button
@@ -2665,7 +2776,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               ) : null}
             </div>
           ) : null}
-          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setLayersOpen((value) => !value) }}>层级</button>
+          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setShapeLibraryOpen(false); setLayersOpen((value) => !value) }}>层级</button>
           {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
             <button
               type="button"
@@ -2702,6 +2813,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
         </div>
+
+        {!architectureWorkbench && shapeLibraryOpen ? (
+          <ShapeLibrary
+            packs={[...shapeLibraryPacks]}
+            activeShape={activeShapeRef}
+            draggingShape={shapeDrag?.shapeRef}
+            onClose={() => setShapeLibraryOpen(false)}
+            onInsert={insertShape}
+            onDragStart={beginShapeDrag}
+            onDragEnd={() => setShapeDrag(null)}
+          />
+        ) : null}
 
         {architectureScope ? (
           <nav className="freeform-architecture-breadcrumb" aria-label="架构导航路径">
@@ -2926,7 +3049,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </div>
                   <div className="freeform-property-row">
                     <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
-                    <label><span>形状</span><select aria-label="元素形状" disabled={selectedBox.locked} value={selectedBox.shape ?? 'rounded'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shape: event.target.value as CanvasShape }))}><option value="rounded">圆角</option><option value="square">方形</option><option value="pill">胶囊</option></select></label>
+                    <label><span>图形</span><select aria-label="元素图形" disabled={selectedBox.locked} value={selectedBox.shapeRef ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shapeRef: (event.target.value || undefined) as CanvasShapeRef | undefined, shape: event.target.value ? undefined : item.shape }))}><option value="">兼容旧形状</option>{CANVAS_SHAPE_CATALOG.filter((shape) => shapeLibraryPacks.includes(shape.pack)).map((shape) => <option key={shape.ref} value={shape.ref}>{shape.label}</option>)}</select></label>
                   </div>
                 </> : null}
                 {detailsExpanded ? (
@@ -3094,8 +3217,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           role="img"
           aria-label="自由画布"
           onWheel={handleWheel}
-          onDragOver={moveArchitectureTemplateDrag}
-          onDrop={dropArchitectureTemplate}
+          onDragOver={moveExternalDrag}
+          onDrop={dropExternalDrag}
           onPointerDown={beginBackgroundPointer}
           onPointerMove={moveBackgroundPointer}
           onPointerUp={finishGesture}
@@ -3127,6 +3250,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <g className={`freeform-template-drop-preview${architectureTemplateDrag.groupId ? ' is-in-boundary' : ''}`} transform={`translate(${x} ${y})`} pointerEvents="none">
                 <rect width={width} height={height} rx="8" />
                 <text x={14} y={height / 2 + 4}>{truncate(draggedArchitectureTemplate.label, 24)}</text>
+              </g>
+            )
+          })() : null}
+          {draggedShape && shapeDrag?.point ? (() => {
+            const geometry = canvasShapeGeometry(draggedShape.ref, draggedShape.width, draggedShape.height)
+            const x = clamp(shapeDrag.point.x - draggedShape.width / 2, 0, Math.max(0, scene.width - draggedShape.width))
+            const y = clamp(shapeDrag.point.y - draggedShape.height / 2, 0, Math.max(0, scene.height - draggedShape.height))
+            return (
+              <g className="freeform-shape-drop-preview" transform={`translate(${x} ${y})`} pointerEvents="none">
+                <path d={geometry.bodyPath} />
+                {geometry.detailPaths.map((path, index) => <path key={index} d={path} className="is-detail" />)}
               </g>
             )
           })() : null}
@@ -3362,7 +3496,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               transform={`translate(${item.x} ${item.y})`}
               pointerEvents="none"
             >
-              <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
+              <CanvasBoxShape item={item} />
               <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">{truncate(item.text, 28)}</text>
             </g>
           ))}
@@ -3415,7 +3549,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onPointerCancel={cancelGesture}
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
-              <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14} />
+              {displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14} />}
               {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
               {architectureMark && iconRefMarkup && showRoleIcon ? (
@@ -4003,6 +4137,7 @@ function playbackStyleRows(before: CanvasNode | CanvasNote | undefined, after: C
   }
   add('语义色', before?.tone, after.tone)
   add('形状', before?.shape, after.shape)
+  add('图形', before?.shapeRef, after.shapeRef)
   add('角色', before?.icon, after.icon, (value) => canvasIconLabel(value as CanvasIcon))
   add('技术栈', before?.stencil, after.stencil, (value) => canvasStencilLabel(value as CanvasStencil))
   add('图标', before?.iconRef, after.iconRef, (value) => canvasIconRefLabel(value as CanvasIconRef))
@@ -4017,6 +4152,8 @@ function playbackInspectorOptions(label: string, selected: string): string[] {
     ? ['default', 'accent', 'success', 'warning', 'danger', 'muted']
     : label === '形状'
       ? ['rounded', 'square', 'pill']
+      : label === '图形'
+        ? ['basic:rectangle', 'basic:ellipse', 'basic:diamond', 'flowchart:process', 'flowchart:decision', 'flowchart:terminator']
       : label === '角色'
         ? ['User', 'Web', 'API', 'Service', 'Database', 'Cache', 'Queue', 'External']
         : label === '技术栈'
@@ -4076,7 +4213,7 @@ function playbackPhaseLabel(phase: PlaybackState['phase']): string {
   return '准备绘制'
 }
 
-function ToolButton({ active, title, onClick, children }: { active: boolean; title: string; onClick: () => void; children: string }) {
+function ToolButton({ active, title, onClick, children }: { active: boolean; title: string; onClick: () => void; children: ReactNode }) {
   return <button type="button" className={active ? 'is-active' : ''} title={title} aria-label={title} onClick={onClick}>{children}</button>
 }
 

@@ -2,6 +2,7 @@ import { routeArchitectureArrowIds, routeArchitectureEdgesIncremental } from './
 import { parseCanvasScene, serializeCanvasScene, type CanvasArrow, type CanvasElement, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasScene } from './canvas.js'
 import { layoutCanvasNeighborhood } from './canvasOperations.js'
 import { isCanvasIconRef } from './iconRegistry.js'
+import { isCanvasShapeRef } from './shapeRegistry.js'
 
 export interface CanvasPatchUpdateInput {
   id: string
@@ -52,7 +53,7 @@ export interface CanvasSubgraphContext {
 }
 
 const boxFields = new Set([
-  'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
+  'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'shapeRef', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
   'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis',
 ])
 const arrowFields = new Set([
@@ -691,6 +692,10 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
     }
     if (key === 'shape') {
       if (!['rounded', 'square', 'pill'].includes(String(value))) fail()
+      return
+    }
+    if (key === 'shapeRef') {
+      if (!isCanvasShapeRef(value)) fail()
       return
     }
     if (key === 'locked') {
