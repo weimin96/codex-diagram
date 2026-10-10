@@ -1375,9 +1375,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .thread-follow-toggle { width: 32px; padding: 0; justify-content: center; font-size: 0; }
   .thread-diagram-menu { min-width: 0; width: auto; max-width: none; flex: 1 1 auto; }
   .thread-current-close { width: 30px; flex-basis: 30px; }
-  .thread-new-dialog { width: min(430px, calc(100vw - 20px)); }
+  .thread-new-dialog { width: calc(100vw - 20px); }
+  .thread-new-dialog .new-diagram-browser { grid-template-columns: minmax(0, 1fr) minmax(180px, 34%); gap: 8px; }
+  .thread-new-dialog .new-diagram-type-group small { display: none; }
+  .thread-new-dialog .new-diagram-preview-content,
+  .thread-new-dialog .new-diagram-preview-empty { min-height: 210px; }
+  .thread-new-dialog .new-diagram-preview-stage { padding: 10px; }
+}
+
+@media (max-width: 440px) {
   .thread-new-dialog .new-diagram-browser { grid-template-columns: minmax(0, 1fr); }
   .thread-new-dialog .new-diagram-preview { display: none; }
+  .thread-new-dialog .new-diagram-type-group > div { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
