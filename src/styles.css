@@ -128,7 +128,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .loading-line { position: absolute; left: 8px; right: 8px; bottom: 1px; height: 1px; background: var(--accent); opacity: 0.6; }
 .sidebar-empty { padding: 18px 9px; color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
 
-.new-diagram-form { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-muted); }
+.new-diagram-form { position: relative; display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-muted); }
 .new-diagram-form input, .new-diagram-form select { width: 100%; background: var(--surface-panel); }
 .new-diagram-form-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .new-diagram-form-head strong { font-size: 12px; font-weight: 680; }
@@ -168,6 +168,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .new-diagram-preview-mermaid { width: 100%; height: 100%; min-height: 190px; display: grid; place-items: center; }
 .new-diagram-preview-mermaid svg { width: 100%; height: 100%; max-height: 220px; }
 .new-diagram-preview-content .preview-line, .new-diagram-preview-content .preview-free-line { stroke-dasharray: 220; stroke-dashoffset: 220; animation: new-diagram-line-draw 520ms 80ms ease forwards; }
+.new-diagram-name-overlay { position: absolute; z-index: 6; inset: 0; display: grid; place-items: center; padding: 12px; border-radius: inherit; background: color-mix(in srgb, var(--surface-panel) 80%, transparent); backdrop-filter: blur(3px); animation: new-diagram-preview-in 150ms ease-out; }
+.new-diagram-name-dialog { width: min(420px, calc(100% - 24px)); display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-panel); box-shadow: 0 18px 46px rgba(0, 0, 0, 0.16); }
+.new-diagram-name-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.new-diagram-name-head > div { min-width: 0; display: grid; gap: 3px; }
+.new-diagram-name-head span { color: var(--text-tertiary); font-size: 10px; }
+.new-diagram-name-head strong { color: var(--text-primary); font-size: 13px; font-weight: 680; }
+.new-diagram-name-head > button { width: 26px; height: 26px; flex: 0 0 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-tertiary); font-size: 16px; }
+.new-diagram-name-head > button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.new-diagram-name-dialog > input { height: 38px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--app-bg); color: var(--text-primary); font-size: 13px; }
+.new-diagram-name-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.new-diagram-name-actions button { min-width: 68px; height: 30px; font-size: 12px; }
 .diagram-sidebar .new-diagram-browser { grid-template-columns: minmax(0, 1fr); }
 .diagram-sidebar .new-diagram-preview { display: none; }
 .form-actions { display: flex; justify-content: flex-end; gap: 7px; }
@@ -216,7 +227,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-current-close:hover { background: var(--surface-hover); color: var(--text-primary); }
 .thread-new-overlay { position: absolute; z-index: 24; inset: 0; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--app-bg) 82%, transparent); backdrop-filter: blur(2px); }
 .thread-new-dialog { width: min(760px, calc(100vw - 36px)); max-height: min(650px, calc(100vh - 56px)); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-panel); box-shadow: 0 22px 60px rgba(0, 0, 0, 0.18); animation: new-diagram-dialog-in 180ms cubic-bezier(.2,.8,.2,1); }
-.thread-new-dialog .new-diagram-form { max-height: inherit; grid-template-rows: auto minmax(0, 1fr) auto auto; padding: 12px; border-bottom: 0; background: var(--surface-panel); }
+.thread-new-dialog .new-diagram-form { max-height: inherit; grid-template-rows: auto minmax(0, 1fr); padding: 12px; border-bottom: 0; background: var(--surface-panel); }
 .thread-new-dialog .new-diagram-browser { min-height: 0; }
 .thread-new-dialog .new-diagram-type-groups { max-height: min(390px, calc(100vh - 210px)); }
 .thread-new-dialog .new-diagram-type-group > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -3020,7 +3020,11 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
                     key={item.key}
                     type="button"
                     className={choice?.key === item.key ? 'is-selected' : ''}
-                    onClick={() => setChoice(item)}
+                    onClick={() => {
+                      setChoice(item)
+                      setPreviewChoice(null)
+                      setTitle('')
+                    }}
                     onMouseEnter={() => setPreviewChoice(item)}
                     onMouseLeave={() => setPreviewChoice(null)}
                     onFocus={() => setPreviewChoice(item)}
@@ -3035,11 +3039,34 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
         </div>
         <DiagramChoicePreview choice={visiblePreview} />
       </div>
-      <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={choice ? `${choice.label}名称` : '图表名称'} />
-      <div className="form-actions">
-        <button type="button" onClick={onCancel}>取消</button>
-        <button className="primary-button compact" disabled={submitting || !choice || !title.trim()}>{submitting ? '创建中…' : '创建'}</button>
-      </div>
+      {choice ? (
+        <div className="new-diagram-name-overlay" role="presentation" onMouseDown={() => {
+          if (submitting) return
+          setChoice(null)
+          setTitle('')
+        }}>
+          <div className="new-diagram-name-dialog" role="dialog" aria-modal="true" aria-labelledby="new-diagram-name-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="new-diagram-name-head">
+              <div>
+                <span>{choice.label}</span>
+                <strong id="new-diagram-name-title">输入图表名称</strong>
+              </div>
+              <button type="button" aria-label="返回图表类型" disabled={submitting} onClick={() => {
+                setChoice(null)
+                setTitle('')
+              }}>×</button>
+            </div>
+            <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="图表名称" />
+            <div className="new-diagram-name-actions">
+              <button type="button" disabled={submitting} onClick={() => {
+                setChoice(null)
+                setTitle('')
+              }}>返回</button>
+              <button className="primary-button compact" disabled={submitting || !title.trim()}>{submitting ? '创建中…' : '确认'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </form>
   )
 }
