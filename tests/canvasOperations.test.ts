@@ -81,6 +81,12 @@ test('inserts an architecture node template without conflating role, technology 
   assert.equal(springNode.groupId, 'arch-application')
   assert.equal(springNode.stencil, 'spring')
   assert.equal(springNode.iconRef, undefined)
+
+  source.groups.push({ id: 'custom-boundary', label: 'Custom', kind: 'boundary' })
+  const dropped = insertCanvasArchitectureNodeTemplate(source, spring, { x: 520, y: 360 }, 'custom-boundary')
+  const droppedNode = dropped.scene.elements.find((item) => item.id === dropped.selectedIds[0])
+  assert.ok(droppedNode && droppedNode.type === 'node')
+  assert.equal(droppedNode.groupId, 'custom-boundary')
 })
 
 test('aligns selected canvas boxes while retaining unrelated elements', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
-import { ARCHITECTURE_NODE_TEMPLATES, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
+import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
@@ -106,6 +106,62 @@ const ICON_SOURCE_OPTIONS: ReadonlyArray<readonly ['all' | CanvasIconSource, str
   ['gcp', 'GCP'],
 ]
 
+const TEMPLATE_FAVORITES_STORAGE_KEY = 'codex-diagram:architecture-template-favorites'
+const TEMPLATE_RECENTS_STORAGE_KEY = 'codex-diagram:architecture-template-recents'
+const TEMPLATE_DRAG_MIME = 'application/x-codex-diagram-architecture-template'
+const TEMPLATE_RECENT_LIMIT = 8
+
+type ArchitectureTemplateDragState = {
+  templateId: string
+  point?: CanvasPoint
+  groupId?: string
+}
+
+function readStoredTemplateIds(key: string): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? '[]')
+    if (!Array.isArray(value)) return []
+    return value.filter((id): id is string => typeof id === 'string' && Boolean(architectureNodeTemplate(id)))
+  } catch {
+    return []
+  }
+}
+
+function storeTemplateIds(key: string, ids: string[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(ids))
+  } catch {
+    // The current in-memory preference remains usable when persistent storage is unavailable.
+  }
+}
+
+function FavoriteGlyph({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3.6 14.55 8.8l5.75.84-4.16 4.05.98 5.72L12 16.72l-5.12 2.69.98-5.72L3.7 9.64l5.75-.84L12 3.6Z" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ArchitectureTemplateGlyph({ asset }: { asset: ArchitectureNodeTemplate }) {
+  if (asset.iconRef) return <IconRefGlyph refValue={asset.iconRef} />
+  if (asset.stencil) {
+    const visual = canvasStencilVisual(asset.stencil)
+    return visual.path
+      ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
+      : <i>{visual.label}</i>
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="is-role">
+      <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        {canvasIconPaths(asset.icon).map((path, index) => <path key={`${asset.id}-${index}`} d={path} />)}
+      </g>
+    </svg>
+  )
+}
+
 function IconRefGlyph({ refValue, className }: { refValue: CanvasIconRef; className?: string }) {
   return <svg className={className} viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: canvasIconRefMarkup(refValue, false, 'currentColor') }} />
 }
@@ -147,6 +203,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [architecturePanel, setArchitecturePanel] = useState<'settings' | 'assets'>('settings')
   const [assetQuery, setAssetQuery] = useState('')
   const [assetProvider, setAssetProvider] = useState<'all' | ArchitectureNodeTemplateProvider>('all')
+  const [favoriteTemplateIds, setFavoriteTemplateIds] = useState<string[]>(() => readStoredTemplateIds(TEMPLATE_FAVORITES_STORAGE_KEY))
+  const [recentTemplateIds, setRecentTemplateIds] = useState<string[]>(() => readStoredTemplateIds(TEMPLATE_RECENTS_STORAGE_KEY))
+  const [architectureTemplateDrag, setArchitectureTemplateDrag] = useState<ArchitectureTemplateDragState | null>(null)
   const [inspectorMenuOpen, setInspectorMenuOpen] = useState(false)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [iconPickerQuery, setIconPickerQuery] = useState('')
@@ -1125,6 +1184,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     return [asset.label, asset.subtitle, asset.category, asset.id, ...asset.keywords]
       .some((value) => value.toLocaleLowerCase().includes(assetNeedle))
   })
+  const favoriteAssets = favoriteTemplateIds
+    .map((id) => architectureNodeTemplate(id))
+    .filter((asset): asset is ArchitectureNodeTemplate => Boolean(asset))
+    .filter((asset) => assetProvider === 'all' || asset.provider === assetProvider)
+  const recentAssets = recentTemplateIds
+    .filter((id) => !favoriteTemplateIds.includes(id))
+    .map((id) => architectureNodeTemplate(id))
+    .filter((asset): asset is ArchitectureNodeTemplate => Boolean(asset))
+    .filter((asset) => assetProvider === 'all' || asset.provider === assetProvider)
   const selectedLocked = selectedBoxes.filter((item) => item.locked)
   const selectedGroupIds = [...new Set(selectedBoxes.map((item) => item.groupId).filter((value): value is string => Boolean(value)))]
   const groupBounds = staticGroupBounds
@@ -1564,17 +1632,73 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setSelectedIds(result.selectedIds)
   }
 
-  function insertArchitectureAsset(asset: ArchitectureNodeTemplate) {
+  function rememberArchitectureTemplate(templateId: string) {
+    setRecentTemplateIds((current) => {
+      const next = [templateId, ...current.filter((id) => id !== templateId)].slice(0, TEMPLATE_RECENT_LIMIT)
+      storeTemplateIds(TEMPLATE_RECENTS_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  function toggleArchitectureTemplateFavorite(templateId: string) {
+    setFavoriteTemplateIds((current) => {
+      const next = current.includes(templateId)
+        ? current.filter((id) => id !== templateId)
+        : [templateId, ...current]
+      storeTemplateIds(TEMPLATE_FAVORITES_STORAGE_KEY, next)
+      return next
+    })
+  }
+
+  function architectureGroupAtPoint(point: CanvasPoint): string | undefined {
+    return groupBounds
+      .filter((group) => !currentScene().groups?.find((candidate) => candidate.id === group.id)?.collapsed)
+      .filter((group) => point.x >= group.x && point.x <= group.x + group.width && point.y >= group.y && point.y <= group.y + group.height)
+      .sort((a, b) => a.width * a.height - b.width * b.height)[0]?.id
+  }
+
+  function insertArchitectureAsset(asset: ArchitectureNodeTemplate, center?: CanvasPoint, explicitGroupId?: string) {
     const live = currentScene()
     const viewWidth = live.width / viewport.zoom
     const viewHeight = live.height / viewport.zoom
     const result = insertCanvasArchitectureNodeTemplate(live, asset, {
-      x: viewport.x + viewWidth / 2,
-      y: viewport.y + viewHeight / 2,
-    })
+      x: center?.x ?? viewport.x + viewWidth / 2,
+      y: center?.y ?? viewport.y + viewHeight / 2,
+    }, explicitGroupId)
     commit(result.scene)
     setSelectedIds(result.selectedIds)
     setSelectedGroupTarget(null)
+    rememberArchitectureTemplate(asset.id)
+  }
+
+  function beginArchitectureTemplateDrag(event: React.DragEvent<HTMLButtonElement>, asset: ArchitectureNodeTemplate) {
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(TEMPLATE_DRAG_MIME, asset.id)
+    event.dataTransfer.setData('text/plain', asset.label)
+    setArchitectureTemplateDrag({ templateId: asset.id })
+  }
+
+  function moveArchitectureTemplateDrag(event: React.DragEvent<SVGSVGElement>) {
+    if (!architectureTemplateDrag) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+    const snapped = { x: snap(point.x), y: snap(point.y) }
+    setArchitectureTemplateDrag((current) => current ? { ...current, point: snapped, groupId: architectureGroupAtPoint(snapped) } : current)
+  }
+
+  function dropArchitectureTemplate(event: React.DragEvent<SVGSVGElement>) {
+    const templateId = event.dataTransfer.getData(TEMPLATE_DRAG_MIME) || architectureTemplateDrag?.templateId
+    const asset = templateId ? architectureNodeTemplate(templateId) : undefined
+    if (!asset) {
+      setArchitectureTemplateDrag(null)
+      return
+    }
+    event.preventDefault()
+    const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+    const snapped = { x: snap(point.x), y: snap(point.y) }
+    insertArchitectureAsset(asset, snapped, architectureGroupAtPoint(snapped))
+    setArchitectureTemplateDrag(null)
   }
 
   function removeLanes() {
@@ -2307,11 +2431,42 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : semanticLodLevel === 'compact' ? '紧凑'
       : semanticLodLevel === 'overview' ? '概览'
         : '区域'
+  const draggedArchitectureTemplate = architectureTemplateDrag ? architectureNodeTemplate(architectureTemplateDrag.templateId) : undefined
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
     const presentation = playback?.boxOverrides?.[item.id] ?? item
     const position = playback?.positionOverrides?.[item.id]
     return position ? { ...presentation, x: position.x, y: position.y } : presentation
+  }
+
+  function renderArchitectureTemplateTile(asset: ArchitectureNodeTemplate) {
+    const favorite = favoriteTemplateIds.includes(asset.id)
+    return (
+      <div key={asset.id} className={`freeform-asset-tile${architectureTemplateDrag?.templateId === asset.id ? ' is-dragging' : ''}`}>
+        <button
+          type="button"
+          className="freeform-asset-insert"
+          title={`${asset.subtitle} · 点击插入，拖到画布定位`}
+          draggable
+          onClick={() => insertArchitectureAsset(asset)}
+          onDragStart={(event) => beginArchitectureTemplateDrag(event, asset)}
+          onDragEnd={() => setArchitectureTemplateDrag(null)}
+        >
+          <ArchitectureTemplateGlyph asset={asset} />
+          <span>{asset.label}</span>
+        </button>
+        <button
+          type="button"
+          className={`freeform-asset-favorite${favorite ? ' is-selected' : ''}`}
+          aria-label={`${favorite ? '取消收藏' : '收藏'} ${asset.label}`}
+          aria-pressed={favorite}
+          title={favorite ? '取消收藏' : '收藏'}
+          onClick={(event) => { event.stopPropagation(); toggleArchitectureTemplateFavorite(asset.id) }}
+        >
+          <FavoriteGlyph active={favorite} />
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -2358,23 +2513,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     </div>
                   </div>
                   <div className="freeform-asset-library">
+                    {!assetNeedle && favoriteAssets.length ? (
+                      <div className="freeform-asset-quick-section">
+                        <em>收藏</em>
+                        <div className="freeform-asset-grid">
+                          {favoriteAssets.map(renderArchitectureTemplateTile)}
+                        </div>
+                      </div>
+                    ) : null}
+                    {!assetNeedle && recentAssets.length ? (
+                      <div className="freeform-asset-quick-section">
+                        <em>最近</em>
+                        <div className="freeform-asset-grid">
+                          {recentAssets.map(renderArchitectureTemplateTile)}
+                        </div>
+                      </div>
+                    ) : null}
                     {(['应用', '数据', '消息', '平台', 'AI / 集成'] as const).map((category) => {
                       const categoryAssets = architectureAssets.filter((asset) => asset.category === category)
                       if (!categoryAssets.length) return null
                       return <div key={category}>
                         <em>{category}</em>
                         <div className="freeform-asset-grid">
-                          {categoryAssets.map((asset) => (
-                            <button key={asset.id} type="button" title={asset.subtitle} onClick={() => insertArchitectureAsset(asset)}>
-                              {asset.iconRef ? <IconRefGlyph refValue={asset.iconRef} /> : asset.stencil ? (() => {
-                                const visual = canvasStencilVisual(asset.stencil)
-                                return visual.path
-                                  ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
-                                  : <i>{visual.label}</i>
-                              })() : <svg viewBox="0 0 24 24" aria-hidden="true" className="is-role"><g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{canvasIconPaths(asset.icon).map((path, index) => <path key={`${asset.id}-${index}`} d={path} />)}</g></svg>}
-                              <span>{asset.label}</span>
-                            </button>
-                          ))}
+                          {categoryAssets.map(renderArchitectureTemplateTile)}
                         </div>
                       </div>
                     })}
@@ -2895,6 +3056,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           role="img"
           aria-label="自由画布"
           onWheel={handleWheel}
+          onDragOver={moveArchitectureTemplateDrag}
+          onDrop={dropArchitectureTemplate}
           onPointerDown={beginBackgroundPointer}
           onPointerMove={moveBackgroundPointer}
           onPointerUp={finishGesture}
@@ -2917,6 +3080,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </defs>
           <rect width={scene.width} height={scene.height} className="freeform-background" pointerEvents="none" />
           <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
+          {draggedArchitectureTemplate && architectureTemplateDrag?.point ? (() => {
+            const width = draggedArchitectureTemplate.width ?? 188
+            const height = draggedArchitectureTemplate.height ?? 80
+            const x = clamp(architectureTemplateDrag.point.x - width / 2, 0, Math.max(0, scene.width - width))
+            const y = clamp(architectureTemplateDrag.point.y - height / 2, 0, Math.max(0, scene.height - height))
+            return (
+              <g className={`freeform-template-drop-preview${architectureTemplateDrag.groupId ? ' is-in-boundary' : ''}`} transform={`translate(${x} ${y})`} pointerEvents="none">
+                <rect width={width} height={height} rx="8" />
+                <text x={14} y={height / 2 + 4}>{truncate(draggedArchitectureTemplate.label, 24)}</text>
+              </g>
+            )
+          })() : null}
           {snapGuides.x !== undefined ? <path className="freeform-snap-guide" d={`M ${snapGuides.x} 0 V ${scene.height}`} /> : null}
           {snapGuides.y !== undefined ? <path className="freeform-snap-guide" d={`M 0 ${snapGuides.y} H ${scene.width}`} /> : null}
           {architectureHeader ? (

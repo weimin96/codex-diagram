@@ -601,6 +601,7 @@ export function insertCanvasArchitectureNodeTemplate(
   scene: CanvasScene,
   template: ArchitectureNodeTemplate,
   center?: { x: number; y: number },
+  explicitGroupId?: string,
 ): { scene: CanvasScene; selectedIds: string[] } {
   const width = template.width ?? 188
   const height = template.height ?? 80
@@ -609,9 +610,11 @@ export function insertCanvasArchitectureNodeTemplate(
     x: 150 + (fallbackIndex % 4) * 40 + width / 2,
     y: 140 + (fallbackIndex % 5) * 36 + height / 2,
   }
-  const groupId = template.groupId && scene.groups?.some((group) => group.id === template.groupId)
-    ? template.groupId
-    : undefined
+  const groupId = explicitGroupId && scene.groups?.some((group) => group.id === explicitGroupId)
+    ? explicitGroupId
+    : template.groupId && scene.groups?.some((group) => group.id === template.groupId)
+      ? template.groupId
+      : undefined
   const id = nextCanvasElementId('node', scene.elements)
   const node: CanvasNode = {
     id,
