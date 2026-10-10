@@ -199,7 +199,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [sourceLinkLoading, setSourceLinkLoading] = useState(false)
   const [layersOpen, setLayersOpen] = useState(false)
   const [layerQuery, setLayerQuery] = useState('')
-  const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'analysis' | null>(null)
+  const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'flowchart' | 'analysis' | null>(null)
   const [architecturePanel, setArchitecturePanel] = useState<'settings' | 'assets'>('settings')
   const [assetQuery, setAssetQuery] = useState('')
   const [assetProvider, setAssetProvider] = useState<'all' | ArchitectureNodeTemplateProvider>('all')
@@ -1122,6 +1122,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   const scene = parsed.scene
+  const workbench = scene.workbench ?? (scene.architecture ? 'architecture' : 'freeform')
+  const architectureWorkbench = workbench === 'architecture'
+  const flowchartWorkbench = workbench === 'flowchart'
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const baseArchitectureProjection = staticArchitectureProjection!
@@ -2431,6 +2434,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : semanticLodLevel === 'compact' ? '紧凑'
       : semanticLodLevel === 'overview' ? '概览'
         : '区域'
+  const nodeToolLabel = architectureWorkbench ? '组件' : flowchartWorkbench ? '流程块' : '图形'
+  const noteToolLabel = flowchartWorkbench ? '文字' : '备注'
   const draggedArchitectureTemplate = architectureTemplateDrag ? architectureNodeTemplate(architectureTemplateDrag.templateId) : undefined
 
   function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
@@ -2470,16 +2475,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
+    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
       <div className="freeform-surface">
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}>选择</ToolButton>
-          <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="节点 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}>节点</ToolButton>
-          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (T)" onClick={() => { setTool('note'); setConnectFrom(null) }}>备注</ToolButton>
+          <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}>抓手</ToolButton>
+          <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title={`${nodeToolLabel} (N)`} onClick={() => { setTool('node'); setConnectFrom(null) }}>{nodeToolLabel}</ToolButton>
+          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title={`${noteToolLabel} (T)`} onClick={() => { setTool('note'); setConnectFrom(null) }}>{noteToolLabel}</ToolButton>
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}>连接</ToolButton>
           <span className="freeform-toolbar-separator" />
-          <div className="freeform-toolbar-menu-wrap">
+          {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
             <button
               type="button"
               className={`${toolbarMenu === 'architecture' ? 'is-active' : ''}${scene.architecture ? ' has-mode-state' : ''}`}
@@ -2626,9 +2632,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 </>}
               </div>
             ) : null}
-          </div>
+          </div> : null}
+          {flowchartWorkbench ? (
+            <div className="freeform-toolbar-menu-wrap">
+              <button
+                type="button"
+                className={toolbarMenu === 'flowchart' ? 'is-active' : 'has-mode-state'}
+                aria-expanded={toolbarMenu === 'flowchart'}
+                title="流程图布局与泳道"
+                onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'flowchart' ? null : 'flowchart') }}
+              >
+                <span className="freeform-toolbar-state-dot" />流程<span className="freeform-toolbar-chevron">⌄</span>
+              </button>
+              {toolbarMenu === 'flowchart' ? (
+                <div className="freeform-toolbar-menu is-flowchart" role="menu" aria-label="流程图工具">
+                  <section>
+                    <span>阅读方向</span>
+                    <div className="freeform-menu-grid two">
+                      <button type="button" onClick={() => { applyLayout('horizontal'); setToolbarMenu(null) }}>左 → 右</button>
+                      <button type="button" onClick={() => { applyLayout('vertical'); setToolbarMenu(null) }}>上 → 下</button>
+                    </div>
+                  </section>
+                  <section>
+                    <span>泳道</span>
+                    <div className="freeform-menu-grid three">
+                      <button type="button" onClick={() => { applyLanePreset('horizontal'); setToolbarMenu(null) }}>水平</button>
+                      <button type="button" onClick={() => { applyLanePreset('vertical'); setToolbarMenu(null) }}>垂直</button>
+                      <button type="button" disabled={!scene.lanes?.length} onClick={() => { removeLanes(); setToolbarMenu(null) }}>移除</button>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setLayersOpen((value) => !value) }}>层级</button>
-          <div className="freeform-toolbar-menu-wrap">
+          {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
             <button
               type="button"
               className={`${toolbarMenu === 'analysis' ? 'is-active' : ''}${traceDirection ? ' has-mode-state' : ''}`}
@@ -2659,7 +2697,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 ) : null}
               </div>
             ) : null}
-          </div>
+          </div> : null}
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
@@ -2817,8 +2855,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, text: event.target.value })}
                   />
                 </label>
-                {scene.architecture ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
-                {(scene.architecture || detailsExpanded) ? <>
+                {architectureWorkbench ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
+                {architectureWorkbench ? <>
                   <div className="freeform-section-caption">架构</div>
                   <label>
                     <span>C4 语义</span>
@@ -2881,7 +2919,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     ) : null}
                   </div>
                 </> : null}
-                {!scene.architecture ? <>
+                {!architectureWorkbench ? <>
                   <div className="freeform-size-row">
                     <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
                     <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
@@ -2893,7 +2931,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 </> : null}
                 {detailsExpanded ? (
                   <>
-                    {!scene.architecture ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
+                    {!architectureWorkbench ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
                     <label>
                       <span>说明</span>
                       <textarea aria-label="节点说明" disabled={selectedBox.locked} value={selectedBox.description ?? ''} placeholder="职责、边界、风险或实现备注" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, description: event.target.value || undefined })} />

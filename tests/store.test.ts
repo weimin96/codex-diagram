@@ -132,6 +132,10 @@ test('creates and manages freeform Canvas diagrams beside Mermaid files', async 
     assert.equal(canvas.type, 'canvas')
     assert.equal(parseCanvasScene(canvas.source).elements.length, 3)
 
+    const architecture = await store.create('canvas', 'Architecture Board', 'architecture')
+    assert.equal(parseCanvasScene(architecture.source).workbench, 'architecture')
+    assert.equal(parseCanvasScene(architecture.source).elements.length, 0)
+
     const mermaid = await store.create('sequence', 'Request Flow')
     assert.deepEqual(new Set((await store.list()).map((item) => item.type)), new Set(['canvas', 'sequence']))
 

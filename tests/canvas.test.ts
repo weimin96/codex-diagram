@@ -16,6 +16,23 @@ test('round-trips a Canvas scene and renders standalone SVG', () => {
   assert.match(svg, /marker-end="url\(#arrow\)"/)
 })
 
+test('persists Canvas workbench mode while keeping legacy canvases compatible', () => {
+  const architecture = parseCanvasScene(createCanvasSource('Architecture', 'architecture'))
+  assert.equal(architecture.workbench, 'architecture')
+  assert.equal(architecture.architecture?.theme, 'enterprise')
+  assert.equal(architecture.elements.length, 0)
+
+  const flowchart = parseCanvasScene(createCanvasSource('Approval', 'flowchart'))
+  assert.equal(flowchart.workbench, 'flowchart')
+  assert.equal(flowchart.architecture, undefined)
+  assert.equal(flowchart.elements.length, 0)
+
+  const legacyArchitecture = parseCanvasScene(JSON.stringify({
+    type: 'codex-diagram-canvas', version: 1, title: 'Legacy', width: 800, height: 600, elements: [], architecture: { theme: 'enterprise' },
+  }))
+  assert.equal(legacyArchitecture.workbench, 'architecture')
+})
+
 test('rejects malformed Canvas documents', () => {
   assert.throws(() => parseCanvasScene('{bad json'), /JSON 格式无效/)
   assert.throws(() => parseCanvasScene('{"type":"other","version":1,"elements":[]}'), /受支持/)

@@ -1,10 +1,12 @@
 import { isMermaidDiagramType, type DiagramDocument, type DiagramType } from './types.js'
+import type { CanvasWorkbenchMode } from './canvas.js'
 import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
 import { diagramIntentRoutingGuide, diagramSkill } from './diagramSkills/registry.js'
 import { skillPromptLines } from './diagramSkills/types.js'
 
 export interface DiagramGenerationRequest {
   type: DiagramType
+  canvasWorkbench?: CanvasWorkbenchMode
   title: string
   scope: string
   instructions: string
@@ -14,7 +16,13 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
   const scope = request.scope.trim()
   const instructions = request.instructions.trim()
   if (request.type === 'canvas') {
-    const architecture = isArchitectureIntent(`${request.title} ${instructions}`)
+    const architecture = request.canvasWorkbench === 'architecture' || (!request.canvasWorkbench && isArchitectureIntent(`${request.title} ${instructions}`))
+    const workbench = request.canvasWorkbench ?? (architecture ? 'architecture' : 'freeform')
+    const workbenchRule = workbench === 'architecture'
+      ? '画布默认 1600x1000。按从左到右或从上到下的主要阅读方向布置，节点不要明显重叠。普通系统架构默认用紧贴内容的 kind=boundary 命名容器，不主动添加 software-system/container C4 元数据；只有用户明确要求 C4，或源码/已有图明确存在 C4 层级时才使用 C4。技术组件只在事实明确时填写 stencil 和真实 sourcePaths。已确认的云组件应保持角色语义与云图标一致，例如 Lambda/Functions/Cloud Functions 使用 worker 角色、RDS/SQL Database/Cloud SQL 使用 database 角色。'
+      : workbench === 'flowchart'
+        ? '画布默认 1600x1000。按明确阅读方向组织流程；开始/处理/决策/结束保持同一抽象粒度，跨角色流程可使用 lanes。不要主动添加 C4、架构 Boundary、技术 stencil 或云产品图标，除非它们本身就是流程语义的一部分。'
+        : '画布默认 1600x1000。按用户意图组织空间关系和说明，不强制套用架构分区、C4 或流程泳道；只有事实和任务需要时才添加技术语义。'
     return [
       '基于当前 Codex 工作空间生成一张 Diagram 自由画布，并写回 Diagram 插件。',
       `工作空间：${workspacePath}`,
@@ -26,11 +34,11 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
       '',
       '执行要求：',
       '1. 先阅读真正相关的代码、配置或数据结构，不要凭文件名臆测。',
-      '2. 调用 diagram.create，type 使用 canvas，创建 .diagram.json；再调用 diagram.get 获取模板并在其结构上修改。',
+      `2. 调用 diagram.create，type 使用 canvas，canvasWorkbench 使用 ${workbench}，创建 .diagram.json；再调用 diagram.get 获取模板并在其结构上修改。`,
       '3. 保持 type=codex-diagram-canvas、version=1。elements 只使用 node、note、arrow。',
       '4. node/note 使用 id,type,x,y,width,height,text；可选 tone(default/accent/success/warning/danger/muted)、shape(rounded/square/pill)、icon(user/web/api/gateway/service/worker/database/cache/queue/search/vector/cloud/file/auth/ai/mcp/scheduler/external)、stencil(spring/react/vue/postgres/mysql/redis/kafka/rabbitmq/docker/kubernetes/qdrant/opensearch/elasticsearch/mongodb/minio/nginx/grpc/oidc/openai/mcp)、iconRef(role:... / simple:... / lucide:... / aws:... / azure:... / gcp:...)、c4Type(person/software-system/container/component)、subtitle、description、tags、locked、groupId、laneId、sourcePaths、emphasis(primary/secondary/muted)。iconRef 只是视觉覆盖，不改变 icon/stencil 的语义；云厂商图标只有在代码、配置或用户输入已经确认对应云产品时才使用，不能用图标猜技术栈。除非用户明确指定视觉图标或当前图已经存在 iconRef，否则优先让插件按 icon/stencil 自动选图标。scene.groups 可配置 id,label,tone,kind(group/boundary),collapsed,parentId,c4Type(software-system/container),description，以 parentId 表达系统→容器的嵌套边界；scene.lanes 可配置 id,label,axis(horizontal/vertical),start,size,tone。arrow 使用 id,type=arrow,from,to，可选 label、lineStyle(solid/dashed)、routing(straight/orthogonal)、fromAnchor/toAnchor(auto/top/right/bottom/left)、points、labelPosition({x,y})、emphasis；from/to 必须引用现有 node/note id。labelPosition 属于用户手调标签位置，已有值应尽量保留；bundleKey 由插件理线器生成，不要手工编造。',
       '5. 只在视觉语义明确时使用 tone：主路径可 accent，成功/完成可 success，风险可 warning/danger，次要信息可 muted；不要把每个节点都染色。架构/流程图优先用 orthogonal 路由，简单关系可以 straight。',
-      '6. 画布默认 1600x1000。按从左到右或从上到下的主要阅读方向布置，节点不要明显重叠。普通系统架构默认用紧贴内容的 kind=boundary 命名容器，不主动添加 software-system/container C4 元数据；只有用户明确要求 C4，或源码/已有图明确存在 C4 层级时才使用 C4。跨角色流程适合 lanes；技术组件只在事实明确时填写 stencil 和真实 sourcePaths。已确认的云组件应保持角色语义与云图标一致，例如 Lambda/Functions/Cloud Functions 使用 worker 角色、RDS/SQL Database/Cloud SQL 使用 database 角色；不要因为选择云图标改变真实职责。',
+      `6. ${workbenchRule}`,
       '7. 初次新建图使用 diagram.update 写回完整 JSON；不要写 Mermaid 语法。完成后简要说明分析范围和图表路径。',
       ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise')] : []),
     ].filter(Boolean).join('\n')
@@ -68,7 +76,7 @@ export function buildModificationPrompt(workspacePath: string, diagram: DiagramD
       '',
       '执行要求：',
       '1. 如果当前对话/选区已经给出稳定 element ids，先调用 diagram.getSubgraph 读取这些元素和直接邻域，不要为了局部修改加载整张大图；只有还不知道目标 ids 或任务确实涉及整图状态时才调用 diagram.get。需要代码事实时再阅读相关实现。',
-      '2. 保留 codex-diagram-canvas version 1 JSON 结构，只操作 node、note、arrow 元素。',
+      '2. 保留 codex-diagram-canvas version 1 JSON 结构与现有 workbench（freeform/architecture/flowchart）；只操作 node、note、arrow 元素，除非用户明确要求切换画布类型。',
       '3. 保留现有节点的 tone/shape/locked/groupId/laneId/icon/stencil/iconRef/subtitle/description/tags/sourcePaths/emphasis、scene.groups/scene.lanes 以及连线 lineStyle/routing/anchors/points/labelPosition/emphasis/bundleKey，除非修改要求明确涉及这些属性；不要重排 locked 元素。',
       '4. 如果本次只涉及有限节点/关系，优先调用 diagram.proposeSubgraphPatch：elementIds 只放允许修改的已有 id，updates 只发送真正变化的字段，adds 只发送新增元素，removeIds 只发送删除项。不要把未变化的 x/y/width/height、arrow.points、labelPosition 重复发送。只有修改标题/画布尺寸/Group/Lane 元数据或确实需要整图重构时才调用 diagram.proposeUpdate。',
       '5. icon 用于标明运行角色、stencil 用于标明真实技术栈、iconRef 只用于覆盖显示图标；修改 iconRef 时不要同步篡改 icon/stencil。普通架构图不要为了显得专业主动补 software-system/container/component C4 元数据；只有用户明确要求 C4，或当前图/源码已经明确存在 C4 层级时才保留或调整 C4。不要为了装饰给所有节点重复相同图标或技术标签。',

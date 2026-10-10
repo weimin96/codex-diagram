@@ -60,7 +60,7 @@ const server = new McpServer(
       'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
       'diagram.thread is only the UI-open action. Call it when the user explicitly asks to open/show the right-side Diagram panel, or once before the first diagram operation in a conversation when no prior diagram.thread call exists.',
       'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
-      'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas by default. Ordinary architecture diagrams should use tight named boundaries and role/technology semantics without automatically adding C4 metadata. Use C4 person/software-system/container/component only when the user explicitly asks for C4 or the source/current diagram already establishes that hierarchy.',
+      'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas with canvasWorkbench=architecture. Use canvasWorkbench=flowchart for manually editable process/decision boards and canvasWorkbench=freeform for general drawing. Ordinary architecture diagrams should use tight named boundaries and role/technology semantics without automatically adding C4 metadata. Use C4 person/software-system/container/component only when the user explicitly asks for C4 or the source/current diagram already establishes that hierarchy.',
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       ...diagramIntentRoutingGuide(),
       'Before a non-trivial diagram creation or whole-diagram redesign, call diagram.designGuide once for the chosen type. It returns only that type’s composition archetypes, evidence rules, visual grammar and quality loop so the model does not need every diagram skill in context.',
@@ -796,17 +796,18 @@ server.registerTool('diagram.upsertSourceNodes', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. Omit workspacePath to use the directory bound to this chat. Use type=canvas for software architecture/C4, flowchart for process/decision flow, sequence for interactions, ER/state/mindmap/class for structural semantics, and the dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa) only when their semantic and data requirements are actually satisfied.',
+  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. For Canvas choose canvasWorkbench=architecture for software architecture/C4/topology, flowchart for manually editable process diagrams, or freeform for a general drawing board. Mermaid flowchart remains available when automatic Mermaid layout is preferred. Use the dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa) only when their semantic and data requirements are actually satisfied.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]).describe('Diagram kind. Choose canvas for architecture/system/module/service/C4/topology diagrams; otherwise choose the dedicated semantic or data visualization type rather than forcing the request into flowchart.'),
+    canvasWorkbench: z.enum(['freeform', 'architecture', 'flowchart']).optional().describe('Canvas-only workbench profile. architecture exposes architecture/component tools, flowchart exposes process drawing/layout tools, freeform exposes general drawing tools.'),
     title: z.string().min(1).max(120),
     animate: z.boolean().optional(),
   }),
   annotations: write,
-}, async ({ workspacePath, type, title, animate }, extra) => {
+}, async ({ workspacePath, type, canvasWorkbench, title, animate }, extra) => {
   const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
-  const diagram = await store.create(type, title)
+  const diagram = await store.create(type, title, type === 'canvas' ? canvasWorkbench : undefined)
   markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'create', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: `Created ${diagram.path}\n\n${diagram.source}` }],

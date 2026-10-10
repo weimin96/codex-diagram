@@ -22,6 +22,7 @@ export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
 export type CanvasArchitectureTheme = 'enterprise' | 'technical' | 'presentation' | 'cloud' | 'editorial' | 'sketch'
 export type CanvasArchitectureView = 'overview' | 'detail'
 export type CanvasArchitectureDensity = 'auto' | 'comfortable' | 'compact' | 'dense'
+export type CanvasWorkbenchMode = 'freeform' | 'architecture' | 'flowchart'
 export type CanvasArchitectureCardKind = 'actor' | 'entry' | 'compute' | 'messaging' | 'data' | 'external' | 'generic'
 export type CanvasArchitectureScopeKind = 'group' | 'lane' | 'node'
 export type CanvasIcon = CanvasRoleIconId
@@ -59,6 +60,7 @@ export interface CanvasScene {
   width: number
   height: number
   elements: CanvasElement[]
+  workbench?: CanvasWorkbenchMode
   groups?: CanvasGroup[]
   lanes?: CanvasLane[]
   architecture?: {
@@ -221,18 +223,23 @@ export interface CanvasArchitectureCardTemplate {
   label: string
 }
 
-export function createCanvasSource(title: string): string {
+export function createCanvasSource(title: string, workbench: CanvasWorkbenchMode = 'freeform'): string {
+  const elements: CanvasElement[] = workbench === 'freeform'
+    ? [
+        { id: 'node-start', type: 'node', x: 180, y: 180, width: 220, height: 96, text: title.trim() || '核心模块' },
+        { id: 'node-next', type: 'node', x: 560, y: 330, width: 220, height: 96, text: '双击文字编辑' },
+        { id: 'arrow-start-next', type: 'arrow', from: 'node-start', to: 'node-next' },
+      ]
+    : []
   return serializeCanvasScene({
     type: 'codex-diagram-canvas',
     version: 1,
     title: title.trim() || 'Canvas',
     width: 1600,
     height: 1000,
-    elements: [
-      { id: 'node-start', type: 'node', x: 180, y: 180, width: 220, height: 96, text: title.trim() || '核心模块' },
-      { id: 'node-next', type: 'node', x: 560, y: 330, width: 220, height: 96, text: '双击文字编辑' },
-      { id: 'arrow-start-next', type: 'arrow', from: 'node-start', to: 'node-next' },
-    ],
+    workbench,
+    elements,
+    ...(workbench === 'architecture' ? { architecture: { theme: 'enterprise', view: 'detail', density: 'auto' } as const } : {}),
   })
 }
 
@@ -249,6 +256,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     throw new Error('不是受支持的 Codex Diagram Canvas 文档。')
   }
   const architecture = normalizeArchitectureAppearance(scene.architecture)
+  const workbench = normalizeCanvasWorkbench(scene.workbench, Boolean(architecture))
   return {
     type: 'codex-diagram-canvas',
     version: 1,
@@ -256,10 +264,17 @@ export function parseCanvasScene(source: string): CanvasScene {
     width: positive(scene.width, 1600),
     height: positive(scene.height, 1000),
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
+    workbench,
     ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
     ...(Array.isArray(scene.lanes) ? { lanes: normalizeCanvasLanes(scene.lanes, positive(scene.width, 1600), positive(scene.height, 1000)) } : {}),
     ...(architecture ? { architecture } : {}),
   }
+}
+
+function normalizeCanvasWorkbench(value: unknown, architecture: boolean): CanvasWorkbenchMode {
+  if (architecture) return 'architecture'
+  if (value === 'freeform' || value === 'architecture' || value === 'flowchart') return value
+  return 'freeform'
 }
 
 export function serializeCanvasScene(scene: CanvasScene): string {

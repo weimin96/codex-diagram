@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { createCanvasSource } from './canvas.js'
+import { createCanvasSource, type CanvasWorkbenchMode } from './canvas.js'
 import { createTemplate, detectDiagramType } from './templates.js'
 import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType, MermaidDiagramType } from './types.js'
 
@@ -54,12 +54,12 @@ export class DiagramStore {
     }
   }
 
-  async create(type: DiagramType, title: string): Promise<DiagramDocument> {
+  async create(type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode): Promise<DiagramDocument> {
     const directory = path.join(this.workspacePath, 'docs', 'diagrams')
     await mkdir(directory, { recursive: true })
     const base = slugify(title) || type
     const target = await nextAvailablePath(directory, base, type === 'canvas' ? '.diagram.json' : '.mmd')
-    const source = type === 'canvas' ? createCanvasSource(title) : createTemplate(type as MermaidDiagramType, title)
+    const source = type === 'canvas' ? createCanvasSource(title, canvasWorkbench) : createTemplate(type as MermaidDiagramType, title)
     await writeFile(target, source, { encoding: 'utf8', flag: 'wx' })
     const info = await stat(target)
     return this.document(relativePathFromRoot(this.workspacePath, target), source, info.mtime)

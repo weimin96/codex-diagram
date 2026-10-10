@@ -17,6 +17,21 @@ test('builds a Canvas-specific generation contract without Mermaid instructions'
   assert.match(prompt, /src\//)
 })
 
+test('keeps Canvas workbench intent explicit for architecture and flowchart boards', () => {
+  const architecture = buildGenerationPrompt('/workspace', {
+    type: 'canvas', canvasWorkbench: 'architecture', title: 'Platform', scope: '', instructions: '',
+  })
+  assert.match(architecture, /canvasWorkbench 使用 architecture/)
+  assert.match(architecture, /Architecture Diagram Skill/)
+
+  const flowchart = buildGenerationPrompt('/workspace', {
+    type: 'canvas', canvasWorkbench: 'flowchart', title: 'Approval', scope: '', instructions: '',
+  })
+  assert.match(flowchart, /canvasWorkbench 使用 flowchart/)
+  assert.match(flowchart, /跨角色流程可使用 lanes/)
+  assert.doesNotMatch(flowchart, /Architecture Diagram Skill/)
+})
+
 test('keeps Mermaid generation instructions for structured diagrams', () => {
   const prompt = buildGenerationPrompt('/workspace', {
     type: 'sequence',

@@ -11,7 +11,7 @@ import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
 import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from './CanvasEditor.js'
-import { canvasSceneToSvg, parseCanvasScene } from './canvas.js'
+import { canvasSceneToSvg, parseCanvasScene, type CanvasWorkbenchMode } from './canvas.js'
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
 import { assessMermaidVisualQuality } from './mermaidQuality.js'
@@ -1419,10 +1419,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
-  async function createDiagram(type: DiagramType, title: string) {
+  async function createDiagram(type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode) {
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.create', { workspacePath, type, title, animate: false })
+      const result = await callTool<DiagramResult>('diagram.create', { workspacePath, type, title, ...(type === 'canvas' && canvasWorkbench ? { canvasWorkbench } : {}), animate: false })
       const next = [result.diagram, ...snapshot.diagrams.filter((item) => item.path !== result.diagram.path)]
       onSnapshot({ ...snapshot, diagrams: next })
       setSelected(result.diagram)
@@ -2758,8 +2758,22 @@ function collapseDiffContext(lines: DiffLine[]): DiffLine[] {
   return result
 }
 
-function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (type: DiagramType, title: string) => Promise<void> }) {
-  const [type, setType] = useState<DiagramType>('flowchart')
+type NewDiagramChoice = {
+  key: string
+  label: string
+  meta: string
+  type: DiagramType
+  canvasWorkbench?: CanvasWorkbenchMode
+}
+
+const canvasWorkbenchChoices: NewDiagramChoice[] = [
+  { key: 'canvas:architecture', label: '系统架构', meta: '组件 · 边界 · 依赖', type: 'canvas', canvasWorkbench: 'architecture' },
+  { key: 'canvas:flowchart', label: '流程画布', meta: '流程 · 连线 · 泳道', type: 'canvas', canvasWorkbench: 'flowchart' },
+  { key: 'canvas:freeform', label: '自由画布', meta: '通用绘图', type: 'canvas', canvasWorkbench: 'freeform' },
+]
+
+function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode) => Promise<void> }) {
+  const [choice, setChoice] = useState<NewDiagramChoice>(canvasWorkbenchChoices[0])
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -2770,17 +2784,37 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
         event.preventDefault()
         if (!title.trim()) return
         setSubmitting(true)
-        void onCreate(type, title).finally(() => setSubmitting(false))
+        void onCreate(choice.type, title, choice.canvasWorkbench).finally(() => setSubmitting(false))
       }}
     >
-      <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="图表名称" />
-      <select value={type} onChange={(event) => setType(event.target.value as DiagramType)}>
-        {diagramTypeGroups.map((group) => (
-          <optgroup key={group.category} label={group.label}>
-            {group.items.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}
-          </optgroup>
+      <div className="new-diagram-form-head"><strong>选择图类型</strong><button type="button" onClick={onCancel} aria-label="关闭新建图表">×</button></div>
+      <div className="new-diagram-workbench-list" aria-label="绘图工作台">
+        {canvasWorkbenchChoices.map((item) => (
+          <button key={item.key} type="button" className={choice.key === item.key ? 'is-selected' : ''} onClick={() => setChoice(item)}>
+            <strong>{item.label}</strong><small>{item.meta}</small>
+          </button>
         ))}
-      </select>
+      </div>
+      <label className="new-diagram-auto-layout">
+        <span>自动布局图</span>
+        <select
+          value={choice.type === 'canvas' ? '' : choice.type}
+          onChange={(event) => {
+            const type = event.target.value as DiagramType | ''
+            if (!type) return
+            const option = diagramTypes.find((item) => item.type === type)
+            if (option) setChoice({ key: `mermaid:${type}`, label: option.label, meta: 'Mermaid 自动布局', type })
+          }}
+        >
+          <option value="">选择其他类型…</option>
+          {diagramTypeGroups.filter((group) => group.category !== 'canvas').map((group) => (
+            <optgroup key={group.category} label={group.label}>
+              {group.items.map((item) => <option key={item.type} value={item.type}>{item.type === 'flowchart' ? 'Mermaid 流程图' : item.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      </label>
+      <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`${choice.label}名称`} />
       <div className="form-actions">
         <button type="button" onClick={onCancel}>取消</button>
         <button className="primary-button compact" disabled={submitting || !title.trim()}>{submitting ? '创建中…' : '创建'}</button>
