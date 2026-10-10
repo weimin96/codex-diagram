@@ -217,10 +217,6 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .thread-diagram-tab.is-active .thread-diagram-tab-main { color: var(--text-primary); }
 .thread-diagram-tab-close { width: 24px; height: 100%; padding: 0; border: 0; border-left: 1px solid transparent; background: transparent; color: var(--text-tertiary); font-size: 13px; }
 .thread-diagram-tab-close:hover { border-left-color: var(--border); background: var(--surface-hover); color: var(--text-primary); }
-.thread-chat-actions { min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
-.thread-chat-actions::-webkit-scrollbar { display: none; }
-.thread-chat-actions button { height: 28px; flex: 0 0 auto; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
-.thread-chat-actions button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .sync-warning { min-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, #b7791f 6%, var(--surface-panel)); color: var(--text-secondary); font-size: 10px; }
 .sync-warning span:last-child { color: var(--text-tertiary); }
 .thread-companion .editor-toolbar { min-height: 40px; justify-content: flex-end; padding: 5px 8px; gap: 6px; }

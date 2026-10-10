@@ -8,7 +8,7 @@ import {
   applyHostStyleVariables,
 } from '@modelcontextprotocol/ext-apps'
 import { OpenAIExtensions } from '@openai/mcp-extensions/app'
-import { ChevronDownIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, MessageSquareMoreIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
 import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from './CanvasEditor.js'
@@ -454,6 +454,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const threadStateInitialized = useRef(false)
   const backgroundFailures = useRef({ thread: 0, revision: 0 })
   const dirty = Boolean(selected && source !== selected.source)
+  const selectedTypeLabel = useMemo(() => selected ? diagramDocumentLabel(selected) : '', [selected])
   const visibleDiagrams = useMemo(() => {
     const query = diagramQuery.trim().toLocaleLowerCase()
     if (!query) return snapshot.diagrams
@@ -1999,7 +2000,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                                   <strong className="block truncate font-medium">{diagram.name}</strong>
                                   <small className="block truncate text-xs text-muted-foreground">{shortPath(diagram.path)}</small>
                                 </span>
-                                <Badge variant="outline">{diagramLabel(diagram.type)}</Badge>
+                                <Badge variant="outline">{selected?.path === diagram.path ? selectedTypeLabel : diagramLabel(diagram.type)}</Badge>
                               </Button>
                             ))}
                           </section>
@@ -2015,12 +2016,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 </Popover>
               </div>
               {selected ? (
-                <IconButton
-                  icon={XIcon}
-                  label={`关闭 ${selected.name}`}
-                  tooltip="关闭当前图，不删除文件"
-                  onClick={() => void closeThreadTab(selected.path)}
-                />
+                <Badge variant="secondary" className="h-7 shrink-0 px-2 font-normal">{selectedTypeLabel}</Badge>
               ) : null}
             </div>
             {threadTabs.length > 0 ? (
@@ -2032,22 +2028,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                     <div key={path} className={`thread-diagram-tab${selected?.path === path ? ' is-active' : ''}`}>
                       <button type="button" className="thread-diagram-tab-main" onClick={() => void selectDiagram(path)} title={path}>
                         <span>{diagram.name}</span>
-                        <small>{diagramLabel(diagram.type)}</small>
+                        <small>{selected?.path === path ? selectedTypeLabel : diagramLabel(diagram.type)}</small>
                       </button>
                       <button type="button" className="thread-diagram-tab-close" aria-label={`关闭 ${diagram.name}`} onClick={() => closeThreadTab(path)}>×</button>
                     </div>
                   )
                 })}
-              </div>
-            ) : null}
-            {selected ? (
-              <div className="thread-chat-actions" aria-label="对话联动操作">
-                <button type="button" disabled={aiSending || dirty} onClick={updateFromConversation}>按对话更新</button>
-                {selected.type === 'canvas' && canvasSelection?.elements.length ? (
-                  <button type="button" disabled={aiSending || dirty} onClick={() => void updateSelectedCanvasFromConversation()}>调整选中</button>
-                ) : null}
-                <button type="button" disabled={aiSending || dirty} onClick={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>补异常</button>
-                <button type="button" disabled={aiSending} onClick={() => void explainInConversation()}>解释</button>
               </div>
             ) : null}
           </div>
@@ -2118,6 +2104,34 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 ) : null}
                 {aiProposal ? <button className="proposal-review-trigger" type="button" onClick={() => setProposalReviewOpen(true)}>Proposal</button> : null}
                 {selected.type === 'canvas' ? <button className={`patch-history-trigger${patchHistoryOpen ? ' is-active' : ''}`} type="button" onClick={openPatchHistory}>历史</button> : null}
+                {isThread ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" aria-label="对话联动操作">
+                        <MessageSquareMoreIcon data-icon="inline-start" />
+                        对话
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateFromConversation()}>
+                          按对话更新
+                        </DropdownMenuItem>
+                        {selected.type === 'canvas' && canvasSelection?.elements.length ? (
+                          <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateSelectedCanvasFromConversation()}>
+                            调整选中
+                          </DropdownMenuItem>
+                        ) : null}
+                        <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>
+                          补异常
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled={aiSending} onSelect={() => void explainInConversation()}>
+                          解释
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
                 {!isThread ? (
@@ -2173,7 +2187,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   <div className="pane-head">
                     <span>{selected.type === 'canvas' ? 'Canvas JSON' : 'Mermaid'}</span>
                     <div className="pane-head-actions">
-                      <span>{diagramLabel(selected.type)}</span>
+                      <span>{selectedTypeLabel}</span>
                       <button type="button" onClick={() => setSourceSearchRequest((value) => value + 1)}>查找</button>
                       <button type="button" onClick={() => void openDiagramFile()}>打开文件</button>
                     </div>
@@ -3553,6 +3567,18 @@ async function sendCodexMessage(text: string): Promise<void> {
 
 function diagramLabel(type: DiagramSummary['type']): string {
   return diagramTypes.find((item) => item.type === type)?.label ?? '图表'
+}
+
+function diagramDocumentLabel(diagram: DiagramDocument): string {
+  if (diagram.type !== 'canvas') return diagramLabel(diagram.type)
+  try {
+    const workbench = parseCanvasScene(diagram.source).workbench
+    if (workbench === 'architecture') return '系统架构'
+    if (workbench === 'flowchart') return '流程画布'
+    return '自由画布'
+  } catch {
+    return '画布'
+  }
 }
 
 function playbackActivityLabel(kind: NonNullable<DiagramThreadStateResult['activity']>['kind']): string {

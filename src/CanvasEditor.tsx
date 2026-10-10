@@ -366,11 +366,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [parsed.scene?.architecture?.density, parsed.scene?.architecture?.theme, parsed.scene?.architecture?.view])
 
   useEffect(() => {
-    const workbench = parsed.scene?.workbench ?? (parsed.scene?.architecture ? 'architecture' : 'freeform')
-    if (workbench === 'architecture' && (tool === 'line' || tool === 'arrow')) setTool('select')
-  }, [parsed.scene?.architecture, parsed.scene?.workbench, tool])
-
-  useEffect(() => {
     if (!parsed.scene) return
     const workbench = parsed.scene.workbench ?? (parsed.scene.architecture ? 'architecture' : 'freeform')
     if (workbench === 'flowchart' && !activeShapeRef.startsWith('flowchart:')) setActiveShapeRef('flowchart:process')
@@ -531,13 +526,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (!mod && key === 'v') setTool('select')
       if (!mod && key === 'h') setTool('hand')
       if (!mod && key === 'n') setTool('node')
-      if (!mod && key === 't' && currentScene().workbench !== 'architecture') setTool('text')
+      if (!mod && key === 't') setTool('text')
       if (!mod && key === 'm') setTool('note')
       if (!mod && key === 'c') setTool('connect')
-      if (!mod && key === 'l' && currentScene().workbench !== 'architecture') setTool('line')
-      if (!mod && key === 'a' && currentScene().workbench !== 'architecture') setTool('arrow')
-      if (!mod && key === 'p' && currentScene().workbench !== 'architecture') setTool('pen')
-      if (!mod && key === 'i' && currentScene().workbench !== 'architecture' && onImportImage) imageInputRef.current?.click()
+      if (!mod && key === 'l') setTool('line')
+      if (!mod && key === 'a') setTool('arrow')
+      if (!mod && key === 'p') setTool('pen')
+      if (!mod && key === 'i' && onImportImage) imageInputRef.current?.click()
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') setSpacePanning(false)
@@ -3027,12 +3022,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               return <ToolButton key={ref} active={tool === 'node' && activeShapeRef === ref} title={`${shape.label} (N)`} onClick={() => { setActiveShapeRef(shape.ref); setTool('node'); setConnectFrom(null) }}><span className="freeform-toolbar-shape"><ShapePreview shape={shape} /></span></ToolButton>
             })
           )}
-          {architectureWorkbench || !flowchartWorkbench ? <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (M)" onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={StickyNote} /></ToolButton> : null}
-          {!architectureWorkbench ? <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton> : null}
-          {!architectureWorkbench ? <ToolButton active={tool === 'pen'} title="画笔 (P)" onClick={() => { setTool('pen'); setConnectFrom(null) }}><ToolbarGlyph icon={Pencil} /></ToolButton> : null}
-          {!architectureWorkbench ? <ToolButton active={false} title="图片 (I)" disabled={imageImporting || !onImportImage} onClick={() => imageInputRef.current?.click()}><ToolbarGlyph icon={ImageIcon} /></ToolButton> : null}
-          {!architectureWorkbench ? <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton> : null}
-          {!architectureWorkbench ? <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton> : null}
+          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (M)" onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={StickyNote} /></ToolButton>
+          <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton>
+          <ToolButton active={tool === 'pen'} title="画笔 (P)" onClick={() => { setTool('pen'); setConnectFrom(null) }}><ToolbarGlyph icon={Pencil} /></ToolButton>
+          <ToolButton active={false} title="图片 (I)" disabled={imageImporting || !onImportImage} onClick={() => imageInputRef.current?.click()}><ToolbarGlyph icon={ImageIcon} /></ToolButton>
+          <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton>
+          <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton>
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
           {!architectureWorkbench ? <ToolButton active={shapeLibraryOpen} title="图形库" onClick={() => { setLayersOpen(false); setToolbarMenu(null); setShapeLibraryOpen((value) => !value) }}><ToolbarGlyph icon={Shapes} /></ToolButton> : null}
           <span className="freeform-toolbar-separator" />
