@@ -8,6 +8,7 @@ import type { OpenAIUiToolMetadata } from '@openai/mcp-extensions/server'
 import { z } from 'zod/v4'
 import { beautifyArchitectureScene, routeArchitectureEdges } from './architectureDesign.js'
 import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
+import { searchArchitectureNodeTemplates } from './architectureNodeTemplates.js'
 import { assessCanvasVisualQuality } from './canvasQuality.js'
 import { buildCanvasSubgraphContext, buildCanvasSubgraphPatch, canvasPatchRebaseReviewIds, mergeCanvasProposalSelection, rebaseCanvasSubgraphPatch, type CanvasSubgraphPatchInput } from './canvasPatch.js'
 import { buildCanvasPatchHistoryEntry, CanvasPatchHistoryStore, redoCanvasPatchHistory, undoCanvasPatchHistory, type CanvasPatchHistorySummary } from './canvasHistory.js'
@@ -63,6 +64,7 @@ const server = new McpServer(
       'Use type=flowchart only for an explicit process/workflow/control-flow/decision-flow request, or when the user explicitly asks for Mermaid/flowchart. Do not represent a software architecture as a Mermaid flowchart merely because it has arrows.',
       ...diagramIntentRoutingGuide(),
       'Before a non-trivial diagram creation or whole-diagram redesign, call diagram.designGuide once for the chosen type. It returns only that type’s composition archetypes, evidence rules, visual grammar and quality loop so the model does not need every diagram skill in context.',
+      'When a confirmed technology or cloud service needs a concrete architecture node, use diagram.searchArchitectureTemplates to look up the built-in semantic role, iconRef and recommended boundary instead of guessing provider icon ids. Do not call it for unknown or generic components.',
       'All exposed Mermaid diagram types have a type-specific Diagram Skill. Preserve each type’s semantic grammar, density policy and anti-pattern rules instead of treating every diagram as generic nodes and arrows.',
       'For conversational edits to an existing diagram, prefer a reviewable proposal before writing. For Canvas changes that touch a finite set of elements, prefer diagram.proposeSubgraphPatch so only deltas are sent and authored geometry outside the impact scope is preserved. Use diagram.proposeUpdate for Mermaid, title/size/container metadata changes, or true whole-diagram rewrites. Use diagram.update directly only when the user explicitly asks to apply immediately.',
       'For edits constrained to selected Canvas nodes, use diagram.proposeSubgraphPatch. Put selected existing ids in elementIds; when the user intent explicitly changes a direct relationship, you may also include the relevant id returned in getSubgraph.directRelationshipIds. Treat getSubgraph.contextElementIds as read-only context unless the user clearly asks to expand the edit scope. Send only changed fields in updates, only new elements in adds, and removals in removeIds. Do not send unchanged x/y/width/height, arrow points or labelPosition. The legacy diagram.proposeSubgraphUpdate remains available for compatibility but should not be preferred.',
@@ -162,6 +164,36 @@ server.registerTool('diagram.designGuide', {
   return {
     content: [{ type: 'text', text: [...routing, '', ...rules].join('\n') }],
     structuredContent: { kind: 'diagram-design-guide', type, architectureTheme: type === 'canvas' ? architectureTheme : undefined, routing, rules },
+  }
+})
+
+server.registerTool('diagram.searchArchitectureTemplates', {
+  title: 'Search architecture component templates',
+  description: 'Search the built-in architecture node templates by product, role or capability before adding a confirmed technology component. Returns semantic role, optional stencil/iconRef, subtitle and recommended boundary without changing the diagram. Use this instead of guessing cloud icon ids.',
+  inputSchema: z.object({
+    query: z.string().max(120).default('').describe('Product, role or capability such as lambda, database, kubernetes, queue, vertex ai.'),
+    provider: z.enum(['all', 'builtin', 'aws', 'azure', 'gcp']).default('all'),
+    limit: z.number().int().min(1).max(30).default(12),
+  }),
+  annotations: readonly,
+}, async ({ query, provider, limit }) => {
+  const templates = searchArchitectureNodeTemplates(query, provider, limit).map((item) => ({
+    id: item.id,
+    provider: item.provider,
+    category: item.category,
+    label: item.label,
+    subtitle: item.subtitle,
+    icon: item.icon,
+    stencil: item.stencil,
+    iconRef: item.iconRef,
+    groupId: item.groupId,
+    tone: item.tone,
+  }))
+  return {
+    content: [{ type: 'text', text: templates.length
+      ? `Found ${templates.length} architecture component template(s). Preserve their role/icon semantics when the matching technology is confirmed.`
+      : 'No matching architecture component template found. Keep the node semantically neutral instead of guessing a cloud product.' }],
+    structuredContent: { kind: 'architecture-node-templates', query, provider, templates },
   }
 })
 server.registerResource(

@@ -1,4 +1,5 @@
 import type { CanvasArrow, CanvasC4Type, CanvasElement, CanvasGroup, CanvasIcon, CanvasLane, CanvasLaneAxis, CanvasNode, CanvasNote, CanvasScene, CanvasStencil } from './canvas.js'
+import type { ArchitectureNodeTemplate } from './architectureNodeTemplates.js'
 
 export function copyCanvasSelection(scene: CanvasScene, ids: string[]): CanvasElement[] {
   const chosen = new Set(ids)
@@ -595,6 +596,41 @@ export function setCanvasGroupParent(scene: CanvasScene, groupId: string, parent
 export type CanvasLayoutMode = 'horizontal' | 'vertical' | 'grid'
 export type CanvasArchitectureTemplate = 'web-service' | 'event-driven' | 'cache-aside'
 export type CanvasTraceDirection = 'upstream' | 'downstream' | 'both'
+
+export function insertCanvasArchitectureNodeTemplate(
+  scene: CanvasScene,
+  template: ArchitectureNodeTemplate,
+  center?: { x: number; y: number },
+): { scene: CanvasScene; selectedIds: string[] } {
+  const width = template.width ?? 188
+  const height = template.height ?? 80
+  const fallbackIndex = scene.elements.filter((item) => item.type !== 'arrow').length
+  const target = center ?? {
+    x: 150 + (fallbackIndex % 4) * 40 + width / 2,
+    y: 140 + (fallbackIndex % 5) * 36 + height / 2,
+  }
+  const groupId = template.groupId && scene.groups?.some((group) => group.id === template.groupId)
+    ? template.groupId
+    : undefined
+  const id = nextCanvasElementId('node', scene.elements)
+  const node: CanvasNode = {
+    id,
+    type: 'node',
+    x: clamp(target.x - width / 2, 0, Math.max(0, scene.width - width)),
+    y: clamp(target.y - height / 2, 0, Math.max(0, scene.height - height)),
+    width,
+    height,
+    text: template.label,
+    subtitle: template.subtitle,
+    icon: template.icon,
+    ...(template.stencil ? { stencil: template.stencil } : {}),
+    ...(template.iconRef ? { iconRef: template.iconRef } : {}),
+    ...(template.tone ? { tone: template.tone } : {}),
+    ...(groupId ? { groupId } : {}),
+    emphasis: 'secondary',
+  }
+  return { scene: { ...scene, elements: [...scene.elements, node] }, selectedIds: [id] }
+}
 
 export interface CanvasTraceResult {
   nodeIds: string[]

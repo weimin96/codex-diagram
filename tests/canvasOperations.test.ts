@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, searchArchitectureNodeTemplates } from '../src/architectureNodeTemplates.js'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
+import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -42,6 +43,44 @@ test('copies and pastes a connected canvas selection with unique remapped arrows
 test('deleting a canvas node also deletes connected arrows', () => {
   const deleted = deleteCanvasSelection(scene(), ['node-2'])
   assert.deepEqual(deleted.elements.map((item) => item.id).sort(), ['node-1', 'node-3'])
+})
+
+test('architecture node templates cover builtin and selected cloud providers', () => {
+  assert.ok(ARCHITECTURE_NODE_TEMPLATES.length >= 60)
+  for (const provider of ['builtin', 'aws', 'azure', 'gcp'] as const) {
+    assert.ok(ARCHITECTURE_NODE_TEMPLATES.some((item) => item.provider === provider))
+  }
+  assert.equal(architectureNodeTemplate('aws:lambda')?.icon, 'worker')
+  assert.equal(architectureNodeTemplate('azure:azureopenai')?.icon, 'ai')
+  assert.equal(architectureNodeTemplate('gcp:cloud_sql')?.icon, 'database')
+  assert.deepEqual(searchArchitectureNodeTemplates('serverless', 'aws', 4).map((item) => item.id), ['aws:lambda'])
+  assert.ok(searchArchitectureNodeTemplates('kubernetes', 'all', 10).some((item) => item.id === 'builtin:kubernetes'))
+  assert.ok(searchArchitectureNodeTemplates('kubernetes', 'all', 10).some((item) => item.id === 'gcp:google_kubernetes_engine'))
+})
+
+test('inserts an architecture node template without conflating role, technology and visual icon', () => {
+  const source = scene()
+  source.architecture = { theme: 'enterprise', view: 'detail', density: 'auto' }
+  source.groups = [{ id: 'arch-application', label: 'Application', kind: 'boundary' }]
+  const template = architectureNodeTemplate('aws:lambda')
+  assert.ok(template)
+  const result = insertCanvasArchitectureNodeTemplate(source, template, { x: 600, y: 300 })
+  const node = result.scene.elements.find((item) => item.id === result.selectedIds[0])
+  assert.ok(node && node.type === 'node')
+  assert.equal(node.icon, 'worker')
+  assert.equal(node.iconRef, 'aws:lambda')
+  assert.equal(node.groupId, undefined)
+  assert.equal(node.text, 'Lambda')
+  assert.equal(node.subtitle, 'Serverless Function')
+
+  const spring = architectureNodeTemplate('builtin:spring')
+  assert.ok(spring)
+  const withExistingGroup = insertCanvasArchitectureNodeTemplate(source, spring, { x: 400, y: 220 })
+  const springNode = withExistingGroup.scene.elements.find((item) => item.id === withExistingGroup.selectedIds[0])
+  assert.ok(springNode && springNode.type === 'node')
+  assert.equal(springNode.groupId, 'arch-application')
+  assert.equal(springNode.stencil, 'spring')
+  assert.equal(springNode.iconRef, undefined)
 })
 
 test('aligns selected canvas boxes while retaining unrelated elements', () => {

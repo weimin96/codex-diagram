@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
+import { ARCHITECTURE_NODE_TEMPLATES, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasTraceDirection } from './canvasOperations.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
 
@@ -105,43 +106,6 @@ const ICON_SOURCE_OPTIONS: ReadonlyArray<readonly ['all' | CanvasIconSource, str
   ['gcp', 'GCP'],
 ]
 
-type ArchitectureAsset = {
-  id: string
-  label: string
-  category: '应用' | '数据' | 'AI / 集成'
-  icon: CanvasIcon
-  stencil?: CanvasStencil
-  subtitle: string
-  groupId?: string
-  tone?: CanvasTone
-}
-
-const ARCHITECTURE_ASSETS: ArchitectureAsset[] = [
-  { id: 'react', label: 'React', category: '应用', icon: 'web', stencil: 'react', subtitle: 'Web / Console', groupId: 'arch-experience', tone: 'accent' },
-  { id: 'vue', label: 'Vue', category: '应用', icon: 'web', stencil: 'vue', subtitle: 'Web / Console', groupId: 'arch-experience', tone: 'accent' },
-  { id: 'spring', label: 'Spring Boot', category: '应用', icon: 'service', stencil: 'spring', subtitle: 'Backend Service', groupId: 'arch-application' },
-  { id: 'nginx', label: 'Nginx', category: '应用', icon: 'gateway', stencil: 'nginx', subtitle: 'Gateway / Proxy', groupId: 'arch-application' },
-  { id: 'docker', label: 'Docker', category: '应用', icon: 'cloud', stencil: 'docker', subtitle: 'Container Runtime', groupId: 'arch-application' },
-  { id: 'kubernetes', label: 'Kubernetes', category: '应用', icon: 'cloud', stencil: 'kubernetes', subtitle: 'Runtime / Cluster', groupId: 'arch-application' },
-  { id: 'postgres', label: 'PostgreSQL', category: '数据', icon: 'database', stencil: 'postgres', subtitle: 'Relational Database', groupId: 'arch-data', tone: 'success' },
-  { id: 'mysql', label: 'MySQL', category: '数据', icon: 'database', stencil: 'mysql', subtitle: 'Relational Database', groupId: 'arch-data', tone: 'success' },
-  { id: 'mongodb', label: 'MongoDB', category: '数据', icon: 'database', stencil: 'mongodb', subtitle: 'Document Database', groupId: 'arch-data', tone: 'success' },
-  { id: 'redis', label: 'Redis', category: '数据', icon: 'cache', stencil: 'redis', subtitle: 'Cache', groupId: 'arch-data', tone: 'success' },
-  { id: 'kafka', label: 'Kafka', category: '数据', icon: 'queue', stencil: 'kafka', subtitle: 'Event Stream', groupId: 'arch-processing', tone: 'warning' },
-  { id: 'rabbitmq', label: 'RabbitMQ', category: '数据', icon: 'queue', stencil: 'rabbitmq', subtitle: 'Message Broker', groupId: 'arch-processing', tone: 'warning' },
-  { id: 'opensearch', label: 'OpenSearch', category: '数据', icon: 'search', stencil: 'opensearch', subtitle: 'Search Index', groupId: 'arch-data', tone: 'success' },
-  { id: 'elasticsearch', label: 'Elasticsearch', category: '数据', icon: 'search', stencil: 'elasticsearch', subtitle: 'Search Index', groupId: 'arch-data', tone: 'success' },
-  { id: 'qdrant', label: 'Qdrant', category: '数据', icon: 'vector', stencil: 'qdrant', subtitle: 'Vector Database', groupId: 'arch-data', tone: 'success' },
-  { id: 'minio', label: 'MinIO', category: '数据', icon: 'file', stencil: 'minio', subtitle: 'Object Storage', groupId: 'arch-data', tone: 'success' },
-  { id: 'agent', label: 'Agent Runtime', category: 'AI / 集成', icon: 'ai', subtitle: 'Agent / Tool Runtime', groupId: 'arch-application', tone: 'accent' },
-  { id: 'openai', label: 'OpenAI', category: 'AI / 集成', icon: 'ai', stencil: 'openai', subtitle: 'Model Provider', groupId: 'arch-application', tone: 'accent' },
-  { id: 'mcp', label: 'MCP', category: 'AI / 集成', icon: 'mcp', stencil: 'mcp', subtitle: 'Tool Gateway', groupId: 'arch-application', tone: 'accent' },
-  { id: 'oidc', label: 'OIDC / SSO', category: 'AI / 集成', icon: 'auth', stencil: 'oidc', subtitle: 'Identity Provider', groupId: 'arch-external', tone: 'muted' },
-  { id: 'grpc', label: 'gRPC', category: 'AI / 集成', icon: 'api', stencil: 'grpc', subtitle: 'RPC Interface', groupId: 'arch-application' },
-  { id: 'worker', label: 'Worker', category: 'AI / 集成', icon: 'worker', subtitle: 'Async Worker', groupId: 'arch-processing', tone: 'warning' },
-  { id: 'llm', label: 'LLM', category: 'AI / 集成', icon: 'ai', subtitle: 'Model Service', groupId: 'arch-application', tone: 'accent' },
-]
-
 function IconRefGlyph({ refValue, className }: { refValue: CanvasIconRef; className?: string }) {
   return <svg className={className} viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: canvasIconRefMarkup(refValue, false, 'currentColor') }} />
 }
@@ -181,6 +145,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [layerQuery, setLayerQuery] = useState('')
   const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'analysis' | null>(null)
   const [architecturePanel, setArchitecturePanel] = useState<'settings' | 'assets'>('settings')
+  const [assetQuery, setAssetQuery] = useState('')
+  const [assetProvider, setAssetProvider] = useState<'all' | ArchitectureNodeTemplateProvider>('all')
   const [inspectorMenuOpen, setInspectorMenuOpen] = useState(false)
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [iconPickerQuery, setIconPickerQuery] = useState('')
@@ -1152,6 +1118,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!iconPickerNeedle) return true
     return [entry.label, entry.ref, ...entry.keywords].some((value) => value.toLocaleLowerCase().includes(iconPickerNeedle))
   })
+  const assetNeedle = assetQuery.trim().toLocaleLowerCase()
+  const architectureAssets = ARCHITECTURE_NODE_TEMPLATES.filter((asset) => {
+    if (assetProvider !== 'all' && asset.provider !== assetProvider) return false
+    if (!assetNeedle) return true
+    return [asset.label, asset.subtitle, asset.category, asset.id, ...asset.keywords]
+      .some((value) => value.toLocaleLowerCase().includes(assetNeedle))
+  })
   const selectedLocked = selectedBoxes.filter((item) => item.locked)
   const selectedGroupIds = [...new Set(selectedBoxes.map((item) => item.groupId).filter((value): value is string => Boolean(value)))]
   const groupBounds = staticGroupBounds
@@ -1591,31 +1564,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setSelectedIds(result.selectedIds)
   }
 
-  function insertArchitectureAsset(asset: ArchitectureAsset) {
+  function insertArchitectureAsset(asset: ArchitectureNodeTemplate) {
     const live = currentScene()
-    const id = nextCanvasElementId('node', live.elements)
     const viewWidth = live.width / viewport.zoom
     const viewHeight = live.height / viewport.zoom
-    const width = 188
-    const height = 80
-    const groupId = asset.groupId && live.groups?.some((group) => group.id === asset.groupId) ? asset.groupId : undefined
-    const node: CanvasNode = {
-      id,
-      type: 'node',
-      x: clamp(snap(viewport.x + viewWidth / 2 - width / 2), 0, Math.max(0, live.width - width)),
-      y: clamp(snap(viewport.y + viewHeight / 2 - height / 2), 0, Math.max(0, live.height - height)),
-      width,
-      height,
-      text: asset.label,
-      subtitle: asset.subtitle,
-      icon: asset.icon,
-      ...(asset.stencil ? { stencil: asset.stencil } : {}),
-      ...(asset.tone ? { tone: asset.tone } : {}),
-      ...(groupId ? { groupId } : {}),
-      emphasis: 'secondary',
-    }
-    commit({ ...live, elements: [...live.elements, node] })
-    setSelectedIds([id])
+    const result = insertCanvasArchitectureNodeTemplate(live, asset, {
+      x: viewport.x + viewWidth / 2,
+      y: viewport.y + viewHeight / 2,
+    })
+    commit(result.scene)
+    setSelectedIds(result.selectedIds)
     setSelectedGroupTarget(null)
   }
 
@@ -2388,17 +2346,27 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 {scene.architecture && architecturePanel === 'assets' ? <>
                   <div className="freeform-asset-library-head">
                     <button type="button" aria-label="返回架构设置" onClick={() => setArchitecturePanel('settings')}>‹</button>
-                    <strong>素材库</strong>
-                    <span>{ARCHITECTURE_ASSETS.length}</span>
+                    <strong>组件模板</strong>
+                    <span>{architectureAssets.length}/{ARCHITECTURE_NODE_TEMPLATES.length}</span>
+                  </div>
+                  <div className="freeform-asset-filters">
+                    <input value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} placeholder="搜索组件" aria-label="搜索架构组件" />
+                    <div className="freeform-asset-provider-tabs" aria-label="组件来源">
+                      {([['all', '全部'], ['builtin', '通用'], ['aws', 'AWS'], ['azure', 'Azure'], ['gcp', 'GCP']] as const).map(([value, label]) => (
+                        <button key={value} type="button" className={assetProvider === value ? 'is-selected' : ''} onClick={() => setAssetProvider(value)}>{label}</button>
+                      ))}
+                    </div>
                   </div>
                   <div className="freeform-asset-library">
-                    {(['应用', '数据', 'AI / 集成'] as const).map((category) => (
-                      <div key={category}>
+                    {(['应用', '数据', '消息', '平台', 'AI / 集成'] as const).map((category) => {
+                      const categoryAssets = architectureAssets.filter((asset) => asset.category === category)
+                      if (!categoryAssets.length) return null
+                      return <div key={category}>
                         <em>{category}</em>
                         <div className="freeform-asset-grid">
-                          {ARCHITECTURE_ASSETS.filter((asset) => asset.category === category).map((asset) => (
+                          {categoryAssets.map((asset) => (
                             <button key={asset.id} type="button" title={asset.subtitle} onClick={() => insertArchitectureAsset(asset)}>
-                              {asset.stencil ? (() => {
+                              {asset.iconRef ? <IconRefGlyph refValue={asset.iconRef} /> : asset.stencil ? (() => {
                                 const visual = canvasStencilVisual(asset.stencil)
                                 return visual.path
                                   ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={visual.path} fill={visual.color} data-stencil={asset.stencil} /></svg>
@@ -2409,7 +2377,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                           ))}
                         </div>
                       </div>
-                    ))}
+                    })}
+                    {!architectureAssets.length ? <p className="freeform-asset-empty">没有匹配组件</p> : null}
                   </div>
                 </> : <>
                 {scene.architecture ? <>
@@ -2441,8 +2410,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </section>
                   <section className="freeform-asset-library-entry">
                     <button type="button" onClick={() => setArchitecturePanel('assets')}>
-                      <span><strong>素材库</strong><small>应用、数据、AI / 集成</small></span>
-                      <b>{ARCHITECTURE_ASSETS.length} ›</b>
+                      <span><strong>组件模板</strong><small>通用、AWS、Azure、GCP</small></span>
+                      <b>{ARCHITECTURE_NODE_TEMPLATES.length} ›</b>
                     </button>
                   </section>
                 </> : (

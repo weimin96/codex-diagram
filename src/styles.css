@@ -387,7 +387,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-asset-library-entry strong { color: var(--text-primary); font-size: 10px; font-weight: 680; }
 .freeform-asset-library-entry small { color: var(--text-tertiary); font-size: 8px; font-weight: 500; }
 .freeform-asset-library-entry b { flex: 0 0 auto; color: var(--text-tertiary); font: 600 9px var(--font-mono); }
-.freeform-asset-library { max-height: 246px; overflow: auto; display: grid; gap: 8px; padding: 7px 2px 2px; }
+.freeform-asset-filters { display: grid; gap: 5px; padding: 6px 2px 0; }
+.freeform-asset-filters > input { height: 27px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-primary); font-size: 10px; }
+.freeform-asset-provider-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
+.freeform-toolbar-menu .freeform-asset-provider-tabs button { height: 23px; padding: 0 3px; border-color: transparent; color: var(--text-tertiary); font-size: 8px; }
+.freeform-toolbar-menu .freeform-asset-provider-tabs button.is-selected { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface-panel)); color: var(--text-primary); }
+.freeform-asset-library { max-height: 204px; overflow: auto; display: grid; gap: 8px; padding: 7px 2px 2px; }
 .freeform-asset-library > div { display: grid; gap: 4px; }
 .freeform-asset-library em { color: var(--text-tertiary); font-size: 8px; font-style: normal; font-weight: 650; }
 .freeform-asset-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
@@ -396,6 +401,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-asset-grid svg.is-role { padding: 1px; }
 .freeform-asset-grid i { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; background: var(--surface-muted); color: var(--text-secondary); font: 700 7px var(--font-mono); }
 .freeform-asset-grid span { max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.freeform-asset-empty { margin: 0; padding: 14px 6px; color: var(--text-tertiary); font-size: 9px; text-align: center; }
 .freeform-menu-stack { display: grid; gap: 3px; }
 .freeform-menu-depth { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 6px; color: var(--text-tertiary); font-size: 10px; }
 .freeform-menu-depth select { height: 27px; min-width: 0; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text-secondary); font-size: 10px; }
