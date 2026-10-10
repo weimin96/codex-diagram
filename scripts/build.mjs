@@ -1,5 +1,7 @@
 import { build } from 'esbuild'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import postcss from 'postcss'
+import tailwindcss from '@tailwindcss/postcss'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -42,7 +44,13 @@ await build({
   },
 })
 
-await writeFile(path.join(dist, 'app.css'), await readFile(path.join(root, 'src/styles.css')))
+const stylesheetPath = path.join(root, 'src/styles.css')
+const stylesheet = await readFile(stylesheetPath, 'utf8')
+const compiledStylesheet = await postcss([tailwindcss()]).process(stylesheet, {
+  from: stylesheetPath,
+  to: path.join(dist, 'app.css'),
+})
+await writeFile(path.join(dist, 'app.css'), compiledStylesheet.css)
 const pluginManifest = JSON.parse(await readFile(path.join(root, 'manifest/plugin.json'), 'utf8'))
 pluginManifest.version = version
 await writeFile(path.join(packageRoot, '.codex-plugin/plugin.json'), `${JSON.stringify(pluginManifest, null, 2)}\n`)
