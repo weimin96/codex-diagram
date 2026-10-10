@@ -134,15 +134,42 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .new-diagram-form-head strong { font-size: 12px; font-weight: 680; }
 .new-diagram-form-head button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-tertiary); font-size: 16px; }
 .new-diagram-form-head button:hover { background: var(--surface-hover); color: var(--text-primary); }
-.new-diagram-type-groups { min-height: 0; max-height: 310px; overflow-y: auto; display: grid; gap: 8px; padding-right: 2px; }
+.new-diagram-browser { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 10px; }
+.new-diagram-type-groups { min-height: 0; max-height: 360px; overflow-y: auto; display: grid; gap: 8px; padding-right: 2px; }
 .new-diagram-type-group { display: grid; gap: 4px; }
 .new-diagram-type-group > span { padding-inline: 2px; color: var(--text-tertiary); font-size: 10px; font-weight: 620; }
 .new-diagram-type-group > div { display: grid; gap: 4px; }
-.new-diagram-type-group button { min-width: 0; min-height: 38px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-primary); text-align: left; }
-.new-diagram-type-group button:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-panel)); }
+.new-diagram-type-group button { min-width: 0; min-height: 38px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-primary); text-align: left; transition: transform 140ms ease, border-color 140ms ease, background 140ms ease; }
+.new-diagram-type-group button:hover { transform: translateX(2px); border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-panel)); }
 .new-diagram-type-group button.is-selected { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel)); box-shadow: inset 2px 0 0 var(--accent); }
 .new-diagram-type-group strong { min-width: 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .new-diagram-type-group small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; white-space: nowrap; }
+.new-diagram-preview { min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface-panel)); }
+.new-diagram-preview-content { height: 100%; min-height: 230px; display: grid; grid-template-rows: minmax(0, 1fr) auto; animation: new-diagram-preview-in 180ms cubic-bezier(.2,.8,.2,1); }
+.new-diagram-preview-stage { min-height: 0; display: grid; place-items: center; padding: 14px; overflow: hidden; }
+.new-diagram-preview-caption { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-top: 1px solid var(--border); background: var(--surface-panel); }
+.new-diagram-preview-caption strong { min-width: 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.new-diagram-preview-caption span { flex: 0 0 auto; color: var(--text-tertiary); font-size: 9px; white-space: nowrap; }
+.new-diagram-preview-empty { height: 100%; min-height: 230px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--text-tertiary); text-align: center; }
+.new-diagram-preview-empty strong { color: var(--text-secondary); font-size: 11px; font-weight: 620; }
+.new-diagram-preview-empty > span:last-child { font-size: 9px; }
+.new-diagram-preview-empty-mark { width: 44px; height: 32px; border: 1px solid var(--border-strong); border-radius: 7px; position: relative; opacity: .72; }
+.new-diagram-preview-empty-mark::before, .new-diagram-preview-empty-mark::after { content: ''; position: absolute; top: 15px; width: 26px; border-top: 1px solid var(--border-strong); }
+.new-diagram-preview-empty-mark::before { right: 30px; transform: rotate(-25deg); transform-origin: right; }
+.new-diagram-preview-empty-mark::after { left: 30px; transform: rotate(25deg); transform-origin: left; }
+.new-diagram-preview-svg { width: 100%; height: 100%; max-height: 220px; overflow: visible; }
+.new-diagram-preview-svg .preview-boundary { fill: none; stroke: var(--border-strong); stroke-width: 1.5; stroke-dasharray: 5 5; }
+.new-diagram-preview-svg .preview-node, .new-diagram-preview-svg .preview-shape, .new-diagram-preview-svg .preview-decision, .new-diagram-preview-svg .preview-note { fill: var(--surface-panel); stroke: var(--border-strong); stroke-width: 1.5; }
+.new-diagram-preview-svg .preview-node.is-accent { fill: color-mix(in srgb, var(--accent) 9%, var(--surface-panel)); stroke: color-mix(in srgb, var(--accent) 46%, var(--border-strong)); }
+.new-diagram-preview-svg .preview-node.is-data { fill: color-mix(in srgb, var(--editor-string) 8%, var(--surface-panel)); }
+.new-diagram-preview-svg .preview-line, .new-diagram-preview-svg .preview-free-line { fill: none; stroke: var(--text-tertiary); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.new-diagram-preview-svg .preview-free-line { stroke: var(--accent); stroke-dasharray: 5 5; }
+.new-diagram-preview-svg .preview-dot { fill: var(--accent); }
+.new-diagram-preview-mermaid { width: 100%; height: 100%; min-height: 190px; display: grid; place-items: center; }
+.new-diagram-preview-mermaid svg { width: 100%; height: 100%; max-height: 220px; }
+.new-diagram-preview-content .preview-line, .new-diagram-preview-content .preview-free-line { stroke-dasharray: 220; stroke-dashoffset: 220; animation: new-diagram-line-draw 520ms 80ms ease forwards; }
+.diagram-sidebar .new-diagram-browser { grid-template-columns: minmax(0, 1fr); }
+.diagram-sidebar .new-diagram-preview { display: none; }
 .form-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .form-actions button { height: 30px; font-size: 12px; }
 
@@ -156,7 +183,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-follow-toggle:not(.is-active) .thread-link-status { background: var(--text-tertiary); box-shadow: none; }
 .thread-diagram-menu { position: relative; min-width: 200px; width: 300px; max-width: calc(100% - 94px); flex: 0 1 300px; }
 .thread-diagram-menu > summary { min-width: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 9px 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-primary); cursor: pointer; list-style: none; }
-.thread-diagram-menu > summary::-webkit-details-marker, .thread-new-menu > summary::-webkit-details-marker { display: none; }
+.thread-diagram-menu > summary::-webkit-details-marker { display: none; }
 .thread-diagram-menu > summary:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 6%, var(--app-bg)); }
 .thread-diagram-menu[open] > summary { border-color: color-mix(in srgb, var(--accent) 50%, var(--border-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
 .thread-diagram-current { min-width: 0; flex: 1 1 auto; display: block; }
@@ -187,15 +214,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-menu-empty { padding: 18px 12px; color: var(--text-tertiary); font-size: 11px; text-align: center; }
 .thread-current-close { width: 30px; height: 30px; flex: 0 0 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 16px; line-height: 1; }
 .thread-current-close:hover { background: var(--surface-hover); color: var(--text-primary); }
-.thread-new-menu { position: relative; flex: 0 0 auto; }
-.thread-new-menu > summary { height: 30px; display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
-.thread-new-menu > summary:hover, .thread-new-menu[open] > summary { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text-primary); }
-.thread-new-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); right: 0; width: min(420px, calc(100vw - 28px)); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
-.thread-new-menu-popover .new-diagram-form { padding: 10px; border-bottom: 0; background: var(--surface-panel); }
-.thread-new-menu-popover .new-diagram-type-group > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.thread-new-ai-action { padding: 7px 10px 10px; border-top: 1px solid var(--border); }
-.thread-new-ai-action button { width: 100%; height: 30px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
-.thread-new-ai-action button:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-panel)); color: var(--text-primary); }
+.thread-new-overlay { position: absolute; z-index: 24; inset: 0; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--app-bg) 82%, transparent); backdrop-filter: blur(2px); }
+.thread-new-dialog { width: min(760px, calc(100vw - 36px)); max-height: min(650px, calc(100vh - 56px)); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-panel); box-shadow: 0 22px 60px rgba(0, 0, 0, 0.18); animation: new-diagram-dialog-in 180ms cubic-bezier(.2,.8,.2,1); }
+.thread-new-dialog .new-diagram-form { max-height: inherit; grid-template-rows: auto minmax(0, 1fr) auto auto; padding: 12px; border-bottom: 0; background: var(--surface-panel); }
+.thread-new-dialog .new-diagram-browser { min-height: 0; }
+.thread-new-dialog .new-diagram-type-groups { max-height: min(390px, calc(100vh - 210px)); }
+.thread-new-dialog .new-diagram-type-group > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .thread-diagram-tabs { min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
 .thread-diagram-tabs::-webkit-scrollbar { display: none; }
 .thread-diagram-tab { height: 29px; min-width: 0; flex: 0 0 auto; display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); }
@@ -1305,6 +1329,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .ai-quick-actions button:hover { background: var(--surface-hover); }
 
+@keyframes new-diagram-preview-in {
+  from { opacity: 0; transform: translateY(4px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes new-diagram-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes new-diagram-line-draw {
+  to { stroke-dashoffset: 0; }
+}
+
 @media (max-width: 900px) {
   .diagram-shell { grid-template-columns: 205px minmax(0, 1fr); }
   .diagram-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
@@ -1337,8 +1375,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .thread-follow-toggle { width: 32px; padding: 0; justify-content: center; font-size: 0; }
   .thread-diagram-menu { min-width: 0; width: auto; max-width: none; flex: 1 1 auto; }
   .thread-current-close { width: 30px; flex-basis: 30px; }
-  .thread-new-menu > summary { padding-inline: 8px; }
-  .thread-new-menu-popover { width: min(380px, calc(100vw - 20px)); }
+  .thread-new-dialog { width: min(430px, calc(100vw - 20px)); }
+  .thread-new-dialog .new-diagram-browser { grid-template-columns: minmax(0, 1fr); }
+  .thread-new-dialog .new-diagram-preview { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

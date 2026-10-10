@@ -16,9 +16,9 @@ import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
 import { assessMermaidVisualQuality } from './mermaidQuality.js'
 import { mermaidVisualConfig, normalizeMermaidSourceForRender } from './mermaidVisualGrammar.js'
-import { detectDiagramType } from './templates.js'
+import { createTemplate, detectDiagramType } from './templates.js'
 import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
-import { diagramTypeGroups, diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
+import { diagramTypeGroups, diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type MermaidDiagramType, type WorkspaceSnapshot } from './types.js'
 
 declare const __CODEX_DIAGRAM_VERSION__: string
 
@@ -406,7 +406,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     | null
   >(null)
   const threadDiagramMenu = useRef<HTMLDetailsElement>(null)
-  const threadNewMenu = useRef<HTMLDetailsElement>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
@@ -453,7 +452,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     const closeMenus = (event: PointerEvent) => {
       const target = event.target as Node | null
       if (target && !threadDiagramMenu.current?.contains(target)) threadDiagramMenu.current?.removeAttribute('open')
-      if (target && !threadNewMenu.current?.contains(target)) threadNewMenu.current?.removeAttribute('open')
     }
     window.addEventListener('pointerdown', closeMenus)
     return () => window.removeEventListener('pointerdown', closeMenus)
@@ -1525,7 +1523,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setCreating(false)
-      threadNewMenu.current?.removeAttribute('open')
       rememberThreadTab(result.diagram.path)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -1538,11 +1535,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       return
     }
     await createDiagram(type, title, canvasWorkbench)
-  }
-
-  function openThreadNewDiagramMenu() {
-    threadDiagramMenu.current?.removeAttribute('open')
-    threadNewMenu.current?.setAttribute('open', '')
   }
 
   async function renameDiagram() {
@@ -1867,7 +1859,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           <button className="workspace-path" type="button" onClick={requestWorkspaceSwitch} title={workspacePath}>{workspacePath}</button>
         </div>
 
-        {creating ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={requestCreateDiagram} /> : null}
+        {creating && !isThread ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={requestCreateDiagram} /> : null}
 
         <div className="diagram-search-wrap">
           <input
@@ -1997,25 +1989,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   onClick={() => void closeThreadTab(selected.path)}
                 >×</button>
               ) : null}
-              <details className="thread-new-menu" ref={threadNewMenu}>
-                <summary>新建</summary>
-                <div className="thread-new-menu-popover" role="dialog" aria-label="新建图表">
-                  <NewDiagramForm
-                    key={`thread-new-${snapshot.diagrams.length}`}
-                    onCancel={() => threadNewMenu.current?.removeAttribute('open')}
-                    onCreate={requestCreateDiagram}
-                  />
-                  <div className="thread-new-ai-action">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        threadNewMenu.current?.removeAttribute('open')
-                        setAiOpen(true)
-                      }}
-                    >AI 生成</button>
-                  </div>
-                </div>
-              </details>
             </div>
             {threadTabs.length > 0 ? (
               <div className="thread-diagram-tabs" aria-label="当前对话图表">
@@ -2246,7 +2219,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <div className="empty-actions">
               {isThread ? (
                 <>
-                  <button className="primary-button" type="button" onClick={openThreadNewDiagramMenu}>新建图表</button>
+                  <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
                   <button type="button" onClick={() => setAiOpen(true)}>AI 生成</button>
                 </>
               ) : (
@@ -2351,6 +2324,17 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <button type="button" onClick={() => setDiscardTarget(null)}>继续编辑</button>
                 <button className="danger-button" type="button" onClick={discardUnsavedChanges}>放弃并继续</button>
               </div>
+            </div>
+          </div>
+        ) : null}
+        {isThread && creating ? (
+          <div className="thread-new-overlay" role="presentation" onMouseDown={() => setCreating(false)}>
+            <div className="thread-new-dialog" role="dialog" aria-modal="true" aria-label="新建图表" onMouseDown={(event) => event.stopPropagation()}>
+              <NewDiagramForm
+                key={`thread-new-${snapshot.diagrams.length}`}
+                onCancel={() => setCreating(false)}
+                onCreate={requestCreateDiagram}
+              />
             </div>
           </div>
         ) : null}
@@ -3009,8 +2993,10 @@ const newDiagramChoiceGroups = [
 
 function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode) => Promise<void> }) {
   const [choice, setChoice] = useState<NewDiagramChoice | null>(null)
+  const [previewChoice, setPreviewChoice] = useState<NewDiagramChoice | null>(null)
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const visiblePreview = previewChoice ?? choice
 
   return (
     <form
@@ -3023,19 +3009,31 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
       }}
     >
       <div className="new-diagram-form-head"><strong>新建图表</strong><button type="button" onClick={onCancel} aria-label="关闭新建图表">×</button></div>
-      <div className="new-diagram-type-groups" aria-label="图表类型">
-        {newDiagramChoiceGroups.map((group) => (
-          <section className="new-diagram-type-group" key={group.key}>
-            <span>{group.label}</span>
-            <div>
-              {group.items.map((item) => (
-                <button key={item.key} type="button" className={choice?.key === item.key ? 'is-selected' : ''} onClick={() => setChoice(item)}>
-                  <strong>{item.label}</strong><small>{item.meta}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
+      <div className="new-diagram-browser">
+        <div className="new-diagram-type-groups" aria-label="图表类型">
+          {newDiagramChoiceGroups.map((group) => (
+            <section className="new-diagram-type-group" key={group.key}>
+              <span>{group.label}</span>
+              <div>
+                {group.items.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={choice?.key === item.key ? 'is-selected' : ''}
+                    onClick={() => setChoice(item)}
+                    onMouseEnter={() => setPreviewChoice(item)}
+                    onMouseLeave={() => setPreviewChoice(null)}
+                    onFocus={() => setPreviewChoice(item)}
+                    onBlur={() => setPreviewChoice(null)}
+                  >
+                    <strong>{item.label}</strong><small>{item.meta}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+        <DiagramChoicePreview choice={visiblePreview} />
       </div>
       <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={choice ? `${choice.label}名称` : '图表名称'} />
       <div className="form-actions">
@@ -3044,6 +3042,100 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
       </div>
     </form>
   )
+}
+
+function DiagramChoicePreview({ choice }: { choice: NewDiagramChoice | null }) {
+  return (
+    <aside className={`new-diagram-preview${choice ? ' has-preview' : ''}`} aria-live="polite">
+      {choice ? (
+        <div key={choice.key} className="new-diagram-preview-content">
+          <div className="new-diagram-preview-stage">
+            {choice.type === 'canvas'
+              ? <CanvasChoicePreview workbench={choice.canvasWorkbench ?? 'freeform'} />
+              : <MermaidChoicePreview type={choice.type} label={choice.label} />}
+          </div>
+          <div className="new-diagram-preview-caption">
+            <strong>{choice.label}</strong>
+            <span>{choice.meta}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="new-diagram-preview-empty">
+          <span className="new-diagram-preview-empty-mark" />
+          <strong>图表预览</strong>
+          <span>悬停在类型上查看结构示例</span>
+        </div>
+      )}
+    </aside>
+  )
+}
+
+function CanvasChoicePreview({ workbench }: { workbench: CanvasWorkbenchMode }) {
+  if (workbench === 'architecture') {
+    return (
+      <svg className="new-diagram-preview-svg is-canvas" viewBox="0 0 280 180" aria-hidden="true">
+        <rect className="preview-boundary" x="20" y="20" width="240" height="140" rx="12" />
+        <rect className="preview-node is-accent" x="42" y="66" width="58" height="36" rx="8" />
+        <rect className="preview-node" x="121" y="46" width="64" height="36" rx="8" />
+        <rect className="preview-node" x="121" y="106" width="64" height="36" rx="8" />
+        <rect className="preview-node is-data" x="207" y="76" width="34" height="48" rx="8" />
+        <path className="preview-line" d="M100 84 H110 V64 H121" />
+        <path className="preview-line" d="M100 84 H110 V124 H121" />
+        <path className="preview-line" d="M185 64 H196 V100 H207" />
+        <path className="preview-line" d="M185 124 H196 V100" />
+      </svg>
+    )
+  }
+  if (workbench === 'flowchart') {
+    return (
+      <svg className="new-diagram-preview-svg is-canvas" viewBox="0 0 280 180" aria-hidden="true">
+        <rect className="preview-node is-accent" x="20" y="72" width="54" height="34" rx="17" />
+        <rect className="preview-node" x="104" y="68" width="66" height="42" rx="8" />
+        <path className="preview-decision" d="M210 58 242 89 210 120 178 89Z" />
+        <path className="preview-line" d="M74 89 H104" />
+        <path className="preview-line" d="M170 89 H178" />
+        <path className="preview-line" d="M210 120 V145 H130" />
+        <circle className="preview-dot" cx="130" cy="145" r="5" />
+      </svg>
+    )
+  }
+  return (
+    <svg className="new-diagram-preview-svg is-canvas" viewBox="0 0 280 180" aria-hidden="true">
+      <rect className="preview-node is-accent" x="38" y="38" width="78" height="48" rx="10" transform="rotate(-4 77 62)" />
+      <circle className="preview-shape" cx="188" cy="66" r="30" />
+      <path className="preview-free-line" d="M70 130 C108 105 150 152 218 122" />
+      <rect className="preview-note" x="165" y="112" width="68" height="40" rx="7" transform="rotate(3 199 132)" />
+    </svg>
+  )
+}
+
+function MermaidChoicePreview({ type, label }: { type: MermaidDiagramType; label: string }) {
+  const container = useRef<HTMLDivElement>(null)
+  const renderId = useMemo(() => `diagram-choice-${Math.random().toString(36).slice(2)}`, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const handle = window.setTimeout(() => {
+      void renderMermaidSvg(createTemplate(type, label), `${renderId}-${Date.now()}`)
+        .then((markup) => {
+          if (cancelled || !container.current) return
+          const svg = createSafeSvgElement(markup)
+          svg.removeAttribute('width')
+          svg.removeAttribute('height')
+          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+          container.current.replaceChildren(svg)
+        })
+        .catch(() => {
+          if (!cancelled && container.current) container.current.replaceChildren()
+        })
+    }, 90)
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [label, renderId, type])
+
+  return <div ref={container} className="new-diagram-preview-mermaid" aria-hidden="true" />
 }
 
 function ModeButton({ value, mode, onChange, children }: { value: ViewMode; mode: ViewMode; onChange: (value: ViewMode) => void; children: ReactNode }) {
