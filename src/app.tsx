@@ -79,6 +79,7 @@ interface DiagramImageAssetContentResult {
 interface DiagramThreadStateResult {
   kind: 'diagram-thread-state'
   activeDiagramPath?: string
+  diagramPaths?: string[]
   focusElementIds?: string[]
   trace?: { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
   activity?: { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo' | 'history-redo'; path: string; key: string; modifiedAt?: string }
@@ -379,7 +380,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [followConversation, setFollowConversation] = useState(true)
-  const [threadTabs, setThreadTabs] = useState<string[]>([])
+  const [threadTabs, setThreadTabs] = useState<string[]>(() => isThread ? (snapshot.threadDiagramPaths ?? []) : [])
+  const [threadDiagramQuery, setThreadDiagramQuery] = useState('')
   const [canvasSelection, setCanvasSelection] = useState<CanvasSelection | null>(null)
   const [canvasFocus, setCanvasFocus] = useState<{ ids: string[]; key: string; trace?: DiagramThreadStateResult['trace'] } | null>(null)
   const [canvasPlayback, setCanvasPlayback] = useState<CanvasPlaybackRequest | null>(null)
@@ -426,6 +428,26 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       || diagramLabel(diagram.type).toLocaleLowerCase().includes(query)
     ))
   }, [diagramQuery, snapshot.diagrams])
+  const threadMenuGroups = useMemo(() => {
+    const byPath = new Map(snapshot.diagrams.map((diagram) => [diagram.path, diagram]))
+    const current = threadTabs.flatMap((path) => {
+      const diagram = byPath.get(path)
+      return diagram ? [diagram] : []
+    })
+    const currentPaths = new Set(current.map((diagram) => diagram.path))
+    const project = snapshot.diagrams.filter((diagram) => !currentPaths.has(diagram.path))
+    const query = threadDiagramQuery.trim().toLocaleLowerCase()
+    const matches = (diagram: DiagramSummary) => !query
+      || diagram.name.toLocaleLowerCase().includes(query)
+      || diagram.path.toLocaleLowerCase().includes(query)
+      || diagramLabel(diagram.type).toLocaleLowerCase().includes(query)
+    return {
+      current: current.filter(matches),
+      project: project.filter(matches),
+      currentTotal: current.length,
+      projectTotal: project.length,
+    }
+  }, [snapshot.diagrams, threadDiagramQuery, threadTabs])
 
   useEffect(() => {
     if (!isThread) return
@@ -453,7 +475,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     selectRequestSeq.current += 1
     patchHistoryRequestSeq.current += 1
     setSelected(null)
-    setThreadTabs([])
+    const availablePaths = new Set(snapshot.diagrams.map((diagram) => diagram.path))
+    setThreadTabs(isThread ? (snapshot.threadDiagramPaths ?? []).filter((path) => availablePaths.has(path)) : [])
+    setThreadDiagramQuery('')
     setCanvasSelection(null)
     setCanvasFocus(null)
     setCanvasPlayback(null)
@@ -481,7 +505,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     const initialDiagram = snapshot.activeDiagramPath
       ? snapshot.diagrams.find((diagram) => diagram.path === snapshot.activeDiagramPath)
       : undefined
-    if (initialDiagram ?? snapshot.diagrams[0]) void selectDiagram((initialDiagram ?? snapshot.diagrams[0])!.path, true)
+    if (initialDiagram) {
+      void selectDiagram(initialDiagram.path, true)
+    } else if (!isThread && snapshot.diagrams[0]) {
+      void selectDiagram(snapshot.diagrams[0].path, true)
+    }
     // Workspace changes intentionally discard selection from the previous project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath])
@@ -509,6 +537,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         .then(async (state) => {
           backgroundSyncSucceeded('thread')
           if (disposed) return
+          if (state.diagramPaths) {
+            const available = new Set(snapshot.diagrams.map((diagram) => diagram.path))
+            setThreadTabs(state.diagramPaths.filter((path) => available.has(path)))
+          }
           if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
           if (!threadStateInitialized.current) {
             threadStateInitialized.current = true
@@ -628,10 +660,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         .then(async (result) => {
           if (disposed || result.diagrams.length === 0) return
           const activePath = snapshot.activeDiagramPath
-          const next = (activePath && result.diagrams.find((diagram) => diagram.path === activePath)) || result.diagrams[0]
-          onSnapshot({ ...snapshot, surface: 'thread', diagrams: result.diagrams, activeDiagramPath: next.path })
-          await selectDiagram(next.path, true)
-          if (!disposed) setNotice('已发现当前项目中的图表')
+          const next = activePath ? result.diagrams.find((diagram) => diagram.path === activePath) : undefined
+          onSnapshot({ ...snapshot, surface: 'thread', diagrams: result.diagrams, activeDiagramPath: next?.path })
+          if (next) await selectDiagram(next.path, true)
+          if (!disposed) setNotice(next ? '已恢复当前对话图表' : '已发现当前项目中的图表')
         })
         .catch(() => {
           // Discovery is opportunistic. Thread/revision sync surfaces persistent failures separately.
@@ -777,7 +809,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!isThread) return
     setThreadTabs((current) => {
       if (current.includes(diagramPath)) return current
-      return [...current, diagramPath].slice(-6)
+      return [...current, diagramPath]
     })
   }
 
@@ -790,6 +822,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     const index = threadTabs.indexOf(diagramPath)
     const next = threadTabs.filter((path) => path !== diagramPath)
     setThreadTabs(next)
+    try {
+      await callTool<{ kind: 'diagram-thread-closed'; path?: string }>('diagram.closeThreadDiagram', { path: diagramPath })
+    } catch (cause) {
+      setError(`关闭当前图失败：${errorMessage(cause)}`)
+    }
     if (selected?.path !== diagramPath) return
     const fallback = next[Math.min(Math.max(0, index - 1), next.length - 1)]
     if (fallback) {
@@ -807,11 +844,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setPatchHistoryOpen(false)
     setPatchHistoryEntries([])
     onSnapshot({ ...snapshot, activeDiagramPath: undefined })
-    try {
-      await callTool<{ kind: 'diagram-thread-closed'; path?: string }>('diagram.closeThreadDiagram', { path: diagramPath })
-    } catch (cause) {
-      setError(`关闭当前图失败：${errorMessage(cause)}`)
-    }
   }
 
   async function selectDiagram(diagramPath: string, force = false, remember = true) {
@@ -1890,39 +1922,77 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span className="thread-link-status" />
                 跟随
               </button>
-              <details className="thread-diagram-menu" ref={threadDiagramMenu}>
+              <details
+                className="thread-diagram-menu"
+                ref={threadDiagramMenu}
+                onToggle={(event) => {
+                  if (!event.currentTarget.open) setThreadDiagramQuery('')
+                }}
+              >
                 <summary aria-label="选择图表">
                   <span className="thread-diagram-current">
                     <strong>{selected?.name ?? '选择图表'}</strong>
-                    <small>{selected ? diagramLabel(selected.type) : snapshot.diagrams.length ? `${snapshot.diagrams.length} 个可用图表` : '暂无图表'}</small>
+                    <small>{selected
+                      ? diagramLabel(selected.type)
+                      : threadMenuGroups.currentTotal
+                        ? `${threadMenuGroups.currentTotal} 个当前对话图表`
+                        : snapshot.diagrams.length
+                          ? `${snapshot.diagrams.length} 个项目图表`
+                          : '暂无图表'}</small>
                   </span>
                   <span className="thread-menu-chevron" aria-hidden="true" />
                 </summary>
-                <div className="thread-diagram-menu-popover" role="menu" aria-label="图表列表">
+                <div className="thread-diagram-menu-popover" role="dialog" aria-label="选择图表">
                   <div className="thread-menu-head">
-                    <strong>图表</strong>
-                    <span>{snapshot.diagrams.length}</span>
+                    <strong>选择图表</strong>
+                    <span>{threadMenuGroups.currentTotal} 当前对话 · {threadMenuGroups.projectTotal} 其他</span>
                   </div>
+                  {snapshot.diagrams.length > 6 ? (
+                    <div className="thread-menu-search">
+                      <input
+                        value={threadDiagramQuery}
+                        onChange={(event) => setThreadDiagramQuery(event.target.value)}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        placeholder="搜索名称、类型或路径"
+                        aria-label="搜索图表"
+                      />
+                    </div>
+                  ) : null}
                   <div className="thread-diagram-menu-list">
-                    {snapshot.diagrams.map((diagram) => (
-                      <button
-                        key={diagram.path}
-                        className={selected?.path === diagram.path ? 'is-active' : ''}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          threadDiagramMenu.current?.removeAttribute('open')
-                          void selectDiagram(diagram.path)
-                        }}
-                      >
-                        <span>
-                          <strong>{diagram.name}</strong>
-                          <small>{shortPath(diagram.path)}</small>
-                        </span>
-                        <em>{diagramLabel(diagram.type)}</em>
-                      </button>
-                    ))}
-                    {snapshot.diagrams.length === 0 ? <div className="thread-menu-empty">当前项目还没有图表</div> : null}
+                    {([
+                      { key: 'current', label: '当前对话', items: threadMenuGroups.current },
+                      { key: 'project', label: '项目中的其他图表', items: threadMenuGroups.project },
+                    ] as const).map((section) => section.items.length ? (
+                      <section className="thread-menu-section" key={section.key} aria-label={section.label}>
+                        <div className="thread-menu-section-head">
+                          <strong>{section.label}</strong>
+                          <span>{section.items.length}</span>
+                        </div>
+                        {section.items.map((diagram) => (
+                          <button
+                            key={diagram.path}
+                            className={selected?.path === diagram.path ? 'is-active' : ''}
+                            type="button"
+                            onClick={() => {
+                              threadDiagramMenu.current?.removeAttribute('open')
+                              setThreadDiagramQuery('')
+                              void selectDiagram(diagram.path)
+                            }}
+                          >
+                            <span>
+                              <strong>{diagram.name}</strong>
+                              <small>{shortPath(diagram.path)}</small>
+                            </span>
+                            <em>{diagramLabel(diagram.type)}</em>
+                          </button>
+                        ))}
+                      </section>
+                    ) : null)}
+                    {threadMenuGroups.current.length === 0 && threadMenuGroups.project.length === 0 ? (
+                      <div className="thread-menu-empty">
+                        {threadDiagramQuery.trim() ? '没有匹配的图表' : '当前项目还没有图表'}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </details>

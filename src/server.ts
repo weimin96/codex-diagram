@@ -92,7 +92,15 @@ const destructive = { readOnlyHint: false, destructiveHint: true, openWorldHint:
 const sourceIndexCache = new Map<string, { expiresAt: number; files: string[] }>()
 type ThreadTraceState = { seedElementIds: string[]; direction: 'upstream' | 'downstream' | 'both'; depth: number }
 type ThreadDrawActivity = { kind: 'create' | 'update' | 'proposal' | 'source-sync' | 'history-undo' | 'history-redo'; path: string; key: string; modifiedAt?: string }
-const threadSelection = new Map<string, { path?: string; focusElementIds?: string[]; trace?: ThreadTraceState; activity?: ThreadDrawActivity; updatedAt: string }>()
+type ThreadSelectionState = {
+  path?: string
+  diagramPaths?: string[]
+  focusElementIds?: string[]
+  trace?: ThreadTraceState
+  activity?: ThreadDrawActivity
+  updatedAt: string
+}
+const threadSelection = new Map<string, ThreadSelectionState>()
 interface ThreadDiagramProposal {
   workspacePath: string
   path: string
@@ -263,6 +271,7 @@ server.registerTool('diagram.threadState', {
   const payload = {
     kind: 'diagram-thread-state',
     activeDiagramPath: state?.path,
+    diagramPaths: state?.diagramPaths,
     focusElementIds: state?.focusElementIds,
     trace: state?.trace,
     activity: state?.activity,
@@ -286,8 +295,18 @@ server.registerTool('diagram.closeThreadDiagram', {
   const threadId = toolThreadId(extra._meta)
   if (threadId) {
     const current = threadSelection.get(threadId)
-    if (!diagramPath || !current?.path || current.path === diagramPath) {
-      threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
+    const closingPath = diagramPath ?? current?.path
+    if (current?.path === closingPath) {
+      threadSelection.set(threadId, {
+        diagramPaths: current?.diagramPaths?.filter((path) => path !== closingPath),
+        updatedAt: new Date().toISOString(),
+      })
+    } else if (current && closingPath) {
+      threadSelection.set(threadId, {
+        ...current,
+        diagramPaths: current.diagramPaths?.filter((path) => path !== closingPath),
+        updatedAt: new Date().toISOString(),
+      })
     }
   }
   const payload = { kind: 'diagram-thread-closed', path: diagramPath }
@@ -2033,7 +2052,14 @@ function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spe
 }
 
 function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface, threadId?: string): Record<string, unknown> {
-  const activeDiagramPath = threadId ? threadSelection.get(threadId)?.path : snapshot.activeDiagramPath
+  const threadState = threadId ? threadSelection.get(threadId) : undefined
+  const availablePaths = new Set(snapshot.diagrams.map((diagram) => diagram.path))
+  const activeDiagramPath = threadId
+    ? (threadState?.path && availablePaths.has(threadState.path) ? threadState.path : undefined)
+    : snapshot.activeDiagramPath
+  const threadDiagramPaths = threadId
+    ? threadState?.diagramPaths?.filter((path) => availablePaths.has(path))
+    : snapshot.threadDiagramPaths
   return {
     kind: snapshot.kind,
     surface: surface ?? snapshot.surface,
@@ -2041,6 +2067,7 @@ function workspaceContent(snapshot: WorkspaceSnapshot, surface?: DiagramSurface,
     recentWorkspaces: snapshot.recentWorkspaces,
     diagrams: snapshot.diagrams,
     activeDiagramPath,
+    threadDiagramPaths,
   }
 }
 
@@ -2049,8 +2076,12 @@ function markThreadDiagram(meta: unknown, diagramPath: string, focusElementIds?:
   if (!threadId) return
   const current = threadSelection.get(threadId)
   const now = new Date().toISOString()
+  const diagramPaths = current?.diagramPaths?.includes(diagramPath)
+    ? current.diagramPaths
+    : [...(current?.diagramPaths ?? []), diagramPath]
   threadSelection.set(threadId, {
     path: diagramPath,
+    diagramPaths,
     focusElementIds,
     trace,
     activity: activityKind ? { kind: activityKind, path: diagramPath, key: `${activityKind}:${diagramPath}:${now}`, modifiedAt: activityModifiedAt } : current?.activity,
@@ -2093,8 +2124,13 @@ function clearThreadDiagram(meta: unknown, deletedPath: string): void {
   const threadId = toolThreadId(meta)
   if (!threadId) return
   const current = threadSelection.get(threadId)
-  if (current?.path !== deletedPath) return
-  threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
+  if (!current) return
+  const diagramPaths = current.diagramPaths?.filter((path) => path !== deletedPath)
+  if (current.path === deletedPath) {
+    threadSelection.set(threadId, { diagramPaths, updatedAt: new Date().toISOString() })
+  } else if (diagramPaths?.length !== current.diagramPaths?.length) {
+    threadSelection.set(threadId, { ...current, diagramPaths, updatedAt: new Date().toISOString() })
+  }
   if (threadGitImpacts.get(threadId)?.path === deletedPath) threadGitImpacts.delete(threadId)
 }
 

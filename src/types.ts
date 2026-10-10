@@ -51,6 +51,7 @@ export interface WorkspaceSnapshot {
   recentWorkspaces: string[]
   diagrams: DiagramSummary[]
   activeDiagramPath?: string
+  threadDiagramPaths?: string[]
 }
 
 export const mermaidDiagramTypes: Array<DiagramTypeOption & { type: MermaidDiagramType }> = [
