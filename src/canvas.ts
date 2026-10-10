@@ -131,6 +131,10 @@ export interface CanvasNote {
   strokeWidth?: number
   opacity?: number
   cornerRadius?: number
+  textOnly?: boolean
+  fontSize?: number
+  fontWeight?: 400 | 500 | 600 | 700
+  textColor?: string
 }
 
 export interface CanvasArrow {
@@ -153,6 +157,7 @@ export interface CanvasArrow {
   strokeColor?: string
   strokeWidth?: number
   opacity?: number
+  freehand?: boolean
 }
 
 export interface CanvasGroupFrame extends CanvasGroup {
@@ -384,6 +389,15 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const palette = architectureMode
       ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
       : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
+    if (item.type === 'note' && item.textOnly) {
+      const fontSize = item.fontSize ?? 20
+      const fontWeight = item.fontWeight ?? 500
+      const textFill = item.textColor ?? text
+      const opacity = item.opacity ?? 1
+      const lineHeight = Math.round(fontSize * 1.35)
+      const lines = item.text.split('\n').slice(0, 8)
+      return `<g opacity="${opacity}">${lines.map((line, index) => `<text x="${item.x}" y="${item.y + fontSize + index * lineHeight}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${escapeXml(textFill)}">${escapeXml(line)}</text>`).join('')}</g>`
+    }
     const architectureCard = item.type === 'node' && Boolean(item.iconRef || item.icon || item.stencil || item.c4Type)
     if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme)
     const cardTemplate = canvasArchitectureCardTemplate(item)
@@ -1228,8 +1242,18 @@ export function anchorPoint(item: CanvasAnchorBox, anchor: CanvasAnchor | undefi
   }
 }
 
-export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor'>): string {
+export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor' | 'freehand'>): string {
   const route = canvasArrowRoutePoints(start, end, arrow)
+  if (arrow.freehand && route.length > 2) {
+    const commands = [`M ${route[0].x} ${route[0].y}`]
+    for (let index = 1; index < route.length - 1; index += 1) {
+      const current = route[index]
+      const next = route[index + 1]
+      commands.push(`Q ${current.x} ${current.y} ${(current.x + next.x) / 2} ${(current.y + next.y) / 2}`)
+    }
+    commands.push(`L ${route.at(-1)!.x} ${route.at(-1)!.y}`)
+    return commands.join(' ')
+  }
   return [`M ${route[0].x} ${route[0].y}`, ...route.slice(1).map((point) => `L ${point.x} ${point.y}`)].join(' ')
 }
 
@@ -1520,7 +1544,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(item.routing === 'straight' || item.routing === 'orthogonal' ? { routing: item.routing } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.fromAnchor ?? '') ? { fromAnchor: item.fromAnchor } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.toAnchor ?? '') ? { toAnchor: item.toAnchor } : {}),
-      ...(Array.isArray(item.points) ? { points: item.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({ x: point.x, y: point.y })) } : {}),
+      ...(Array.isArray(item.points) ? { points: item.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).slice(0, 480).map((point) => ({ x: point.x, y: point.y })) } : {}),
       ...(item.labelPosition && Number.isFinite(item.labelPosition.x) && Number.isFinite(item.labelPosition.y) ? { labelPosition: { x: item.labelPosition.x, y: item.labelPosition.y } } : {}),
       ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
       ...(typeof item.bundleKey === 'string' && item.bundleKey.trim() ? { bundleKey: item.bundleKey.trim().slice(0, 120) } : {}),
@@ -1530,6 +1554,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(normalizedHexColor(item.strokeColor) ? { strokeColor: normalizedHexColor(item.strokeColor) } : {}),
       ...(typeof item.strokeWidth === 'number' && Number.isFinite(item.strokeWidth) && item.strokeWidth > 0 && item.strokeWidth <= 12 ? { strokeWidth: item.strokeWidth } : {}),
       ...(normalizedUnitInterval(item.opacity) !== undefined ? { opacity: normalizedUnitInterval(item.opacity) } : {}),
+      ...(item.freehand === true ? { freehand: true } : {}),
     }
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
@@ -1566,6 +1591,10 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(typeof item.strokeWidth === 'number' && Number.isFinite(item.strokeWidth) && item.strokeWidth > 0 && item.strokeWidth <= 12 ? { strokeWidth: item.strokeWidth } : {}),
     ...(normalizedUnitInterval(item.opacity) !== undefined ? { opacity: normalizedUnitInterval(item.opacity) } : {}),
     ...(typeof item.cornerRadius === 'number' && Number.isFinite(item.cornerRadius) && item.cornerRadius >= 0 && item.cornerRadius <= 80 ? { cornerRadius: item.cornerRadius } : {}),
+    ...(item.type === 'note' && item.textOnly === true ? { textOnly: true } : {}),
+    ...(item.type === 'note' && typeof item.fontSize === 'number' && Number.isFinite(item.fontSize) && item.fontSize >= 8 && item.fontSize <= 96 ? { fontSize: item.fontSize } : {}),
+    ...(item.type === 'note' && [400, 500, 600, 700].includes(item.fontWeight ?? 0) ? { fontWeight: item.fontWeight } : {}),
+    ...(item.type === 'note' && normalizedHexColor(item.textColor) ? { textColor: normalizedHexColor(item.textColor) } : {}),
   }
 }
 

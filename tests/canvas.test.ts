@@ -81,6 +81,8 @@ test('round-trips free drawing lines and explicit style overrides', () => {
       { id: 'box', type: 'node', x: 80, y: 80, width: 180, height: 88, text: 'Styled', shapeRef: 'basic:rounded', fillColor: '#ffffff', strokeColor: '#2f73d9', strokeWidth: 2.5, opacity: 0.8, cornerRadius: 24 },
       { id: 'line', type: 'arrow', from: '', to: '', start: { x: 120, y: 260 }, end: { x: 420, y: 260 }, markerEnd: 'none', strokeColor: '#ef3340', strokeWidth: 3, opacity: 0.7 },
       { id: 'free-arrow', type: 'arrow', from: '', to: '', start: { x: 120, y: 340 }, end: { x: 420, y: 420 }, markerEnd: 'arrow', routing: 'orthogonal' },
+      { id: 'stroke', type: 'arrow', from: '', to: '', start: { x: 120, y: 500 }, end: { x: 360, y: 520 }, points: [{ x: 180, y: 470 }, { x: 260, y: 550 }], markerEnd: 'none', strokeColor: '#22a45d', freehand: true },
+      { id: 'text', type: 'note', x: 520, y: 120, width: 240, height: 56, text: '独立文字', textOnly: true, fontSize: 28, fontWeight: 700, textColor: '#2f73d9' },
     ],
   }
   const parsed = parseCanvasScene(serializeCanvasScene(scene))
@@ -92,10 +94,21 @@ test('round-trips free drawing lines and explicit style overrides', () => {
   const box = parsed.elements.find((item) => item.id === 'box')
   assert.ok(box && box.type === 'node')
   assert.equal(box.cornerRadius, 24)
+  const stroke = parsed.elements.find((item) => item.id === 'stroke')
+  assert.ok(stroke && stroke.type === 'arrow')
+  assert.equal(stroke.freehand, true)
+  const text = parsed.elements.find((item) => item.id === 'text')
+  assert.ok(text && text.type === 'note')
+  assert.equal(text.textOnly, true)
+  assert.equal(text.fontSize, 28)
+  assert.equal(text.fontWeight, 700)
+  assert.equal(text.textColor, '#2f73d9')
 
   const svg = canvasSceneToSvg(parsed)
   assert.match(svg, /stroke="#ef3340" stroke-width="3"/)
   assert.match(svg, /fill="#ffffff" stroke="#2f73d9" stroke-width="2\.5"/)
+  assert.match(svg, /Q 180 470 220 510/)
+  assert.match(svg, /font-size="28" font-weight="700" fill="#2f73d9">独立文字<\/text>/)
   assert.equal((svg.match(/marker-end="url\(#arrow\)"/g) ?? []).length, 1)
 })
 

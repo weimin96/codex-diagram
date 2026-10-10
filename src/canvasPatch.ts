@@ -55,6 +55,7 @@ export interface CanvasSubgraphContext {
 const boxFields = new Set([
   'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'shapeRef', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
   'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis', 'fillColor', 'strokeColor', 'strokeWidth', 'opacity', 'cornerRadius',
+  'textOnly', 'fontSize', 'fontWeight', 'textColor',
 ])
 const arrowFields = new Set([
   'from', 'to', 'label', 'lineStyle', 'routing', 'fromAnchor', 'toAnchor', 'points', 'labelPosition', 'emphasis', 'bundleKey',
@@ -757,6 +758,22 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
     }
     if (key === 'cornerRadius') {
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 80) fail()
+      return
+    }
+    if (key === 'textOnly') {
+      if (type !== 'note' || typeof value !== 'boolean') fail()
+      return
+    }
+    if (key === 'fontSize') {
+      if (type !== 'note' || typeof value !== 'number' || !Number.isFinite(value) || value < 8 || value > 96) fail()
+      return
+    }
+    if (key === 'fontWeight') {
+      if (type !== 'note' || ![400, 500, 600, 700].includes(Number(value))) fail()
+      return
+    }
+    if (key === 'textColor') {
+      if (type !== 'note' || typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail()
       return
     }
     fail()

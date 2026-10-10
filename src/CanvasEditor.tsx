@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowRight, Hand, Link2, Minus, MousePointer2, Shapes, StickyNote, Type, type IconNode } from 'lucide'
+import { ArrowRight, Hand, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
@@ -8,7 +8,7 @@ import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, co
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
 import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
-type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect' | 'line' | 'arrow'
+type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'text' | 'pen' | 'connect' | 'line' | 'arrow'
 
 export interface CanvasSelection {
   ids: string[]
@@ -86,8 +86,10 @@ type DragState =
   | { kind: 'arrow-endpoint'; pointerId: number; id: string; endpoint: 'from' | 'to'; before: string }
   | { kind: 'arrow-label'; pointerId: number; id: string; before: string }
   | { kind: 'line-draw'; pointerId: number; markerEnd: 'none' | 'arrow' }
+  | { kind: 'freehand-draw'; pointerId: number }
 
 type LineDraft = { start: CanvasPoint; end: CanvasPoint; markerEnd: 'none' | 'arrow' }
+type FreehandDraft = { points: CanvasPoint[] }
 type CanvasCssVars = CSSProperties & Record<`--${string}`, string | number | undefined>
 
 const GRID = 16
@@ -185,6 +187,9 @@ function ToolbarGlyph({ icon }: { icon: IconNode }) {
 }
 
 function CanvasBoxShape({ item }: { item: CanvasNode | CanvasNote }) {
+  if (item.type === 'note' && item.textOnly) {
+    return <rect width={item.width} height={item.height} className="freeform-text-hitbox" />
+  }
   if (item.shapeRef) {
     const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height, item.cornerRadius)
     return <>
@@ -206,10 +211,10 @@ function canvasBoxVisualStyle(item: CanvasNode | CanvasNote): CanvasCssVars {
 
 const STYLE_COLOR_SWATCHES = ['#1f2937', '#ef3340', '#22a45d', '#2f73d9', '#f59e0b', '#ffffff'] as const
 
-function StyleColorControl({ label, value, onChange }: { label: string; value?: string; onChange: (value?: string) => void }) {
+function StyleColorControl({ label, value, mixed = false, onChange }: { label: string; value?: string; mixed?: boolean; onChange: (value?: string) => void }) {
   return (
     <div className="freeform-style-color">
-      <span>{label}</span>
+      <span>{label}{mixed ? <em>混合</em> : null}</span>
       <div>
         {STYLE_COLOR_SWATCHES.map((color) => <button key={color} type="button" aria-label={`${label} ${color}`} className={value === color ? 'is-selected' : ''} style={{ background: color }} onClick={() => onChange(color)} />)}
         <label className="freeform-style-native-color" title="自定义颜色">
@@ -248,6 +253,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [arrowPointDraft, setArrowPointDraft] = useState<{ id: string; points: CanvasPoint[] } | null>(null)
   const [arrowLabelDraft, setArrowLabelDraft] = useState<{ id: string; position: CanvasPoint } | null>(null)
   const [lineDraft, setLineDraft] = useState<LineDraft | null>(null)
+  const [freehandDraft, setFreehandDraft] = useState<FreehandDraft | null>(null)
   const [spacePanning, setSpacePanning] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
@@ -293,6 +299,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const arrowPointDraftRef = useRef<typeof arrowPointDraft>(null)
   const arrowLabelDraftRef = useRef<typeof arrowLabelDraft>(null)
   const lineDraftRef = useRef<typeof lineDraft>(null)
+  const freehandDraftRef = useRef<typeof freehandDraft>(null)
   const gestureVisualFrameRef = useRef<number | null>(null)
   const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
   const geometryDraftFrameRef = useRef<number | null>(null)
@@ -463,6 +470,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         setArrowEndpointPreview(null)
         lineDraftRef.current = null
         setLineDraft(null)
+        freehandDraftRef.current = null
+        setFreehandDraft(null)
         drag.current = null
         clearGestureVisual()
         clearGeometryDrafts()
@@ -473,10 +482,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (!mod && key === 'v') setTool('select')
       if (!mod && key === 'h') setTool('hand')
       if (!mod && key === 'n') setTool('node')
-      if (!mod && key === 't') setTool('note')
+      if (!mod && key === 't' && currentScene().workbench !== 'architecture') setTool('text')
+      if (!mod && key === 'm') setTool('note')
       if (!mod && key === 'c') setTool('connect')
       if (!mod && key === 'l' && currentScene().workbench !== 'architecture') setTool('line')
       if (!mod && key === 'a' && currentScene().workbench !== 'architecture') setTool('arrow')
+      if (!mod && key === 'p' && currentScene().workbench !== 'architecture') setTool('pen')
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') setSpacePanning(false)
@@ -1253,6 +1264,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedSingle = selected.length === 1 ? selected[0] : null
   const selectedBox = selectedSingle && selectedSingle.type !== 'arrow' ? selectedSingle : null
   const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const selectedTextBox = selectedBox?.type === 'note' && selectedBox.textOnly ? selectedBox : null
+  const batchStyleBoxes = selectedBoxes.filter((item) => !(item.type === 'note' && item.textOnly))
+  const batchFillValues = new Set(batchStyleBoxes.map((item) => item.fillColor ?? ''))
+  const batchStrokeValues = new Set(batchStyleBoxes.map((item) => item.strokeColor ?? ''))
+  const batchWidthValues = new Set(batchStyleBoxes.map((item) => item.strokeWidth ?? 1.6))
+  const batchOpacityValues = new Set(batchStyleBoxes.map((item) => item.opacity ?? 1))
+  const batchFillColor = batchFillValues.size === 1 ? [...batchFillValues][0] || undefined : undefined
+  const batchStrokeColor = batchStrokeValues.size === 1 ? [...batchStrokeValues][0] || undefined : undefined
+  const batchStrokeWidth = batchWidthValues.size === 1 ? [...batchWidthValues][0] : undefined
+  const batchOpacity = batchOpacityValues.size === 1 ? [...batchOpacityValues][0] : undefined
   const iconPickerNeedle = iconPickerQuery.trim().toLocaleLowerCase()
   const iconPickerEntries = CANVAS_ICON_CATALOG.filter((entry) => {
     if (iconPickerSource !== 'all' && entry.source !== iconPickerSource) return false
@@ -1582,12 +1603,35 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       y: clamp(snap(y - height / 2), 0, live.height - height),
       width,
       height,
-      text: kind === 'node' ? (live.workbench === 'flowchart' ? shape?.label ?? '流程块' : '新图形') : live.workbench === 'flowchart' ? '文字' : '备注',
+      text: kind === 'node' ? (live.workbench === 'flowchart' ? shape?.label ?? '流程块' : '新图形') : '备注',
       ...(shape ? { shapeRef: shape.ref } : {}),
     }
     commit({ ...live, elements: [...live.elements, element] })
     setSelectedIds([id])
     setTool('select')
+  }
+
+  function addText(x: number, y: number) {
+    const live = currentScene()
+    const id = nextCanvasElementId('note', live.elements)
+    const width = 240
+    const height = 60
+    const element: CanvasNote = {
+      id,
+      type: 'note',
+      x: clamp(snap(x - width / 2), 0, live.width - width),
+      y: clamp(snap(y - height / 2), 0, live.height - height),
+      width,
+      height,
+      text: '文字',
+      textOnly: true,
+      fontSize: 20,
+      fontWeight: 500,
+    }
+    commit({ ...live, elements: [...live.elements, element] })
+    setSelectedIds([id])
+    setTool('select')
+    window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
   }
 
   function deleteSelected() {
@@ -2246,7 +2290,34 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function finishGesture(event: React.PointerEvent) {
     const active = drag.current
     if (!active || active.pointerId !== event.pointerId) return
-    if (active.kind === 'line-draw') {
+    if (active.kind === 'freehand-draw') {
+      const points = freehandDraftRef.current?.points ?? []
+      if (points.length >= 2) {
+        const start = points[0]
+        const end = points.at(-1)!
+        if (Math.hypot(end.x - start.x, end.y - start.y) >= 6 || points.length >= 4) {
+          const live = currentScene()
+          const id = nextCanvasElementId('arrow', live.elements)
+          const arrow: CanvasArrow = {
+            id,
+            type: 'arrow',
+            from: '',
+            to: '',
+            start,
+            end,
+            points: points.slice(1, -1),
+            markerEnd: 'none',
+            strokeWidth: 2,
+            freehand: true,
+          }
+          commit({ ...live, elements: [...live.elements, arrow] })
+          setSelectedIds([id])
+        }
+      }
+      freehandDraftRef.current = null
+      setFreehandDraft(null)
+      setTool('select')
+    } else if (active.kind === 'line-draw') {
       const draft = lineDraftRef.current
       if (draft && Math.hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) >= 8) {
         const live = currentScene()
@@ -2376,6 +2447,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       lineDraftRef.current = null
       setLineDraft(null)
     }
+    if (active.kind === 'freehand-draw') {
+      freehandDraftRef.current = null
+      setFreehandDraft(null)
+    }
     if (active.kind === 'move') clearGestureVisual()
     if (active.kind === 'resize' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
     if (active.kind === 'arrow-endpoint') {
@@ -2409,6 +2484,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       event.currentTarget.setPointerCapture(event.pointerId)
       return
     }
+    if (tool === 'pen') {
+      const draft = { points: [point] }
+      freehandDraftRef.current = draft
+      setFreehandDraft(draft)
+      drag.current = { kind: 'freehand-draw', pointerId: event.pointerId }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
     if (tool === 'select') {
       if (!event.shiftKey) setSelectedIds([])
       drag.current = { kind: 'marquee', pointerId: event.pointerId, startX: point.x, startY: point.y }
@@ -2437,6 +2520,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       const draft = { start, end, markerEnd: active.markerEnd }
       lineDraftRef.current = draft
       setLineDraft(draft)
+      return
+    }
+    if (active.kind === 'freehand-draw') {
+      const point = scenePoint(event.clientX, event.clientY, event.currentTarget, live, viewport)
+      const current = freehandDraftRef.current?.points ?? []
+      const previous = current.at(-1)
+      const minDistance = Math.max(1.5, 4 / Math.max(viewport.zoom, 0.5))
+      if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < minDistance) return
+      const points = current.length < 480 ? [...current, point] : [...current.slice(0, -1), point]
+      const draft = { points }
+      freehandDraftRef.current = draft
+      setFreehandDraft(draft)
       return
     }
     if (active.kind === 'pan') {
@@ -2659,7 +2754,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : semanticLodLevel === 'compact' ? '紧凑'
       : semanticLodLevel === 'overview' ? '概览'
         : '区域'
-  const noteToolLabel = flowchartWorkbench ? '文字' : '备注'
   const draggedArchitectureTemplate = architectureTemplateDrag ? architectureNodeTemplate(architectureTemplateDrag.templateId) : undefined
   const draggedShape = shapeDrag ? canvasShapeDefinition(shapeDrag.shapeRef) : undefined
 
@@ -2714,7 +2808,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               return <ToolButton key={ref} active={tool === 'node' && activeShapeRef === ref} title={`${shape.label} (N)`} onClick={() => { setActiveShapeRef(shape.ref); setTool('node'); setConnectFrom(null) }}><span className="freeform-toolbar-shape"><ShapePreview shape={shape} /></span></ToolButton>
             })
           )}
-          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title={`${noteToolLabel} (T)`} onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={flowchartWorkbench ? Type : StickyNote} /></ToolButton>
+          {architectureWorkbench || !flowchartWorkbench ? <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (M)" onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={StickyNote} /></ToolButton> : null}
+          {!architectureWorkbench ? <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton> : null}
+          {!architectureWorkbench ? <ToolButton active={tool === 'pen'} title="画笔 (P)" onClick={() => { setTool('pen'); setConnectFrom(null) }}><ToolbarGlyph icon={Pencil} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton> : null}
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
@@ -3069,29 +3165,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <span>连线文字</span>
                   <input aria-label="连线文字" value={selectedSingle.label ?? ''} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, label: event.target.value || undefined } : item)} />
                 </label>
-                <div className="freeform-section-caption">线条</div>
+                <div className="freeform-section-caption">{selectedSingle.freehand ? '画笔' : '线条'}</div>
                 <StyleColorControl label="颜色" value={selectedSingle.strokeColor} onChange={(value) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, strokeColor: value } : item)} />
                 <div className="freeform-property-row">
                   <label><span>线型</span><select aria-label="连线线型" value={selectedSingle.lineStyle ?? 'solid'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, lineStyle: event.target.value as CanvasLineStyle } : item)}><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label>
                   <label><span>宽度</span><select aria-label="连线宽度" value={selectedSingle.strokeWidth ?? 2} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, strokeWidth: Number(event.target.value) } : item)}><option value={1}>细</option><option value={2}>标准</option><option value={3}>粗</option><option value={5}>强调</option></select></label>
                 </div>
-                <div className="freeform-property-row">
+                {!selectedSingle.freehand ? <div className="freeform-property-row">
                   <label><span>路由</span><select aria-label="连线路由" value={selectedSingle.routing ?? 'straight'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, routing: event.target.value as CanvasRouting } : item)}><option value="straight">直线</option><option value="orthogonal">折线</option></select></label>
                   <label><span>终点</span><select aria-label="连线终点样式" value={selectedSingle.markerEnd ?? (selectedSingle.start && selectedSingle.end ? 'none' : 'arrow')} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, markerEnd: event.target.value as 'none' | 'arrow' } : item)}><option value="none">无箭头</option><option value="arrow">箭头</option></select></label>
-                </div>
+                </div> : null}
                 <label className="freeform-style-range"><span>透明度</span><input aria-label="连线透明度" type="range" min="10" max="100" value={Math.round((selectedSingle.opacity ?? 1) * 100)} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, opacity: Number(event.target.value) / 100 } : item)} /><b>{Math.round((selectedSingle.opacity ?? 1) * 100)}</b></label>
                 {selectedSingle.start && selectedSingle.end ? null : <div className="freeform-property-row">
                   <label><span>起点</span><select aria-label="连线起点锚点" value={selectedSingle.fromAnchor ?? 'auto'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, fromAnchor: event.target.value as CanvasAnchor } : item)}>{anchorOptions()}</select></label>
                   <label><span>终点</span><select aria-label="连线终点锚点" value={selectedSingle.toAnchor ?? 'auto'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, toAnchor: event.target.value as CanvasAnchor } : item)}>{anchorOptions()}</select></label>
                 </div>}
-                <div className="freeform-align-row">
+                {!selectedSingle.freehand ? <div className="freeform-align-row">
                   <button type="button" onClick={() => addArrowPoint(selectedSingle)}>添加折点</button>
                   <button type="button" disabled={!selectedSingle.points?.length} onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, points: undefined } : item)}>清除折点</button>
-                </div>
-                <div className="freeform-align-row">
+                </div> : null}
+                {!selectedSingle.freehand ? <div className="freeform-align-row">
                   <button type="button" onClick={() => reverseSelectedArrow(selectedSingle.id)}>反转方向</button>
                   {selectedSingle.start && selectedSingle.end ? <button type="button" onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, markerEnd: item.markerEnd === 'arrow' ? 'none' : 'arrow' } : item)}>切换箭头</button> : <button type="button" onClick={() => rerouteSelectedArrow(selectedSingle.id)}>重新路由</button>}
-                </div>
+                </div> : null}
                 {selectedSingle.start && selectedSingle.end ? null : <button type="button" onClick={() => insertNodeIntoArrow(selectedSingle)}>插入中间节点</button>}
                 {selectedSingle.labelPosition ? <button type="button" onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item)}>标签恢复自动位置</button> : null}
               </>
@@ -3178,18 +3274,28 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
                     <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
                   </div>
-                  <div className="freeform-property-row">
-                    <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
-                    <label><span>图形</span><select aria-label="元素图形" disabled={selectedBox.locked} value={selectedBox.shapeRef ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shapeRef: (event.target.value || undefined) as CanvasShapeRef | undefined, shape: event.target.value ? undefined : item.shape }))}><option value="">兼容旧形状</option>{CANVAS_SHAPE_CATALOG.filter((shape) => shapeLibraryPacks.includes(shape.pack)).map((shape) => <option key={shape.ref} value={shape.ref}>{shape.label}</option>)}</select></label>
-                  </div>
-                  <div className="freeform-section-caption">样式</div>
-                  <StyleColorControl label="填充" value={selectedBox.fillColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, fillColor: value }))} />
-                  <StyleColorControl label="描边" value={selectedBox.strokeColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, strokeColor: value }))} />
-                  <div className="freeform-property-row">
-                    <label><span>描边宽度</span><select aria-label="元素描边宽度" disabled={selectedBox.locked} value={selectedBox.strokeWidth ?? 1.6} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, strokeWidth: Number(event.target.value) }))}><option value={1}>细</option><option value={1.6}>标准</option><option value={2.5}>粗</option><option value={4}>强调</option></select></label>
-                    <label><span>圆角</span><input aria-label="元素圆角" type="number" min="0" max="80" disabled={selectedBox.locked || !(!selectedBox.shapeRef || selectedBox.shapeRef === 'basic:rectangle' || selectedBox.shapeRef === 'basic:rounded' || selectedBox.shapeRef === 'flowchart:process')} value={selectedBox.cornerRadius ?? (selectedBox.shapeRef === 'basic:rounded' ? 16 : 0)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, cornerRadius: Math.max(0, Math.min(80, Number(event.target.value) || 0)) }))} /></label>
-                  </div>
-                  <label className="freeform-style-range"><span>透明度</span><input aria-label="元素透明度" type="range" min="10" max="100" disabled={selectedBox.locked} value={Math.round((selectedBox.opacity ?? 1) * 100)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, opacity: Number(event.target.value) / 100 }))} /><b>{Math.round((selectedBox.opacity ?? 1) * 100)}</b></label>
+                  {selectedTextBox ? <>
+                    <div className="freeform-section-caption">文字样式</div>
+                    <StyleColorControl label="文字颜色" value={selectedTextBox.textColor} onChange={(value) => updateElement(selectedTextBox.id, (item) => item.type === 'note' ? { ...item, textColor: value } : item)} />
+                    <div className="freeform-property-row">
+                      <label><span>字号</span><input aria-label="文字字号" type="number" min="8" max="96" disabled={selectedTextBox.locked} value={selectedTextBox.fontSize ?? 20} onChange={(event) => updateElement(selectedTextBox.id, (item) => item.type === 'note' ? { ...item, fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 20)) } : item)} /></label>
+                      <label><span>字重</span><select aria-label="文字字重" disabled={selectedTextBox.locked} value={selectedTextBox.fontWeight ?? 500} onChange={(event) => updateElement(selectedTextBox.id, (item) => item.type === 'note' ? { ...item, fontWeight: Number(event.target.value) as 400 | 500 | 600 | 700 } : item)}><option value={400}>常规</option><option value={500}>中等</option><option value={600}>半粗</option><option value={700}>粗体</option></select></label>
+                    </div>
+                    <label className="freeform-style-range"><span>透明度</span><input aria-label="元素透明度" type="range" min="10" max="100" disabled={selectedTextBox.locked} value={Math.round((selectedTextBox.opacity ?? 1) * 100)} onChange={(event) => updateElement(selectedTextBox.id, (item) => item.type === 'note' ? { ...item, opacity: Number(event.target.value) / 100 } : item)} /><b>{Math.round((selectedTextBox.opacity ?? 1) * 100)}</b></label>
+                  </> : <>
+                    <div className="freeform-property-row">
+                      <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
+                      <label><span>图形</span><select aria-label="元素图形" disabled={selectedBox.locked} value={selectedBox.shapeRef ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shapeRef: (event.target.value || undefined) as CanvasShapeRef | undefined, shape: event.target.value ? undefined : item.shape }))}><option value="">兼容旧形状</option>{CANVAS_SHAPE_CATALOG.filter((shape) => shapeLibraryPacks.includes(shape.pack)).map((shape) => <option key={shape.ref} value={shape.ref}>{shape.label}</option>)}</select></label>
+                    </div>
+                    <div className="freeform-section-caption">样式</div>
+                    <StyleColorControl label="填充" value={selectedBox.fillColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, fillColor: value }))} />
+                    <StyleColorControl label="描边" value={selectedBox.strokeColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, strokeColor: value }))} />
+                    <div className="freeform-property-row">
+                      <label><span>描边宽度</span><select aria-label="元素描边宽度" disabled={selectedBox.locked} value={selectedBox.strokeWidth ?? 1.6} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, strokeWidth: Number(event.target.value) }))}><option value={1}>细</option><option value={1.6}>标准</option><option value={2.5}>粗</option><option value={4}>强调</option></select></label>
+                      <label><span>圆角</span><input aria-label="元素圆角" type="number" min="0" max="80" disabled={selectedBox.locked || !(!selectedBox.shapeRef || selectedBox.shapeRef === 'basic:rectangle' || selectedBox.shapeRef === 'basic:rounded' || selectedBox.shapeRef === 'flowchart:process')} value={selectedBox.cornerRadius ?? (selectedBox.shapeRef === 'basic:rounded' ? 16 : 0)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, cornerRadius: Math.max(0, Math.min(80, Number(event.target.value) || 0)) }))} /></label>
+                    </div>
+                    <label className="freeform-style-range"><span>透明度</span><input aria-label="元素透明度" type="range" min="10" max="100" disabled={selectedBox.locked} value={Math.round((selectedBox.opacity ?? 1) * 100)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, opacity: Number(event.target.value) / 100 }))} /><b>{Math.round((selectedBox.opacity ?? 1) * 100)}</b></label>
+                  </>}
                   <div className="freeform-style-layer-row" aria-label="图层">
                     <span>图层</span>
                     <div><button type="button" title="置底" onClick={() => reorderSelection('back')}>置底</button><button type="button" title="下移一层" onClick={() => reorderSelection('backward')}>下移</button><button type="button" title="上移一层" onClick={() => reorderSelection('forward')}>上移</button><button type="button" title="置顶" onClick={() => reorderSelection('front')}>置顶</button></div>
@@ -3332,6 +3438,25 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             ) : null}
             {selected.length > 1 && !selectedGroup ? (
               <>
+                {!architectureWorkbench && batchStyleBoxes.length > 1 ? <>
+                  <div className="freeform-section-caption">批量样式</div>
+                  <StyleColorControl
+                    label="填充"
+                    value={batchFillColor}
+                    mixed={batchFillValues.size > 1}
+                    onChange={(value) => updateSelectedBoxes((item) => item.type === 'note' && item.textOnly ? item : { ...item, fillColor: value })}
+                  />
+                  <StyleColorControl
+                    label="描边"
+                    value={batchStrokeColor}
+                    mixed={batchStrokeValues.size > 1}
+                    onChange={(value) => updateSelectedBoxes((item) => item.type === 'note' && item.textOnly ? item : { ...item, strokeColor: value })}
+                  />
+                  <div className="freeform-property-row">
+                    <label><span>描边宽度{batchStrokeWidth === undefined ? ' · 混合' : ''}</span><select aria-label="批量描边宽度" value={batchStrokeWidth ?? ''} onChange={(event) => updateSelectedBoxes((item) => item.type === 'note' && item.textOnly ? item : { ...item, strokeWidth: Number(event.target.value) })}><option value="" disabled>混合</option><option value={1}>细</option><option value={1.6}>标准</option><option value={2.5}>粗</option><option value={4}>强调</option></select></label>
+                    <label className="freeform-style-range"><span>透明度</span><input aria-label="批量透明度" type="range" min="10" max="100" value={Math.round((batchOpacity ?? 1) * 100)} onChange={(event) => updateSelectedBoxes((item) => item.type === 'note' && item.textOnly ? item : { ...item, opacity: Number(event.target.value) / 100 })} /><b>{batchOpacity === undefined ? '混合' : Math.round(batchOpacity * 100)}</b></label>
+                  </div>
+                </> : null}
                 <div className="freeform-multi-actions">
                   <select aria-label="对齐选中元素" defaultValue="" onChange={(event) => { const value = event.target.value; if (value === 'x') alignSelection('x'); if (value === 'y') alignSelection('y'); event.currentTarget.value = '' }}>
                     <option value="">对齐…</option><option value="x">垂直对齐</option><option value="y">水平对齐</option>
@@ -3372,6 +3497,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
             if (connectFrom && completeConnectionOnBlank(point)) return
             if (tool === 'node' || tool === 'note') addBox(tool, point.x, point.y)
+            if (tool === 'text') addText(point.x, point.y)
           }}
         >
           <defs>
@@ -3564,7 +3690,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 }
               : automaticLabelLayout
             return (
-              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path className="freeform-arrow-hit-path" d={path} />
                 <path
                   className="freeform-arrow-line"
@@ -3587,7 +3713,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <text x={labelLayout.x} y={labelLayout.y + 4} textAnchor="middle">{truncate(displayArrow.label, 30)}</text>
                   </g>
                 ) : null}
-                {selectedIds.includes(arrow.id) ? displayArrow.points?.map((point, index) => (
+                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? displayArrow.points?.map((point, index) => (
                   <circle
                     key={`${arrow.id}-point-${index}`}
                     className="freeform-arrow-point"
@@ -3604,7 +3730,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     }}
                   />
                 )) : null}
-                {selectedIds.includes(arrow.id) ? <>
+                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? <>
                   <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'from', end, start)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
                   <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'to', start, end)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
                 </> : null}
@@ -3634,6 +3760,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {lineDraft ? (
             <g className="freeform-line-draw-preview" pointerEvents="none">
               <path d={`M ${lineDraft.start.x} ${lineDraft.start.y} L ${lineDraft.end.x} ${lineDraft.end.y}`} markerEnd={lineDraft.markerEnd === 'arrow' ? 'url(#canvas-arrow)' : undefined} />
+            </g>
+          ) : null}
+          {freehandDraft?.points.length ? (
+            <g className="freeform-freehand-preview" pointerEvents="none">
+              <path d={canvasArrowPath(
+                freehandDraft.points[0],
+                freehandDraft.points.at(-1)!,
+                { points: freehandDraft.points.slice(1, -1), freehand: true },
+              )} />
             </g>
           ) : null}
           {arrowEndpointPreview ? (
@@ -3674,7 +3809,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const showC4Badge = !scene.architecture && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod)
             const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
             const showSourceBadge = scene.architecture ? selectedForLod : semanticLodLevel === 'detail' || selectedForLod
-            const showAnchorPoints = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id
+            const showAnchorPoints = !(displayItem.type === 'note' && displayItem.textOnly) && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id)
             const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
             const architectureMarkSize = architectureProjection.density === 'dense' ? 30 : architectureProjection.density === 'compact' ? 34 : 38
             const architectureMarkX = 14
@@ -3684,7 +3819,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               style={canvasBoxVisualStyle(displayItem)}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
@@ -3735,7 +3870,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               ) : null}
               {cardMeta && showCardMeta ? <text className="freeform-node-icon" x={(displayItem.iconRef || displayItem.icon) && showRoleIcon ? 34 : 13} y="19">{cardMeta}</text> : null}
               {displayItem.c4Type && showC4Badge ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
-              {showNodeTitle ? <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+              {showNodeTitle ? displayItem.type === 'note' && displayItem.textOnly ? (
+                <text
+                  className="freeform-plain-text"
+                  x="0"
+                  y={displayItem.fontSize ?? 20}
+                  style={{ fontSize: displayItem.fontSize ?? 20, fontWeight: displayItem.fontWeight ?? 500, fill: displayItem.textColor ?? undefined }}
+                >
+                  {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
+                  {playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
+                </text>
+              ) : <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
                 {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
@@ -4583,6 +4728,11 @@ function truncate(value: string, max: number) {
 }
 
 function elementLabel(item: CanvasElement) {
-  if (item.type === 'arrow') return '连接'
-  return item.type === 'note' ? '备注' : '节点'
+  if (item.type === 'arrow') {
+    if (item.freehand) return '笔迹'
+    if (item.start && item.end) return item.markerEnd === 'arrow' ? '箭头' : '直线'
+    return '连接'
+  }
+  if (item.type === 'note') return item.textOnly ? '文字' : '备注'
+  return '节点'
 }

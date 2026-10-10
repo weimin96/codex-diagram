@@ -2644,7 +2644,8 @@ function canvasChangeFieldLabel(field: string): string {
   if (field === 'groupId') return '边界'
   if (field === 'laneId') return '泳道'
   if (field === 'c4Type') return 'C4'
-  if (field === 'tone' || field === 'shape' || field === 'shapeRef' || field === 'emphasis' || field === 'lineStyle' || field === 'fillColor' || field === 'strokeColor' || field === 'strokeWidth' || field === 'opacity' || field === 'cornerRadius' || field === 'markerEnd') return '外观'
+  if (field === 'tone' || field === 'shape' || field === 'shapeRef' || field === 'emphasis' || field === 'lineStyle' || field === 'fillColor' || field === 'strokeColor' || field === 'strokeWidth' || field === 'opacity' || field === 'cornerRadius' || field === 'markerEnd' || field === 'textOnly' || field === 'fontSize' || field === 'fontWeight' || field === 'textColor') return '外观'
+  if (field === 'freehand') return '手绘路径'
   if (field === 'sourcePaths') return '源码'
   if (field === 'tags') return '标签'
   if (field === 'locked') return '锁定'
@@ -2653,7 +2654,7 @@ function canvasChangeFieldLabel(field: string): string {
 
 function canvasElementReviewLabel(element: ReturnType<typeof parseCanvasScene>['elements'][number]): string {
   if (element.type === 'arrow') return element.start && element.end
-    ? `${element.id}: 自由${element.markerEnd === 'none' ? '线' : '箭头'}${element.label ? ` · ${element.label}` : ''}`
+    ? `${element.id}: ${element.freehand ? '手绘' : `自由${element.markerEnd === 'none' ? '线' : '箭头'}`}${element.label ? ` · ${element.label}` : ''}`
     : `${element.id}: ${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
   return `${element.id}: ${element.text}`
 }

@@ -178,6 +178,24 @@ test('applies explicit visual style overrides without changing node semantics', 
   }), /字段值无效/)
 })
 
+test('adds standalone text with bounded typography fields', () => {
+  const result = buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: [],
+    adds: [{ id: 'caption', type: 'note', properties: { x: 640, y: 120, width: 240, height: 56, text: '阶段说明', textOnly: true, fontSize: 24, fontWeight: 600, textColor: '#2f73d9' } }],
+  })
+  const note = result.scene.elements.find((item) => item.id === 'caption')
+  assert.ok(note && note.type === 'note')
+  assert.equal(note.textOnly, true)
+  assert.equal(note.fontSize, 24)
+  assert.equal(note.fontWeight, 600)
+  assert.equal(note.textColor, '#2f73d9')
+
+  assert.throws(() => buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: [],
+    adds: [{ id: 'bad-caption', type: 'note', properties: { x: 640, y: 120, width: 240, height: 56, text: 'Bad', textOnly: true, fontSize: 120 } }],
+  }), /字段值无效/)
+})
+
 test('applies a visual icon override without changing semantic role fields', () => {
   const result = buildCanvasSubgraphPatch(scene(), {
     scopeElementIds: ['api'],
