@@ -54,10 +54,11 @@ export interface CanvasSubgraphContext {
 
 const boxFields = new Set([
   'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'shapeRef', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
-  'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis',
+  'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis', 'fillColor', 'strokeColor', 'strokeWidth', 'opacity', 'cornerRadius',
 ])
 const arrowFields = new Set([
   'from', 'to', 'label', 'lineStyle', 'routing', 'fromAnchor', 'toAnchor', 'points', 'labelPosition', 'emphasis', 'bundleKey',
+  'start', 'end', 'markerEnd', 'strokeColor', 'strokeWidth', 'opacity',
 ])
 const requiredBoxFields = new Set(['x', 'y', 'width', 'height', 'text'])
 const requiredArrowFields = new Set(['from', 'to'])
@@ -742,6 +743,22 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
       if (!['primary', 'secondary', 'muted'].includes(String(value))) fail()
       return
     }
+    if (key === 'fillColor' || key === 'strokeColor') {
+      if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail()
+      return
+    }
+    if (key === 'strokeWidth') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 12) fail()
+      return
+    }
+    if (key === 'opacity') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) fail()
+      return
+    }
+    if (key === 'cornerRadius') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 80) fail()
+      return
+    }
     fail()
   }
   if (key === 'from' || key === 'to') {
@@ -753,7 +770,7 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
     return
   }
   if (key === 'lineStyle') {
-    if (value !== 'solid' && value !== 'dashed') fail()
+    if (value !== 'solid' && value !== 'dashed' && value !== 'dotted') fail()
     return
   }
   if (key === 'routing') {
@@ -778,6 +795,26 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
   }
   if (key === 'bundleKey') {
     if (typeof value !== 'string' || !value.trim() || value.trim().length > 120) fail()
+    return
+  }
+  if (key === 'start' || key === 'end') {
+    if (!isFinitePoint(value)) fail()
+    return
+  }
+  if (key === 'markerEnd') {
+    if (value !== 'none' && value !== 'arrow') fail()
+    return
+  }
+  if (key === 'strokeColor') {
+    if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail()
+    return
+  }
+  if (key === 'strokeWidth') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 12) fail()
+    return
+  }
+  if (key === 'opacity') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) fail()
     return
   }
   fail()

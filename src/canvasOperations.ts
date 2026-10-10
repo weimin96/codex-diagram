@@ -35,6 +35,18 @@ export function pasteCanvasSelection(scene: CanvasScene, copied: CanvasElement[]
     return pasted
   })
   const arrows = copied.filter((item): item is CanvasArrow => item.type === 'arrow').flatMap((item) => {
+    if (item.start && item.end) {
+      const pasted: CanvasArrow = {
+        ...item,
+        id: nextCanvasElementId('arrow', used),
+        start: { x: clamp(item.start.x + offset, 0, scene.width), y: clamp(item.start.y + offset, 0, scene.height) },
+        end: { x: clamp(item.end.x + offset, 0, scene.width), y: clamp(item.end.y + offset, 0, scene.height) },
+        ...(item.points ? { points: item.points.map((point) => ({ x: clamp(point.x + offset, 0, scene.width), y: clamp(point.y + offset, 0, scene.height) })) } : {}),
+        ...(item.labelPosition ? { labelPosition: { x: clamp(item.labelPosition.x + offset, 0, scene.width), y: clamp(item.labelPosition.y + offset, 0, scene.height) } } : {}),
+      }
+      used.push(pasted)
+      return [pasted]
+    }
     const from = idMap.get(item.from)
     const to = idMap.get(item.to)
     if (!from || !to) return []
@@ -493,13 +505,30 @@ function centerOfBoxes(boxes: Array<CanvasNode | CanvasNote>): { x: number; y: n
   }
 }
 
-export function reorderCanvasSelection(scene: CanvasScene, ids: string[], direction: 'front' | 'back'): CanvasScene {
+export function reorderCanvasSelection(scene: CanvasScene, ids: string[], direction: 'front' | 'back' | 'forward' | 'backward'): CanvasScene {
   const selected = new Set(ids)
   const arrows = scene.elements.filter((item) => item.type === 'arrow')
   const boxes = scene.elements.filter((item) => item.type !== 'arrow')
   const chosen = boxes.filter((item) => selected.has(item.id))
   if (chosen.length === 0) return scene
   const rest = boxes.filter((item) => !selected.has(item.id))
+  if (direction === 'forward' || direction === 'backward') {
+    const ordered = [...boxes]
+    if (direction === 'forward') {
+      for (let index = ordered.length - 2; index >= 0; index -= 1) {
+        if (selected.has(ordered[index].id) && !selected.has(ordered[index + 1].id)) {
+          ;[ordered[index], ordered[index + 1]] = [ordered[index + 1], ordered[index]]
+        }
+      }
+    } else {
+      for (let index = 1; index < ordered.length; index += 1) {
+        if (selected.has(ordered[index].id) && !selected.has(ordered[index - 1].id)) {
+          ;[ordered[index - 1], ordered[index]] = [ordered[index], ordered[index - 1]]
+        }
+      }
+    }
+    return { ...scene, elements: [...arrows, ...ordered] }
+  }
   return {
     ...scene,
     elements: direction === 'front'

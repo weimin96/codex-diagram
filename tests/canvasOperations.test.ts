@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, searchArchitectureNodeTemplates } from '../src/architectureNodeTemplates.js'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
+import { alignCanvasSelection, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -38,6 +38,28 @@ test('copies and pastes a connected canvas selection with unique remapped arrows
     assert.ok(newIds.has(arrow.from))
     assert.ok(newIds.has(arrow.to))
   }
+})
+
+test('copies standalone drawing lines with their absolute geometry', () => {
+  const source = scene()
+  source.elements.push({ id: 'free-line', type: 'arrow', from: '', to: '', start: { x: 160, y: 560 }, end: { x: 520, y: 620 }, markerEnd: 'arrow', strokeColor: '#2f73d9' })
+  const copied = copyCanvasSelection(source, ['free-line'])
+  assert.equal(copied.length, 1)
+  const pasted = pasteCanvasSelection(source, copied, 32)
+  const duplicated = pasted.scene.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id !== 'free-line' && Boolean(item.start))
+  assert.ok(duplicated)
+  assert.deepEqual(duplicated.start, { x: 192, y: 592 })
+  assert.deepEqual(duplicated.end, { x: 552, y: 652 })
+  assert.equal(duplicated.strokeColor, '#2f73d9')
+})
+
+test('moves selected boxes one layer at a time without changing arrows', () => {
+  const source = scene()
+  const forward = reorderCanvasSelection(source, ['node-1'], 'forward')
+  assert.deepEqual(forward.elements.filter((item) => item.type !== 'arrow').map((item) => item.id), ['node-2', 'node-1', 'node-3'])
+  const backward = reorderCanvasSelection(forward, ['node-1'], 'backward')
+  assert.deepEqual(backward.elements.filter((item) => item.type !== 'arrow').map((item) => item.id), ['node-1', 'node-2', 'node-3'])
+  assert.deepEqual(backward.elements.filter((item) => item.type === 'arrow').map((item) => item.id), ['arrow-1', 'arrow-2'])
 })
 
 test('deleting a canvas node also deletes connected arrows', () => {

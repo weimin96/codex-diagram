@@ -69,6 +69,36 @@ test('auto anchors respect ellipse and decision geometry instead of the bounding
   assert.ok(Math.abs(ellipseEquation - 1) < 1e-9)
 })
 
+test('round-trips free drawing lines and explicit style overrides', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    workbench: 'freeform',
+    title: 'Styled drawing',
+    width: 900,
+    height: 600,
+    elements: [
+      { id: 'box', type: 'node', x: 80, y: 80, width: 180, height: 88, text: 'Styled', shapeRef: 'basic:rounded', fillColor: '#ffffff', strokeColor: '#2f73d9', strokeWidth: 2.5, opacity: 0.8, cornerRadius: 24 },
+      { id: 'line', type: 'arrow', from: '', to: '', start: { x: 120, y: 260 }, end: { x: 420, y: 260 }, markerEnd: 'none', strokeColor: '#ef3340', strokeWidth: 3, opacity: 0.7 },
+      { id: 'free-arrow', type: 'arrow', from: '', to: '', start: { x: 120, y: 340 }, end: { x: 420, y: 420 }, markerEnd: 'arrow', routing: 'orthogonal' },
+    ],
+  }
+  const parsed = parseCanvasScene(serializeCanvasScene(scene))
+  const line = parsed.elements.find((item) => item.id === 'line')
+  assert.ok(line && line.type === 'arrow')
+  assert.deepEqual(line.start, { x: 120, y: 260 })
+  assert.equal(line.markerEnd, 'none')
+  assert.equal(line.strokeColor, '#ef3340')
+  const box = parsed.elements.find((item) => item.id === 'box')
+  assert.ok(box && box.type === 'node')
+  assert.equal(box.cornerRadius, 24)
+
+  const svg = canvasSceneToSvg(parsed)
+  assert.match(svg, /stroke="#ef3340" stroke-width="3"/)
+  assert.match(svg, /fill="#ffffff" stroke="#2f73d9" stroke-width="2\.5"/)
+  assert.equal((svg.match(/marker-end="url\(#arrow\)"/g) ?? []).length, 1)
+})
+
 test('rejects malformed Canvas documents', () => {
   assert.throws(() => parseCanvasScene('{bad json'), /JSON 格式无效/)
   assert.throws(() => parseCanvasScene('{"type":"other","version":1,"elements":[]}'), /受支持/)

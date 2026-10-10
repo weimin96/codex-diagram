@@ -1023,7 +1023,7 @@ server.registerTool('diagram.proposeSubgraphPatch', {
     elementIds: z.array(z.string().min(1)).max(120).default([]).describe('Existing Canvas element ids that this patch is allowed to modify or remove.'),
     updates: z.array(z.object({
       id: z.string().min(1),
-      changes: canvasPatchPropertiesSchema.describe('Only fields that actually change. node/note: x,y,width,height,text,tone,shape,shapeRef,locked,groupId,sourcePaths,icon,stencil,iconRef,subtitle,description,tags,laneId,c4Type,emphasis. shapeRef is drawing geometry; iconRef is visual-only and must not replace icon/stencil semantics. arrow: from,to,label,lineStyle,routing,fromAnchor,toAnchor,points,labelPosition,emphasis,bundleKey. Use null only to clear optional fields.'),
+      changes: canvasPatchPropertiesSchema.describe('Only fields that actually change. node/note: x,y,width,height,text,tone,shape,shapeRef,fillColor,strokeColor,strokeWidth,opacity,cornerRadius,locked,groupId,sourcePaths,icon,stencil,iconRef,subtitle,description,tags,laneId,c4Type,emphasis. shapeRef is drawing geometry; iconRef is visual-only and must not replace icon/stencil semantics. arrow: from,to,label,lineStyle,routing,fromAnchor,toAnchor,points,labelPosition,emphasis,bundleKey,start,end,markerEnd,strokeColor,strokeWidth,opacity. Use null only to clear optional fields.'),
     })).max(120).optional(),
     adds: z.array(z.object({
       id: z.string().min(1),
@@ -2125,7 +2125,7 @@ function canvasHistoryFieldLabel(field: string): string {
   return ({
     text: '文字', subtitle: '副标题', description: '说明', tags: '标签', x: 'X', y: 'Y', width: '宽度', height: '高度',
     from: '起点', to: '终点', points: '折点', label: '关系文字', labelPosition: '标签位置', routing: '路由', fromAnchor: '起点锚点', toAnchor: '终点锚点',
-    groupId: '边界', laneId: '泳道', c4Type: 'C4', icon: '角色', stencil: '技术栈', iconRef: '显示图标', emphasis: '强调', sourcePaths: '源码', tone: '色调', shape: '旧形状', shapeRef: '图形', locked: '锁定', bundleKey: '关系通道', lineStyle: '线型',
+    groupId: '边界', laneId: '泳道', c4Type: 'C4', icon: '角色', stencil: '技术栈', iconRef: '显示图标', emphasis: '强调', sourcePaths: '源码', tone: '色调', shape: '旧形状', shapeRef: '图形', fillColor: '填充', strokeColor: '描边', strokeWidth: '线宽', opacity: '透明度', cornerRadius: '圆角', start: '自由线起点', end: '自由线终点', markerEnd: '箭头', locked: '锁定', bundleKey: '关系通道', lineStyle: '线型',
   } as Record<string, string>)[field] ?? field
 }
 

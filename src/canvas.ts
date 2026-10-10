@@ -16,7 +16,8 @@ import { canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeRef } from './sh
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
 export type CanvasShape = 'rounded' | 'square' | 'pill'
-export type CanvasLineStyle = 'solid' | 'dashed'
+export type CanvasLineStyle = 'solid' | 'dashed' | 'dotted'
+export type CanvasMarkerEnd = 'none' | 'arrow'
 export type CanvasEmphasis = 'primary' | 'secondary' | 'muted'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
@@ -95,6 +96,11 @@ export interface CanvasNode {
   laneId?: string
   c4Type?: CanvasC4Type
   emphasis?: CanvasEmphasis
+  fillColor?: string
+  strokeColor?: string
+  strokeWidth?: number
+  opacity?: number
+  cornerRadius?: number
 }
 
 export interface CanvasNote {
@@ -120,6 +126,11 @@ export interface CanvasNote {
   laneId?: string
   c4Type?: CanvasC4Type
   emphasis?: CanvasEmphasis
+  fillColor?: string
+  strokeColor?: string
+  strokeWidth?: number
+  opacity?: number
+  cornerRadius?: number
 }
 
 export interface CanvasArrow {
@@ -136,6 +147,12 @@ export interface CanvasArrow {
   labelPosition?: CanvasPoint
   emphasis?: CanvasEmphasis
   bundleKey?: string
+  start?: CanvasPoint
+  end?: CanvasPoint
+  markerEnd?: CanvasMarkerEnd
+  strokeColor?: string
+  strokeWidth?: number
+  opacity?: number
 }
 
 export interface CanvasGroupFrame extends CanvasGroup {
@@ -320,32 +337,37 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<path d="${bundle.path}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`
   }).join('')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow').map((arrow) => {
-    const from = nodes.get(arrow.from)
-    const to = nodes.get(arrow.to)
-    if (!from || !to) return ''
-    const fromCenter = centerOfCanvasBox(from)
-    const toCenter = centerOfCanvasBox(to)
-    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
-    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
-    const dash = arrow.lineStyle === 'dashed' || (architectureMode && architectureProfile.sketchEdges) ? ' stroke-dasharray="8 6"' : ''
+    const standalone = Boolean(arrow.start && arrow.end)
+    const from = standalone ? undefined : nodes.get(arrow.from)
+    const to = standalone ? undefined : nodes.get(arrow.to)
+    if (!standalone && (!from || !to)) return ''
+    const fromCenter = from ? centerOfCanvasBox(from) : arrow.start!
+    const toCenter = to ? centerOfCanvasBox(to) : arrow.end!
+    const start = standalone ? arrow.start! : anchorPoint(from!, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
+    const end = standalone ? arrow.end! : anchorPoint(to!, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const dash = arrow.lineStyle === 'dotted'
+      ? ' stroke-dasharray="2 5" stroke-linecap="round"'
+      : arrow.lineStyle === 'dashed' || (architectureMode && architectureProfile.sketchEdges) ? ' stroke-dasharray="8 6"' : ''
     const geometry = canvasArrowPath(start, end, arrow)
-    const strokeWidth = architectureMode
+    const strokeWidth = arrow.strokeWidth ?? (architectureMode
       ? (arrow.emphasis === 'primary' ? 1.8 : arrow.emphasis === 'muted' ? 0.85 : 1.2) * architectureProfile.edgeScale
-      : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2
+      : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2)
     const groupBundle = architectureMode && arrow.bundleKey?.startsWith('group:')
-    const opacity = architectureMode
+    const opacity = arrow.opacity ?? (architectureMode
       ? groupBundle
         ? arrow.emphasis === 'muted' ? darkArchitecture ? '0.24' : '0.20' : arrow.emphasis === 'secondary' ? darkArchitecture ? '0.56' : '0.48' : darkArchitecture ? '0.84' : '0.78'
         : arrow.emphasis === 'muted' ? '0.34' : arrow.emphasis === 'secondary' ? '0.72' : '0.94'
-      : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1'
+      : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1')
+    const stroke = arrow.strokeColor ?? (architectureMode ? architectureBorder : border)
     const visibleLabel = architectureMode && arrow.label && !canvasArchitectureRelationLabelVisible(arrow) ? undefined : arrow.label
-    const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
+    const label = visibleLabel ? labelLayouts.get(arrow.id) ?? { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 10, width: Math.max(46, Math.min(220, visibleLabel.length * 7 + 20)), height: 22 } : undefined
     const labelMarkup = visibleLabel && label
       ? architectureMode
         ? `<text x="${label.x}" y="${label.y + 3}" text-anchor="middle" font-size="12" font-weight="620" fill="${escapeXml(text)}" stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${escapeXml(truncateCanvasText(visibleLabel, 26))}</text>`
         : `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(visibleLabel, 30))}</text></g>`
       : ''
-    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${strokeWidth}"${dash} marker-end="url(#arrow)"/>${labelMarkup}</g>`
+    const markerEnd = arrow.markerEnd === 'none' ? '' : ' marker-end="url(#arrow)"'
+    return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}"${dash}${markerEnd}/>${labelMarkup}</g>`
   }).join('')
   const collapsedConnections = canvasCollapsedConnections(scene, groupFrames).map((connection) => {
     const fromCenter = centerOfCanvasBox(connection.fromBox)
@@ -379,17 +401,19 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const stencil = cardMeta ? `<text x="${item.x + (item.iconRef || item.icon ? 34 : 14)}" y="${item.y + 21}" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" letter-spacing="0.3" fill="${escapeXml(palette.stroke)}">${escapeXml(cardMeta)}</text>` : ''
     const c4 = item.c4Type ? `<text x="${item.x + item.width - 12}" y="${item.y + 20}" text-anchor="end" font-size="10" font-weight="600" fill="${escapeXml(palette.stroke)}">${escapeXml(c4Label(item.c4Type))}</text>` : ''
     const subtitle = showSubtitle ? `<text x="${architectureCard ? item.x + 16 : item.x + item.width / 2}" y="${item.y + item.height - 16}"${architectureCard ? '' : ' text-anchor="middle"'} font-size="11" fill="${escapeXml(palette.stroke)}">${escapeXml(truncateCanvasText(item.subtitle!, 34))}</text>` : ''
-    const strokeWidth = item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5
-    const opacity = item.emphasis === 'muted' ? '0.72' : '1'
+    const fillColor = item.fillColor ?? palette.fill
+    const strokeColor = item.strokeColor ?? palette.stroke
+    const strokeWidth = item.strokeWidth ?? (item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5)
+    const opacity = item.opacity ?? (item.emphasis === 'muted' ? '0.72' : '1')
     const accent = item.emphasis === 'primary' && !item.shapeRef ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
     const cardBand = architectureCard ? `<rect x="${item.x + 12}" y="${item.y + item.height - 4}" width="${Math.max(24, item.width - 24)}" height="2" rx="1" fill="${escapeXml(architectureCardBandColor(cardTemplate.kind, palette.stroke, border))}" fill-opacity="0.72"/>` : ''
     const dash = cardTemplate.kind === 'external' || cardTemplate.kind === 'messaging' ? ' stroke-dasharray="7 5"' : ''
     const shapeMarkup = item.shapeRef
       ? (() => {
-          const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height)
-          return `<g transform="translate(${item.x} ${item.y})"><path d="${geometry.bodyPath}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${escapeXml(palette.stroke)}" stroke-width="${Math.max(1, strokeWidth * 0.86)}"/>`).join('')}</g>`
+          const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height, item.cornerRadius)
+          return `<g transform="translate(${item.x} ${item.y})"><path d="${geometry.bodyPath}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${escapeXml(strokeColor)}" stroke-width="${Math.max(1, strokeWidth * 0.86)}"/>`).join('')}</g>`
         })()
-      : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${shapeRadius(item.shape, item.height)}" fill="${escapeXml(palette.fill)}" stroke="${escapeXml(palette.stroke)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>`
+      : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${item.cornerRadius ?? shapeRadius(item.shape, item.height)}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>`
     return `<g opacity="${opacity}">${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
@@ -427,8 +451,8 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   }).join('')
   const header = architectureHeader ? architectureHeaderToSvg(scene, architectureHeader, { background, text, border }) : ''
   const marker = architectureMode
-    ? `<marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="${escapeXml(architectureBorder)}"/></marker>`
-    : `<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${escapeXml(border)}"/></marker>`
+    ? '<marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="context-stroke"/></marker>'
+    : '<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="context-stroke"/></marker>'
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}"><defs>${marker}</defs><rect width="100%" height="100%" fill="${escapeXml(background)}"/>${header}${lanes}${groups}${bundleTrunks}${arrows}${collapsedConnections}${shapes}</svg>`
 }
 
@@ -1473,6 +1497,16 @@ function isCanvasElement(value: unknown): value is CanvasElement {
     && typeof item.text === 'string'
 }
 
+function normalizedHexColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const color = value.trim()
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : undefined
+}
+
+function normalizedUnitInterval(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined
+}
+
 function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   if (item.type === 'arrow') {
     const emphases: CanvasEmphasis[] = ['primary', 'secondary', 'muted']
@@ -1482,7 +1516,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       from: item.from,
       to: item.to,
       ...(typeof item.label === 'string' && item.label ? { label: item.label } : {}),
-      ...(item.lineStyle === 'solid' || item.lineStyle === 'dashed' ? { lineStyle: item.lineStyle } : {}),
+      ...(item.lineStyle === 'solid' || item.lineStyle === 'dashed' || item.lineStyle === 'dotted' ? { lineStyle: item.lineStyle } : {}),
       ...(item.routing === 'straight' || item.routing === 'orthogonal' ? { routing: item.routing } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.fromAnchor ?? '') ? { fromAnchor: item.fromAnchor } : {}),
       ...(['auto', 'top', 'right', 'bottom', 'left'].includes(item.toAnchor ?? '') ? { toAnchor: item.toAnchor } : {}),
@@ -1490,6 +1524,12 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
       ...(item.labelPosition && Number.isFinite(item.labelPosition.x) && Number.isFinite(item.labelPosition.y) ? { labelPosition: { x: item.labelPosition.x, y: item.labelPosition.y } } : {}),
       ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
       ...(typeof item.bundleKey === 'string' && item.bundleKey.trim() ? { bundleKey: item.bundleKey.trim().slice(0, 120) } : {}),
+      ...(item.start && Number.isFinite(item.start.x) && Number.isFinite(item.start.y) ? { start: { x: item.start.x, y: item.start.y } } : {}),
+      ...(item.end && Number.isFinite(item.end.x) && Number.isFinite(item.end.y) ? { end: { x: item.end.x, y: item.end.y } } : {}),
+      ...(item.markerEnd === 'none' || item.markerEnd === 'arrow' ? { markerEnd: item.markerEnd } : {}),
+      ...(normalizedHexColor(item.strokeColor) ? { strokeColor: normalizedHexColor(item.strokeColor) } : {}),
+      ...(typeof item.strokeWidth === 'number' && Number.isFinite(item.strokeWidth) && item.strokeWidth > 0 && item.strokeWidth <= 12 ? { strokeWidth: item.strokeWidth } : {}),
+      ...(normalizedUnitInterval(item.opacity) !== undefined ? { opacity: normalizedUnitInterval(item.opacity) } : {}),
     }
   }
   const tones: CanvasTone[] = ['default', 'accent', 'success', 'warning', 'danger', 'muted']
@@ -1521,6 +1561,11 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(typeof item.laneId === 'string' && item.laneId.trim() ? { laneId: item.laneId.trim() } : {}),
     ...(item.c4Type && c4Types.includes(item.c4Type) ? { c4Type: item.c4Type } : {}),
     ...(item.emphasis && emphases.includes(item.emphasis) ? { emphasis: item.emphasis } : {}),
+    ...(normalizedHexColor(item.fillColor) ? { fillColor: normalizedHexColor(item.fillColor) } : {}),
+    ...(normalizedHexColor(item.strokeColor) ? { strokeColor: normalizedHexColor(item.strokeColor) } : {}),
+    ...(typeof item.strokeWidth === 'number' && Number.isFinite(item.strokeWidth) && item.strokeWidth > 0 && item.strokeWidth <= 12 ? { strokeWidth: item.strokeWidth } : {}),
+    ...(normalizedUnitInterval(item.opacity) !== undefined ? { opacity: normalizedUnitInterval(item.opacity) } : {}),
+    ...(typeof item.cornerRadius === 'number' && Number.isFinite(item.cornerRadius) && item.cornerRadius >= 0 && item.cornerRadius <= 80 ? { cornerRadius: item.cornerRadius } : {}),
   }
 }
 

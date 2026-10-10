@@ -2632,7 +2632,7 @@ function canvasElementChangedFields(previous: ReturnType<typeof parseCanvasScene
 function canvasChangeFieldLabel(field: string): string {
   if (field === 'x' || field === 'y') return '位置'
   if (field === 'width' || field === 'height') return '尺寸'
-  if (field === 'from' || field === 'to') return '端点'
+  if (field === 'from' || field === 'to' || field === 'start' || field === 'end') return '端点'
   if (field === 'points' || field === 'routing' || field === 'fromAnchor' || field === 'toAnchor' || field === 'bundleKey') return '路由'
   if (field === 'labelPosition') return '标签位置'
   if (field === 'text') return '文字'
@@ -2644,7 +2644,7 @@ function canvasChangeFieldLabel(field: string): string {
   if (field === 'groupId') return '边界'
   if (field === 'laneId') return '泳道'
   if (field === 'c4Type') return 'C4'
-  if (field === 'tone' || field === 'shape' || field === 'emphasis' || field === 'lineStyle') return '外观'
+  if (field === 'tone' || field === 'shape' || field === 'shapeRef' || field === 'emphasis' || field === 'lineStyle' || field === 'fillColor' || field === 'strokeColor' || field === 'strokeWidth' || field === 'opacity' || field === 'cornerRadius' || field === 'markerEnd') return '外观'
   if (field === 'sourcePaths') return '源码'
   if (field === 'tags') return '标签'
   if (field === 'locked') return '锁定'
@@ -2652,7 +2652,9 @@ function canvasChangeFieldLabel(field: string): string {
 }
 
 function canvasElementReviewLabel(element: ReturnType<typeof parseCanvasScene>['elements'][number]): string {
-  if (element.type === 'arrow') return `${element.id}: ${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
+  if (element.type === 'arrow') return element.start && element.end
+    ? `${element.id}: 自由${element.markerEnd === 'none' ? '线' : '箭头'}${element.label ? ` · ${element.label}` : ''}`
+    : `${element.id}: ${element.from} → ${element.to}${element.label ? ` · ${element.label}` : ''}`
   return `${element.id}: ${element.text}`
 }
 

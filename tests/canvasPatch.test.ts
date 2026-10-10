@@ -161,6 +161,23 @@ test('applies registered drawing geometry independently from semantic role field
   assert.equal(node.shapeRef, 'flowchart:process')
 })
 
+test('applies explicit visual style overrides without changing node semantics', () => {
+  const result = buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { fillColor: '#ffffff', strokeColor: '#2f73d9', strokeWidth: 3, opacity: 0.75, cornerRadius: 18 } }],
+  })
+  const node = result.scene.elements.find((item) => item.id === 'api')
+  assert.ok(node && node.type === 'node')
+  assert.equal(node.icon, 'api')
+  assert.equal(node.fillColor, '#ffffff')
+  assert.equal(node.strokeColor, '#2f73d9')
+  assert.equal(node.opacity, 0.75)
+  assert.throws(() => buildCanvasSubgraphPatch(scene(), {
+    scopeElementIds: ['api'],
+    updates: [{ id: 'api', changes: { strokeColor: 'red' } }],
+  }), /字段值无效/)
+})
+
 test('applies a visual icon override without changing semantic role fields', () => {
   const result = buildCanvasSubgraphPatch(scene(), {
     scopeElementIds: ['api'],

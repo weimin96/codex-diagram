@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowRight, Hand, MousePointer2, Shapes, StickyNote, Type, type IconNode } from 'lucide'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { ArrowRight, Hand, Link2, Minus, MousePointer2, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
@@ -8,7 +8,7 @@ import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, co
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
 import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
-type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect'
+type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'connect' | 'line' | 'arrow'
 
 export interface CanvasSelection {
   ids: string[]
@@ -85,6 +85,10 @@ type DragState =
   | { kind: 'arrow-point'; pointerId: number; id: string; index: number; before: string }
   | { kind: 'arrow-endpoint'; pointerId: number; id: string; endpoint: 'from' | 'to'; before: string }
   | { kind: 'arrow-label'; pointerId: number; id: string; before: string }
+  | { kind: 'line-draw'; pointerId: number; markerEnd: 'none' | 'arrow' }
+
+type LineDraft = { start: CanvasPoint; end: CanvasPoint; markerEnd: 'none' | 'arrow' }
+type CanvasCssVars = CSSProperties & Record<`--${string}`, string | number | undefined>
 
 const GRID = 16
 const MIN_ZOOM = 0.45
@@ -182,13 +186,39 @@ function ToolbarGlyph({ icon }: { icon: IconNode }) {
 
 function CanvasBoxShape({ item }: { item: CanvasNode | CanvasNote }) {
   if (item.shapeRef) {
-    const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height)
+    const geometry = canvasShapeGeometry(item.shapeRef, item.width, item.height, item.cornerRadius)
     return <>
       <path d={geometry.bodyPath} className="freeform-shape-body" />
       {geometry.detailPaths.map((path, index) => <path key={index} d={path} className="freeform-shape-detail" />)}
     </>
   }
-  return <rect width={item.width} height={item.height} rx={item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14} />
+  return <rect width={item.width} height={item.height} rx={item.cornerRadius ?? (item.shape === 'square' ? 3 : item.shape === 'pill' ? item.height / 2 : 14)} />
+}
+
+function canvasBoxVisualStyle(item: CanvasNode | CanvasNote): CanvasCssVars {
+  return {
+    ...(item.fillColor ? { '--canvas-box-fill': item.fillColor } : {}),
+    ...(item.strokeColor ? { '--canvas-box-stroke': item.strokeColor } : {}),
+    ...(item.strokeWidth ? { '--canvas-box-stroke-width': `${item.strokeWidth}px` } : {}),
+    ...(item.opacity !== undefined ? { opacity: item.opacity } : {}),
+  }
+}
+
+const STYLE_COLOR_SWATCHES = ['#1f2937', '#ef3340', '#22a45d', '#2f73d9', '#f59e0b', '#ffffff'] as const
+
+function StyleColorControl({ label, value, onChange }: { label: string; value?: string; onChange: (value?: string) => void }) {
+  return (
+    <div className="freeform-style-color">
+      <span>{label}</span>
+      <div>
+        {STYLE_COLOR_SWATCHES.map((color) => <button key={color} type="button" aria-label={`${label} ${color}`} className={value === color ? 'is-selected' : ''} style={{ background: color }} onClick={() => onChange(color)} />)}
+        <label className="freeform-style-native-color" title="自定义颜色">
+          <input type="color" value={value ?? '#64748b'} onChange={(event) => onChange(event.target.value)} />
+        </label>
+        <button type="button" className="freeform-style-auto" onClick={() => onChange(undefined)}>自动</button>
+      </div>
+    </div>
+  )
 }
 
 export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
@@ -217,6 +247,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [resizeDraft, setResizeDraft] = useState<{ id: string; width: number; height: number } | null>(null)
   const [arrowPointDraft, setArrowPointDraft] = useState<{ id: string; points: CanvasPoint[] } | null>(null)
   const [arrowLabelDraft, setArrowLabelDraft] = useState<{ id: string; position: CanvasPoint } | null>(null)
+  const [lineDraft, setLineDraft] = useState<LineDraft | null>(null)
   const [spacePanning, setSpacePanning] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
@@ -261,6 +292,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const resizeDraftRef = useRef<typeof resizeDraft>(null)
   const arrowPointDraftRef = useRef<typeof arrowPointDraft>(null)
   const arrowLabelDraftRef = useRef<typeof arrowLabelDraft>(null)
+  const lineDraftRef = useRef<typeof lineDraft>(null)
   const gestureVisualFrameRef = useRef<number | null>(null)
   const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
   const geometryDraftFrameRef = useRef<number | null>(null)
@@ -276,6 +308,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setArchitectureView(parsed.scene.architecture.view ?? 'detail')
     setArchitectureDensity(parsed.scene.architecture.density ?? 'auto')
   }, [parsed.scene?.architecture?.density, parsed.scene?.architecture?.theme, parsed.scene?.architecture?.view])
+
+  useEffect(() => {
+    const workbench = parsed.scene?.workbench ?? (parsed.scene?.architecture ? 'architecture' : 'freeform')
+    if (workbench === 'architecture' && (tool === 'line' || tool === 'arrow')) setTool('select')
+  }, [parsed.scene?.architecture, parsed.scene?.workbench, tool])
 
   useEffect(() => {
     if (!parsed.scene) return
@@ -424,6 +461,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         setConnectFromAnchor('auto')
         arrowEndpointPreviewRef.current = null
         setArrowEndpointPreview(null)
+        lineDraftRef.current = null
+        setLineDraft(null)
+        drag.current = null
         clearGestureVisual()
         clearGeometryDrafts()
         setTool('select')
@@ -435,6 +475,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (!mod && key === 'n') setTool('node')
       if (!mod && key === 't') setTool('note')
       if (!mod && key === 'c') setTool('connect')
+      if (!mod && key === 'l' && currentScene().workbench !== 'architecture') setTool('line')
+      if (!mod && key === 'a' && currentScene().workbench !== 'architecture') setTool('arrow')
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') setSpacePanning(false)
@@ -1595,7 +1637,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function reverseSelectedArrow(arrowId: string) {
-    const next = reverseCanvasArrow(currentScene(), arrowId)
+    const live = currentScene()
+    const source = live.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === arrowId)
+    if (source?.start && source.end) {
+      commit({
+        ...live,
+        elements: live.elements.map((item) => item.type === 'arrow' && item.id === arrowId
+          ? { ...item, start: source.end, end: source.start, points: source.points ? [...source.points].reverse() : undefined }
+          : item),
+      })
+      return
+    }
+    const next = reverseCanvasArrow(live, arrowId)
     commit(next.architecture ? routeArrowIds(next, [arrowId]) : next)
   }
 
@@ -1929,7 +1982,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     focusBoxes(ids)
   }
 
-  function reorderSelection(direction: 'front' | 'back') {
+  function reorderSelection(direction: 'front' | 'back' | 'forward' | 'backward') {
     commit(reorderCanvasSelection(currentScene(), selectedIds, direction))
     setContextMenu(null)
   }
@@ -2193,7 +2246,28 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   function finishGesture(event: React.PointerEvent) {
     const active = drag.current
     if (!active || active.pointerId !== event.pointerId) return
-    if (active.kind === 'move') {
+    if (active.kind === 'line-draw') {
+      const draft = lineDraftRef.current
+      if (draft && Math.hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) >= 8) {
+        const live = currentScene()
+        const id = nextCanvasElementId('arrow', live.elements)
+        const arrow: CanvasArrow = {
+          id,
+          type: 'arrow',
+          from: '',
+          to: '',
+          start: draft.start,
+          end: draft.end,
+          routing: 'straight',
+          markerEnd: active.markerEnd,
+        }
+        commit({ ...live, elements: [...live.elements, arrow] })
+        setSelectedIds([id])
+      }
+      lineDraftRef.current = null
+      setLineDraft(null)
+      setTool('select')
+    } else if (active.kind === 'move') {
       let next = currentScene()
       const changedNodeIds = new Set<string>(active.positions.keys())
       const overrides = gesturePositionOverridesRef.current
@@ -2260,7 +2334,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     else if (active.kind === 'arrow-endpoint') {
       const preview = arrowEndpointPreviewRef.current
-      if (preview?.targetId && preview.targetAnchor) {
+      const source = currentScene().elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === active.id)
+      if (source?.start && source.end && preview) {
+        const next: CanvasScene = {
+          ...currentScene(),
+          elements: currentScene().elements.map((item) => item.type === 'arrow' && item.id === active.id
+            ? { ...item, [active.endpoint === 'from' ? 'start' : 'end']: { x: snap(preview.point.x), y: snap(preview.point.y) }, points: undefined }
+            : item),
+        }
+        commit(next, false)
+        recordGesture(active.before)
+      } else if (preview?.targetId && preview.targetAnchor) {
         let next = reconnectCanvasArrow(currentScene(), active.id, active.endpoint, preview.targetId, preview.targetAnchor)
         if (next.architecture) next = routeArrowIds(next, [active.id])
         commit(next, false)
@@ -2288,6 +2372,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       setSelectionRect(null)
       return
     }
+    if (active.kind === 'line-draw') {
+      lineDraftRef.current = null
+      setLineDraft(null)
+    }
     if (active.kind === 'move') clearGestureVisual()
     if (active.kind === 'resize' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
     if (active.kind === 'arrow-endpoint') {
@@ -2312,6 +2400,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       event.currentTarget.setPointerCapture(event.pointerId)
       return
     }
+    if (tool === 'line' || tool === 'arrow') {
+      const snapped = { x: snap(point.x), y: snap(point.y) }
+      const draft = { start: snapped, end: snapped, markerEnd: tool === 'arrow' ? 'arrow' as const : 'none' as const }
+      lineDraftRef.current = draft
+      setLineDraft(draft)
+      drag.current = { kind: 'line-draw', pointerId: event.pointerId, markerEnd: draft.markerEnd }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
     if (tool === 'select') {
       if (!event.shiftKey) setSelectedIds([])
       drag.current = { kind: 'marquee', pointerId: event.pointerId, startX: point.x, startY: point.y }
@@ -2328,6 +2425,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     if (!active || active.pointerId !== event.pointerId) return
     const live = currentScene()
+    if (active.kind === 'line-draw') {
+      const point = scenePoint(event.clientX, event.clientY, event.currentTarget, live, viewport)
+      const start = lineDraftRef.current?.start
+      if (!start) return
+      let end = { x: snap(point.x), y: snap(point.y) }
+      if (event.shiftKey) {
+        if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) end = { x: end.x, y: start.y }
+        else end = { x: start.x, y: end.y }
+      }
+      const draft = { start, end, markerEnd: active.markerEnd }
+      lineDraftRef.current = draft
+      setLineDraft(draft)
+      return
+    }
     if (active.kind === 'pan') {
       const bounds = event.currentTarget.getBoundingClientRect()
       const worldPerPixelX = (live.width / active.start.zoom) / Math.max(1, bounds.width)
@@ -2412,6 +2523,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const arrow = live.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === active.id)
     const currentPreview = arrowEndpointPreviewRef.current
     if (!arrow || !currentPreview) return
+    if (arrow.start && arrow.end) {
+      const nextPreview = { ...currentPreview, point: { x: snap(point.x), y: snap(point.y) }, targetId: undefined, targetAnchor: undefined }
+      arrowEndpointPreviewRef.current = nextPreview
+      setArrowEndpointPreview(nextPreview)
+      return
+    }
     const excluded = new Set([active.endpoint === 'from' ? arrow.to : arrow.from])
     const target = nearestNodeAnchor(live, point, excluded, Math.max(18, 30 / Math.max(viewport.zoom, 0.5)))
     const nextPreview = {
@@ -2441,6 +2558,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   function addArrowPoint(arrow: CanvasArrow) {
     const live = currentScene()
+    if (arrow.start && arrow.end) {
+      const points = [...(arrow.points ?? []), { x: snap((arrow.start.x + arrow.end.x) / 2), y: snap((arrow.start.y + arrow.end.y) / 2) }]
+      updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, points } : item)
+      return
+    }
     const from = live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from)
     const to = live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to)
     if (!from || !to) return
@@ -2593,7 +2715,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             })
           )}
           <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title={`${noteToolLabel} (T)`} onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={flowchartWorkbench ? Type : StickyNote} /></ToolButton>
-          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton>
+          {!architectureWorkbench ? <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton> : null}
+          {!architectureWorkbench ? <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton> : null}
+          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
           {!architectureWorkbench ? <ToolButton active={shapeLibraryOpen} title="图形库" onClick={() => { setLayersOpen(false); setToolbarMenu(null); setShapeLibraryOpen((value) => !value) }}><ToolbarGlyph icon={Shapes} /></ToolButton> : null}
           <span className="freeform-toolbar-separator" />
           {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
@@ -2945,23 +3069,30 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <span>连线文字</span>
                   <input aria-label="连线文字" value={selectedSingle.label ?? ''} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, label: event.target.value || undefined } : item)} />
                 </label>
+                <div className="freeform-section-caption">线条</div>
+                <StyleColorControl label="颜色" value={selectedSingle.strokeColor} onChange={(value) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, strokeColor: value } : item)} />
                 <div className="freeform-property-row">
-                  <label><span>线型</span><select aria-label="连线线型" value={selectedSingle.lineStyle ?? 'solid'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, lineStyle: event.target.value as CanvasLineStyle } : item)}><option value="solid">实线</option><option value="dashed">虚线</option></select></label>
-                  <label><span>路由</span><select aria-label="连线路由" value={selectedSingle.routing ?? 'straight'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, routing: event.target.value as CanvasRouting } : item)}><option value="straight">直线</option><option value="orthogonal">正交</option></select></label>
+                  <label><span>线型</span><select aria-label="连线线型" value={selectedSingle.lineStyle ?? 'solid'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, lineStyle: event.target.value as CanvasLineStyle } : item)}><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label>
+                  <label><span>宽度</span><select aria-label="连线宽度" value={selectedSingle.strokeWidth ?? 2} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, strokeWidth: Number(event.target.value) } : item)}><option value={1}>细</option><option value={2}>标准</option><option value={3}>粗</option><option value={5}>强调</option></select></label>
                 </div>
                 <div className="freeform-property-row">
+                  <label><span>路由</span><select aria-label="连线路由" value={selectedSingle.routing ?? 'straight'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, routing: event.target.value as CanvasRouting } : item)}><option value="straight">直线</option><option value="orthogonal">折线</option></select></label>
+                  <label><span>终点</span><select aria-label="连线终点样式" value={selectedSingle.markerEnd ?? (selectedSingle.start && selectedSingle.end ? 'none' : 'arrow')} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, markerEnd: event.target.value as 'none' | 'arrow' } : item)}><option value="none">无箭头</option><option value="arrow">箭头</option></select></label>
+                </div>
+                <label className="freeform-style-range"><span>透明度</span><input aria-label="连线透明度" type="range" min="10" max="100" value={Math.round((selectedSingle.opacity ?? 1) * 100)} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, opacity: Number(event.target.value) / 100 } : item)} /><b>{Math.round((selectedSingle.opacity ?? 1) * 100)}</b></label>
+                {selectedSingle.start && selectedSingle.end ? null : <div className="freeform-property-row">
                   <label><span>起点</span><select aria-label="连线起点锚点" value={selectedSingle.fromAnchor ?? 'auto'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, fromAnchor: event.target.value as CanvasAnchor } : item)}>{anchorOptions()}</select></label>
                   <label><span>终点</span><select aria-label="连线终点锚点" value={selectedSingle.toAnchor ?? 'auto'} onChange={(event) => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, toAnchor: event.target.value as CanvasAnchor } : item)}>{anchorOptions()}</select></label>
-                </div>
+                </div>}
                 <div className="freeform-align-row">
                   <button type="button" onClick={() => addArrowPoint(selectedSingle)}>添加折点</button>
                   <button type="button" disabled={!selectedSingle.points?.length} onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, points: undefined } : item)}>清除折点</button>
                 </div>
                 <div className="freeform-align-row">
                   <button type="button" onClick={() => reverseSelectedArrow(selectedSingle.id)}>反转方向</button>
-                  <button type="button" onClick={() => rerouteSelectedArrow(selectedSingle.id)}>重新路由</button>
+                  {selectedSingle.start && selectedSingle.end ? <button type="button" onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, markerEnd: item.markerEnd === 'arrow' ? 'none' : 'arrow' } : item)}>切换箭头</button> : <button type="button" onClick={() => rerouteSelectedArrow(selectedSingle.id)}>重新路由</button>}
                 </div>
-                <button type="button" onClick={() => insertNodeIntoArrow(selectedSingle)}>插入中间节点</button>
+                {selectedSingle.start && selectedSingle.end ? null : <button type="button" onClick={() => insertNodeIntoArrow(selectedSingle)}>插入中间节点</button>}
                 {selectedSingle.labelPosition ? <button type="button" onClick={() => updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item)}>标签恢复自动位置</button> : null}
               </>
             ) : null}
@@ -3050,6 +3181,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <div className="freeform-property-row">
                     <label><span>色调</span><select aria-label="元素色调" disabled={selectedBox.locked} value={selectedBox.tone ?? 'default'} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, tone: event.target.value as CanvasTone }))}><option value="default">默认</option><option value="accent">强调</option><option value="success">成功</option><option value="warning">警告</option><option value="danger">危险</option><option value="muted">弱化</option></select></label>
                     <label><span>图形</span><select aria-label="元素图形" disabled={selectedBox.locked} value={selectedBox.shapeRef ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, shapeRef: (event.target.value || undefined) as CanvasShapeRef | undefined, shape: event.target.value ? undefined : item.shape }))}><option value="">兼容旧形状</option>{CANVAS_SHAPE_CATALOG.filter((shape) => shapeLibraryPacks.includes(shape.pack)).map((shape) => <option key={shape.ref} value={shape.ref}>{shape.label}</option>)}</select></label>
+                  </div>
+                  <div className="freeform-section-caption">样式</div>
+                  <StyleColorControl label="填充" value={selectedBox.fillColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, fillColor: value }))} />
+                  <StyleColorControl label="描边" value={selectedBox.strokeColor} onChange={(value) => updateSelectedBoxes((item) => ({ ...item, strokeColor: value }))} />
+                  <div className="freeform-property-row">
+                    <label><span>描边宽度</span><select aria-label="元素描边宽度" disabled={selectedBox.locked} value={selectedBox.strokeWidth ?? 1.6} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, strokeWidth: Number(event.target.value) }))}><option value={1}>细</option><option value={1.6}>标准</option><option value={2.5}>粗</option><option value={4}>强调</option></select></label>
+                    <label><span>圆角</span><input aria-label="元素圆角" type="number" min="0" max="80" disabled={selectedBox.locked || !(!selectedBox.shapeRef || selectedBox.shapeRef === 'basic:rectangle' || selectedBox.shapeRef === 'basic:rounded' || selectedBox.shapeRef === 'flowchart:process')} value={selectedBox.cornerRadius ?? (selectedBox.shapeRef === 'basic:rounded' ? 16 : 0)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, cornerRadius: Math.max(0, Math.min(80, Number(event.target.value) || 0)) }))} /></label>
+                  </div>
+                  <label className="freeform-style-range"><span>透明度</span><input aria-label="元素透明度" type="range" min="10" max="100" disabled={selectedBox.locked} value={Math.round((selectedBox.opacity ?? 1) * 100)} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, opacity: Number(event.target.value) / 100 }))} /><b>{Math.round((selectedBox.opacity ?? 1) * 100)}</b></label>
+                  <div className="freeform-style-layer-row" aria-label="图层">
+                    <span>图层</span>
+                    <div><button type="button" title="置底" onClick={() => reorderSelection('back')}>置底</button><button type="button" title="下移一层" onClick={() => reorderSelection('backward')}>下移</button><button type="button" title="上移一层" onClick={() => reorderSelection('forward')}>上移</button><button type="button" title="置顶" onClick={() => reorderSelection('front')}>置顶</button></div>
                   </div>
                 </> : null}
                 {detailsExpanded ? (
@@ -3236,7 +3379,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <path d={`M${GRID * 2} 0H0V${GRID * 2}`} className="freeform-grid-line" fill="none" />
             </pattern>
             <marker id="canvas-arrow" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto">
-              <path d="M0,0 L0,8 L10,4 z" className="freeform-arrow-head" />
+              <path d="M0,0 L0,8 L10,4 z" fill="context-stroke" />
             </marker>
           </defs>
           <rect width={scene.width} height={scene.height} className="freeform-background" pointerEvents="none" />
@@ -3395,19 +3538,20 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {visibleRenderArrows.map((arrow) => {
             const gestureArrow = arrowPointDraft?.id === arrow.id ? { ...arrow, points: arrowPointDraft.points } : arrow
             const displayArrow = playback?.arrowOverrides?.[arrow.id] ?? gestureArrow
-            const fromRaw = playbackBoxLookup.get(displayArrow.from)
-            const toRaw = playbackBoxLookup.get(displayArrow.to)
+            const standalone = Boolean(displayArrow.start && displayArrow.end)
+            const fromRaw = standalone ? undefined : playbackBoxLookup.get(displayArrow.from)
+            const toRaw = standalone ? undefined : playbackBoxLookup.get(displayArrow.to)
             const from = fromRaw ? playbackBoxPosition(fromRaw) : undefined
             const to = toRaw ? playbackBoxPosition(toRaw) : undefined
-            if (!from || !to) return null
-            const fromCenter = center(from)
-            const toCenter = center(to)
-            const start = anchorPoint(from, displayArrow.fromAnchor, displayArrow.points?.[0] ?? toCenter)
-            const end = anchorPoint(to, displayArrow.toAnchor, displayArrow.points?.at(-1) ?? fromCenter)
+            if (!standalone && (!from || !to)) return null
+            const fromCenter = from ? center(from) : displayArrow.start!
+            const toCenter = to ? center(to) : displayArrow.end!
+            const start = standalone ? displayArrow.start! : anchorPoint(from!, displayArrow.fromAnchor, displayArrow.points?.[0] ?? toCenter)
+            const end = standalone ? displayArrow.end! : anchorPoint(to!, displayArrow.toAnchor, displayArrow.points?.at(-1) ?? fromCenter)
             const path = canvasArrowPath(start, end, displayArrow)
             const overridden = Boolean(playback?.arrowOverrides?.[arrow.id])
             const fallbackLabelPoint = pathLabelPoint(start, end, displayArrow.points)
-            const automaticLabelLayout = overridden && displayArrow.label
+            const automaticLabelLayout = (overridden || standalone) && displayArrow.label
               ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - 10, width: Math.max(46, Math.min(220, displayArrow.label.length * 7 + 20)), height: 22 }
               : relationLabelLayouts.get(arrow.id)
             const labelLayout = arrowLabelDraft?.id === arrow.id && displayArrow.label
@@ -3420,9 +3564,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 }
               : automaticLabelLayout
             return (
-              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <path className="freeform-arrow-hit-path" d={path} />
-                <path className="freeform-arrow-line" d={path} markerEnd="url(#canvas-arrow)" pathLength="1" />
+                <path
+                  className="freeform-arrow-line"
+                  d={path}
+                  markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'}
+                  pathLength="1"
+                  style={{ ...(displayArrow.strokeColor ? { stroke: displayArrow.strokeColor } : {}), ...(displayArrow.strokeWidth ? { strokeWidth: displayArrow.strokeWidth } : {}) }}
+                />
                 {displayArrow.label && labelLayout ? (
                   <g
                     className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
@@ -3481,6 +3631,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <circle cx={connectPreviewPoint.x} cy={connectPreviewPoint.y} r="6" />
             </g>
           ) : null}
+          {lineDraft ? (
+            <g className="freeform-line-draw-preview" pointerEvents="none">
+              <path d={`M ${lineDraft.start.x} ${lineDraft.start.y} L ${lineDraft.end.x} ${lineDraft.end.y}`} markerEnd={lineDraft.markerEnd === 'arrow' ? 'url(#canvas-arrow)' : undefined} />
+            </g>
+          ) : null}
           {arrowEndpointPreview ? (
             <g className="freeform-arrow-reconnect-preview" pointerEvents="none">
               <path d={arrowEndpointPreview.endpoint === 'from'
@@ -3529,7 +3684,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              style={canvasBoxVisualStyle(displayItem)}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -3549,7 +3705,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onPointerCancel={cancelGesture}
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
-              {displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14} />}
+              {displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14)} />}
               {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
               {architectureMark && iconRefMarkup && showRoleIcon ? (
@@ -3717,13 +3873,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         {contextMenu ? (
           <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
             {selectedSingle?.type === 'arrow' ? <>
-              <button type="button" role="menuitem" onClick={() => { insertNodeIntoArrow(selectedSingle); setContextMenu(null) }}>插入中间节点</button>
+              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { insertNodeIntoArrow(selectedSingle); setContextMenu(null) }}>插入中间节点</button>}
               <button type="button" role="menuitem" onClick={() => { reverseSelectedArrow(selectedSingle.id); setContextMenu(null) }}>反转关系方向</button>
-              <button type="button" role="menuitem" onClick={() => { rerouteSelectedArrow(selectedSingle.id); setContextMenu(null) }}>重新路由</button>
+              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { rerouteSelectedArrow(selectedSingle.id); setContextMenu(null) }}>重新路由</button>}
               {selectedSingle.labelPosition ? <button type="button" role="menuitem" onClick={() => { updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item); setContextMenu(null) }}>标签恢复自动位置</button> : null}
               <span />
             </> : null}
-            {selectedBoxes.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button> : null}
+            {selected.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button> : null}
             {selectedBox?.sourcePaths?.[0] && onOpenSource ? <button type="button" role="menuitem" onClick={() => { onOpenSource(selectedBox.sourcePaths![0]); setContextMenu(null) }}>打开关联源码</button> : null}
             {selectedBoxes.length > 1 ? <button type="button" role="menuitem" onClick={() => { groupSelection(); setContextMenu(null) }}>组合</button> : null}
             {selectedGroupIds.length > 0 ? <button type="button" role="menuitem" onClick={() => { ungroupSelection(); setContextMenu(null) }}>取消组合</button> : null}

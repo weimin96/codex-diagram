@@ -66,13 +66,13 @@ export function canvasShapeDefinition(ref: CanvasShapeRef): CanvasShapeDefinitio
   return shapeByRef.get(ref)!
 }
 
-export function canvasShapeGeometry(ref: CanvasShapeRef, width: number, height: number): CanvasShapeGeometry {
+export function canvasShapeGeometry(ref: CanvasShapeRef, width: number, height: number, cornerRadius?: number): CanvasShapeGeometry {
   const w = Math.max(1, width)
   const h = Math.max(1, height)
   const pad = Math.min(w, h) * 0.16
   switch (ref) {
     case 'basic:rounded':
-      return { bodyPath: roundedRectPath(w, h, Math.min(16, h * 0.22)), detailPaths: [] }
+      return { bodyPath: roundedRectPath(w, h, cornerRadius ?? Math.min(16, h * 0.22)), detailPaths: [] }
     case 'basic:ellipse':
       return { bodyPath: `M 0 ${h / 2} A ${w / 2} ${h / 2} 0 1 0 ${w} ${h / 2} A ${w / 2} ${h / 2} 0 1 0 0 ${h / 2} Z`, detailPaths: [] }
     case 'basic:diamond':
@@ -111,6 +111,8 @@ export function canvasShapeGeometry(ref: CanvasShapeRef, width: number, height: 
       return { bodyPath: `M 0 0 H ${w * 0.64} C ${w} 0, ${w} ${h}, ${w * 0.64} ${h} H 0 Z`, detailPaths: [] }
     case 'flowchart:process':
     case 'basic:rectangle':
+      if (cornerRadius && cornerRadius > 0) return { bodyPath: roundedRectPath(w, h, cornerRadius), detailPaths: [] }
+      return { bodyPath: `M 0 0 H ${w} V ${h} H 0 Z`, detailPaths: [] }
     default:
       return { bodyPath: `M 0 0 H ${w} V ${h} H 0 Z`, detailPaths: [] }
   }
