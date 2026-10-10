@@ -10,6 +10,7 @@ import {
   type CanvasRoleIconId,
   type CanvasStencilId,
 } from './iconRegistry.js'
+import { cloudArchitectureIconData } from './cloudIconPacks.js'
 
 export type CanvasElement = CanvasNode | CanvasNote | CanvasArrow
 export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger' | 'muted'
@@ -1288,6 +1289,10 @@ export function canvasIconRefMarkup(ref: CanvasIconRef, darkSurface = false, fal
     const original = `#${icon.hex}`
     const color = darkSurface && hexLuminance(original) < 0.07 ? '#d1d5db' : original
     return `<path d="${icon.path}" fill="${color}" data-icon-ref="${escapeXml(ref)}"/>`
+  }
+  if (source === 'aws' || source === 'azure' || source === 'gcp') {
+    const dataUri = cloudArchitectureIconData(ref)
+    return dataUri ? `<image href="${escapeXml(dataUri)}" width="24" height="24" preserveAspectRatio="xMidYMid meet" data-icon-ref="${escapeXml(ref)}"/>` : ''
   }
   const node = canvasLucideIcon(id as CanvasLucideIconId)
   const children = node.map(([tag, attrs]) => {

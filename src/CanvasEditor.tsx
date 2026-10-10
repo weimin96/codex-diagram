@@ -95,6 +95,16 @@ const ARCHITECTURE_THEME_OPTIONS: Array<{ value: ArchitectureTheme; label: strin
   { value: 'sketch', label: '草图', description: '白板讨论' },
 ]
 
+const ICON_SOURCE_OPTIONS: ReadonlyArray<readonly ['all' | CanvasIconSource, string]> = [
+  ['all', '全部'],
+  ['role', '语义'],
+  ['simple', '品牌'],
+  ['lucide', 'Lucide'],
+  ['aws', 'AWS'],
+  ['azure', 'Azure'],
+  ['gcp', 'GCP'],
+]
+
 type ArchitectureAsset = {
   id: string
   label: string
@@ -2718,7 +2728,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                           <button type="button" className={!selectedBox.iconRef ? 'is-selected' : ''} onClick={() => { updateSelectedBoxes((item) => ({ ...item, iconRef: undefined })); setIconPickerOpen(false) }}>自动</button>
                         </div>
                         <div className="freeform-icon-source-tabs" aria-label="图标来源">
-                          {([['all', '全部'], ['role', '语义'], ['simple', '品牌'], ['lucide', 'Lucide']] as const).map(([value, label]) => (
+                          {ICON_SOURCE_OPTIONS.map(([value, label]) => (
                             <button key={value} type="button" className={iconPickerSource === value ? 'is-selected' : ''} onClick={() => setIconPickerSource(value)}>{label}</button>
                           ))}
                         </div>
@@ -2727,7 +2737,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                             <button
                               key={entry.ref}
                               type="button"
-                              title={`${entry.source === 'role' ? '语义' : entry.source === 'simple' ? '品牌' : 'Lucide'} · ${entry.label}`}
+                              title={`${entry.source === 'role' ? '语义' : entry.source === 'simple' ? '品牌' : entry.source === 'lucide' ? 'Lucide' : entry.source.toUpperCase()} · ${entry.label}`}
                               className={selectedBox.iconRef === entry.ref ? 'is-selected' : ''}
                               onClick={() => { updateSelectedBoxes((item) => ({ ...item, iconRef: entry.ref })); setIconPickerOpen(false) }}
                             >

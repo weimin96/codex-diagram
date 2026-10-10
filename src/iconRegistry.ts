@@ -50,6 +50,7 @@ import {
   Workflow,
   type IconNode,
 } from 'lucide'
+import { CLOUD_ARCHITECTURE_ICON_CATALOG, type CloudIconProvider } from './cloudIconPacks.js'
 
 export const CANVAS_ROLE_ICON_IDS = [
   'user', 'web', 'api', 'gateway', 'service', 'worker', 'database', 'cache', 'queue', 'search', 'vector', 'cloud', 'file', 'auth', 'ai', 'mcp', 'scheduler', 'external',
@@ -66,8 +67,8 @@ export const CANVAS_LUCIDE_ICON_IDS = [
 export type CanvasRoleIconId = typeof CANVAS_ROLE_ICON_IDS[number]
 export type CanvasStencilId = typeof CANVAS_STENCIL_IDS[number]
 export type CanvasLucideIconId = typeof CANVAS_LUCIDE_ICON_IDS[number]
-export type CanvasIconSource = 'role' | 'simple' | 'lucide'
-export type CanvasIconRef = `role:${CanvasRoleIconId}` | `simple:${CanvasStencilId}` | `lucide:${CanvasLucideIconId}`
+export type CanvasIconSource = 'role' | 'simple' | 'lucide' | CloudIconProvider
+export type CanvasIconRef = `role:${CanvasRoleIconId}` | `simple:${CanvasStencilId}` | `lucide:${CanvasLucideIconId}` | `${CloudIconProvider}:${string}`
 
 export interface CanvasIconCatalogEntry {
   ref: CanvasIconRef
@@ -225,6 +226,12 @@ export const CANVAS_ICON_CATALOG: CanvasIconCatalogEntry[] = [
     source: 'lucide' as const,
     label: lucideLabels[id],
     keywords: [id, lucideLabels[id], 'lucide'],
+  })),
+  ...CLOUD_ARCHITECTURE_ICON_CATALOG.map((entry) => ({
+    ref: entry.ref as CanvasIconRef,
+    source: entry.source,
+    label: entry.label,
+    keywords: [...entry.keywords],
   })),
 ]
 

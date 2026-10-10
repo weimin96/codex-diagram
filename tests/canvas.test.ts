@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
@@ -49,6 +49,15 @@ test('round-trips every built-in architecture visual theme', () => {
       elements: [],
     }
     assert.equal(parseCanvasScene(serializeCanvasScene(scene)).architecture?.theme, theme)
+  }
+})
+
+test('renders selected AWS Azure and GCP architecture pack icons as embedded SVG images', () => {
+  for (const ref of ['aws:lambda', 'azure:functionapps', 'gcp:cloud_run'] as const) {
+    const markup = canvasIconRefMarkup(ref)
+    assert.match(markup, /<image /)
+    assert.match(markup, /data:image\/svg\+xml;base64,/)
+    assert.match(markup, new RegExp(`data-icon-ref="${ref}"`))
   }
 })
 
