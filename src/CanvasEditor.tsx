@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowRight, Hand, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
+import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
@@ -31,6 +31,8 @@ interface CanvasEditorProps {
   onOpenSource?: (path: string) => void
   onSearchSources?: (query: string) => Promise<string[]>
   onAnalyzeGitImpact?: () => void | Promise<void>
+  onImportImage?: (input: { filename: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; content: string }) => Promise<{ path: string; mimeType: string }>
+  onResolveImage?: (path: string) => Promise<string>
   focusElementIds?: string[]
   focusKey?: string
   traceRequest?: { seedElementIds: string[]; direction: CanvasTraceDirection; depth: number; key: string }
@@ -210,6 +212,8 @@ function canvasBoxVisualStyle(item: CanvasNode | CanvasNote): CanvasCssVars {
 }
 
 const STYLE_COLOR_SWATCHES = ['#1f2937', '#ef3340', '#22a45d', '#2f73d9', '#f59e0b', '#ffffff'] as const
+const CANVAS_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const MAX_CANVAS_IMAGE_BYTES = 12 * 1024 * 1024
 
 function StyleColorControl({ label, value, mixed = false, onChange }: { label: string; value?: string; mixed?: boolean; onChange: (value?: string) => void }) {
   return (
@@ -226,7 +230,26 @@ function StyleColorControl({ label, value, mixed = false, onChange }: { label: s
   )
 }
 
-export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
+async function readCanvasImageFile(file: File): Promise<{ dataUrl: string; content: string; width: number; height: number; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }> {
+  if (!CANVAS_IMAGE_MIME_TYPES.has(file.type)) throw new Error('只支持 PNG、JPEG 和 WebP 图片。')
+  if (!file.size || file.size > MAX_CANVAS_IMAGE_BYTES) throw new Error('图片大小必须在 12MB 以内。')
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('读取图片失败。'))
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('读取图片失败。'))
+    reader.readAsDataURL(file)
+  })
+  const size = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new globalThis.Image()
+    image.onerror = () => reject(new Error('无法解析图片尺寸。'))
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
+    image.src = dataUrl
+  })
+  const content = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  return { dataUrl, content, ...size, mimeType: file.type as 'image/png' | 'image/jpeg' | 'image/webp' }
+}
+
+export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, onImportImage, onResolveImage, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
   const parsed = useMemo(() => {
     try {
       return { scene: parseCanvasScene(source), error: null as string | null }
@@ -254,6 +277,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [arrowLabelDraft, setArrowLabelDraft] = useState<{ id: string; position: CanvasPoint } | null>(null)
   const [lineDraft, setLineDraft] = useState<LineDraft | null>(null)
   const [freehandDraft, setFreehandDraft] = useState<FreehandDraft | null>(null)
+  const [imageSources, setImageSources] = useState<Record<string, string>>({})
+  const [imageImportError, setImageImportError] = useState<string | null>(null)
+  const [imageImporting, setImageImporting] = useState(false)
   const [spacePanning, setSpacePanning] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
@@ -300,6 +326,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const arrowLabelDraftRef = useRef<typeof arrowLabelDraft>(null)
   const lineDraftRef = useRef<typeof lineDraft>(null)
   const freehandDraftRef = useRef<typeof freehandDraft>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const imageLoadPathsRef = useRef(new Set<string>())
   const gestureVisualFrameRef = useRef<number | null>(null)
   const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
   const geometryDraftFrameRef = useRef<number | null>(null)
@@ -308,6 +336,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     sourceRef.current = source
     sceneRef.current = parsed.scene
   }, [parsed.scene, source])
+
+  useEffect(() => {
+    if (!parsed.scene || !onResolveImage) return
+    const paths = [...new Set(parsed.scene.elements.flatMap((item) => item.type === 'note' && item.imagePath ? [item.imagePath] : []))]
+    paths.forEach((path) => {
+      if (imageSources[path] || imageLoadPathsRef.current.has(path)) return
+      imageLoadPathsRef.current.add(path)
+      void onResolveImage(path)
+        .then((dataUrl) => setImageSources((current) => current[path] ? current : { ...current, [path]: dataUrl }))
+        .catch((error) => setImageImportError(error instanceof Error ? error.message : String(error)))
+        .finally(() => imageLoadPathsRef.current.delete(path))
+    })
+  }, [imageSources, onResolveImage, parsed.scene])
 
   useEffect(() => {
     if (!parsed.scene?.architecture) return
@@ -488,6 +529,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (!mod && key === 'l' && currentScene().workbench !== 'architecture') setTool('line')
       if (!mod && key === 'a' && currentScene().workbench !== 'architecture') setTool('arrow')
       if (!mod && key === 'p' && currentScene().workbench !== 'architecture') setTool('pen')
+      if (!mod && key === 'i' && currentScene().workbench !== 'architecture' && onImportImage) imageInputRef.current?.click()
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') setSpacePanning(false)
@@ -1265,7 +1307,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedBox = selectedSingle && selectedSingle.type !== 'arrow' ? selectedSingle : null
   const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const selectedTextBox = selectedBox?.type === 'note' && selectedBox.textOnly ? selectedBox : null
-  const batchStyleBoxes = selectedBoxes.filter((item) => !(item.type === 'note' && item.textOnly))
+  const selectedImageBox = selectedBox?.type === 'note' && selectedBox.imagePath ? selectedBox : null
+  const batchStyleBoxes = selectedBoxes.filter((item) => !(item.type === 'note' && (item.textOnly || item.imagePath)))
   const batchFillValues = new Set(batchStyleBoxes.map((item) => item.fillColor ?? ''))
   const batchStrokeValues = new Set(batchStyleBoxes.map((item) => item.strokeColor ?? ''))
   const batchWidthValues = new Set(batchStyleBoxes.map((item) => item.strokeWidth ?? 1.6))
@@ -1868,6 +1911,62 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setTool('select')
   }
 
+  async function insertImageFile(file: File, center?: CanvasPoint) {
+    if (!onImportImage) {
+      setImageImportError('当前 Diagram Host 不支持图片资源写入。')
+      return
+    }
+    setImageImporting(true)
+    setImageImportError(null)
+    try {
+      const decoded = await readCanvasImageFile(file)
+      const asset = await onImportImage({ filename: file.name || 'image', mimeType: decoded.mimeType, content: decoded.content })
+      const live = currentScene()
+      const viewWidth = live.width / viewport.zoom
+      const viewHeight = live.height / viewport.zoom
+      const target = center ?? { x: viewport.x + viewWidth / 2, y: viewport.y + viewHeight / 2 }
+      const scale = Math.min(1, 480 / Math.max(1, decoded.width), 360 / Math.max(1, decoded.height))
+      const width = Math.max(64, Math.round(decoded.width * scale))
+      const height = Math.max(48, Math.round(decoded.height * scale))
+      const x = clamp(snap(target.x - width / 2), 0, Math.max(0, live.width - width))
+      const y = clamp(snap(target.y - height / 2), 0, Math.max(0, live.height - height))
+      const id = nextCanvasElementId('note', live.elements)
+      const element: CanvasNote = {
+        id,
+        type: 'note',
+        x,
+        y,
+        width,
+        height,
+        text: file.name || '图片',
+        imagePath: asset.path,
+        imageFit: 'contain',
+        cornerRadius: 8,
+      }
+      setImageSources((current) => ({ ...current, [asset.path]: decoded.dataUrl }))
+      commit({ ...live, elements: [...live.elements, element] })
+      setSelectedIds([id])
+      setTool('select')
+    } catch (error) {
+      setImageImportError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setImageImporting(false)
+    }
+  }
+
+  function handleEditorPaste(event: React.ClipboardEvent<HTMLDivElement>) {
+    if (architectureWorkbench) return
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+    const file = [...event.clipboardData.items]
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .find((item): item is File => Boolean(item && CANVAS_IMAGE_MIME_TYPES.has(item.type)))
+    if (!file) return
+    event.preventDefault()
+    void insertImageFile(file)
+  }
+
   function beginShapeDrag(event: React.DragEvent<HTMLButtonElement>, shape: CanvasShapeDefinition) {
     event.dataTransfer.effectAllowed = 'copy'
     event.dataTransfer.setData(SHAPE_DRAG_MIME, shape.ref)
@@ -1876,6 +1975,11 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function moveExternalDrag(event: React.DragEvent<SVGSVGElement>) {
+    if (!architectureWorkbench && event.dataTransfer.types.includes('Files')) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      return
+    }
     if (architectureTemplateDrag) {
       moveArchitectureTemplateDrag(event)
       return
@@ -1887,7 +1991,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     setShapeDrag((current) => current ? { ...current, point: { x: snap(point.x), y: snap(point.y) } } : current)
   }
 
-  function dropExternalDrag(event: React.DragEvent<SVGSVGElement>) {
+  async function dropExternalDrag(event: React.DragEvent<SVGSVGElement>) {
+    if (!architectureWorkbench && event.dataTransfer.files.length) {
+      const file = [...event.dataTransfer.files].find((candidate) => CANVAS_IMAGE_MIME_TYPES.has(candidate.type))
+      if (file) {
+        event.preventDefault()
+        const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+        await insertImageFile(file, { x: snap(point.x), y: snap(point.y) })
+        return
+      }
+    }
     if (architectureTemplateDrag || event.dataTransfer.getData(TEMPLATE_DRAG_MIME)) {
       dropArchitectureTemplate(event)
       return
@@ -2794,8 +2907,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   return (
-    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || undefined}>
+    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || imageImporting || undefined} onPaste={handleEditorPaste}>
       <div className="freeform-surface">
+        <input
+          ref={imageInputRef}
+          className="freeform-image-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          tabIndex={-1}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file) void insertImageFile(file)
+          }}
+        />
+        {imageImportError ? <div className="freeform-image-error" role="alert">{imageImportError}<button type="button" onClick={() => setImageImportError(null)}>关闭</button></div> : null}
         <div className="freeform-floating-toolbar" aria-label="自由画布工具">
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
@@ -2811,6 +2937,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {architectureWorkbench || !flowchartWorkbench ? <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (M)" onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={StickyNote} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'pen'} title="画笔 (P)" onClick={() => { setTool('pen'); setConnectFrom(null) }}><ToolbarGlyph icon={Pencil} /></ToolButton> : null}
+          {!architectureWorkbench ? <ToolButton active={false} title="图片 (I)" disabled={imageImporting || !onImportImage} onClick={() => imageInputRef.current?.click()}><ToolbarGlyph icon={ImageIcon} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton> : null}
           {!architectureWorkbench ? <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton> : null}
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
@@ -3196,7 +3323,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <>
                 <div className="freeform-section-caption">基本</div>
                 <label>
-                  <span>文字</span>
+                  <span>{selectedImageBox ? '名称' : '文字'}</span>
                   <input
                     ref={textInputRef}
                     aria-label="选中元素文字"
@@ -3274,7 +3401,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
                     <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
                   </div>
-                  {selectedTextBox ? <>
+                  {selectedImageBox ? <>
+                    <div className="freeform-section-caption">图片</div>
+                    <label><span>适配</span><select aria-label="图片适配方式" disabled={selectedImageBox.locked} value={selectedImageBox.imageFit ?? 'contain'} onChange={(event) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, imageFit: event.target.value as 'contain' | 'cover' } : item)}><option value="contain">完整显示</option><option value="cover">铺满裁切</option></select></label>
+                    <StyleColorControl label="边框" value={selectedImageBox.strokeColor} onChange={(value) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, strokeColor: value } : item)} />
+                    <div className="freeform-property-row">
+                      <label><span>边框宽度</span><select aria-label="图片边框宽度" disabled={selectedImageBox.locked} value={selectedImageBox.strokeWidth ?? 1} onChange={(event) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, strokeWidth: Number(event.target.value) } : item)}><option value={1}>细</option><option value={2}>标准</option><option value={3}>粗</option><option value={5}>强调</option></select></label>
+                      <label><span>圆角</span><input aria-label="图片圆角" type="number" min="0" max="80" disabled={selectedImageBox.locked} value={selectedImageBox.cornerRadius ?? 8} onChange={(event) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, cornerRadius: Math.max(0, Math.min(80, Number(event.target.value) || 0)) } : item)} /></label>
+                    </div>
+                    <label className="freeform-style-range"><span>透明度</span><input aria-label="元素透明度" type="range" min="10" max="100" disabled={selectedImageBox.locked} value={Math.round((selectedImageBox.opacity ?? 1) * 100)} onChange={(event) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, opacity: Number(event.target.value) / 100 } : item)} /><b>{Math.round((selectedImageBox.opacity ?? 1) * 100)}</b></label>
+                  </> : selectedTextBox ? <>
                     <div className="freeform-section-caption">文字样式</div>
                     <StyleColorControl label="文字颜色" value={selectedTextBox.textColor} onChange={(value) => updateElement(selectedTextBox.id, (item) => item.type === 'note' ? { ...item, textColor: value } : item)} />
                     <div className="freeform-property-row">
@@ -3796,6 +3932,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const displayX = displayItem.x
             const displayY = displayItem.y
             const displayText = playback?.typing?.id === item.id ? playback.typing.text : displayItem.text
+            const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
+            const imageSource = imagePath ? imageSources[imagePath] : undefined
+            const imageFit = displayItem.type === 'note' ? displayItem.imageFit : undefined
             const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
             const cardTemplate = canvasArchitectureCardTemplate(displayItem)
             const cardMeta = displayItem.iconRef ? canvasIconRefLabel(displayItem.iconRef) : displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
@@ -3803,13 +3942,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const stencilVisual = displayItem.stencil ? canvasStencilVisual(displayItem.stencil) : undefined
             const iconRefMarkup = displayItem.iconRef ? canvasIconRefMarkup(displayItem.iconRef, false, 'currentColor') : undefined
             const selectedForLod = selectedIdSet.has(item.id)
-            const showNodeTitle = semanticLodLevel !== 'regions' || selectedForLod || displayItem.emphasis === 'primary'
+            const showNodeTitle = !imagePath && (semanticLodLevel !== 'regions' || selectedForLod || displayItem.emphasis === 'primary')
             const showRoleIcon = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || displayItem.emphasis === 'primary'
             const showCardMeta = !scene.architecture && (semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod)
             const showC4Badge = !scene.architecture && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod)
             const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
             const showSourceBadge = scene.architecture ? selectedForLod : semanticLodLevel === 'detail' || selectedForLod
-            const showAnchorPoints = !(displayItem.type === 'note' && displayItem.textOnly) && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id)
+            const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id)
             const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
             const architectureMarkSize = architectureProjection.density === 'dense' ? 30 : architectureProjection.density === 'compact' ? 34 : 38
             const architectureMarkX = 14
@@ -3819,7 +3958,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             return (
             <g
               key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${imagePath ? ' is-image' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               style={canvasBoxVisualStyle(displayItem)}
               transform={`translate(${displayX} ${displayY})`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
@@ -3840,7 +3979,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onPointerCancel={cancelGesture}
             >
               {displayItem.description ? <title>{displayItem.description}</title> : null}
-              {displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14)} />}
+              {imagePath ? <>
+                <defs><clipPath id={`canvas-image-${displayItem.id}`}><rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} /></clipPath></defs>
+                <rect className="freeform-image-frame" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
+                {imageSource
+                  ? <image href={imageSource} width={displayItem.width} height={displayItem.height} preserveAspectRatio={imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#canvas-image-${displayItem.id})`} />
+                  : <text className="freeform-image-placeholder" x={displayItem.width / 2} y={displayItem.height / 2} textAnchor="middle" dominantBaseline="middle">图片加载中</text>}
+                <rect className="freeform-image-outline" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
+              </> : displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14)} />}
               {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
               {architectureMark && iconRefMarkup && showRoleIcon ? (
@@ -4514,8 +4660,8 @@ function playbackPhaseLabel(phase: PlaybackState['phase']): string {
   return '准备绘制'
 }
 
-function ToolButton({ active, title, onClick, children }: { active: boolean; title: string; onClick: () => void; children: ReactNode }) {
-  return <button type="button" className={active ? 'is-active' : ''} title={title} aria-label={title} onClick={onClick}>{children}</button>
+function ToolButton({ active, title, disabled = false, onClick, children }: { active: boolean; title: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+  return <button type="button" className={active ? 'is-active' : ''} title={title} aria-label={title} disabled={disabled} onClick={onClick}>{children}</button>
 }
 
 function center(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>) {
@@ -4733,6 +4879,6 @@ function elementLabel(item: CanvasElement) {
     if (item.start && item.end) return item.markerEnd === 'arrow' ? '箭头' : '直线'
     return '连接'
   }
-  if (item.type === 'note') return item.textOnly ? '文字' : '备注'
+  if (item.type === 'note') return item.imagePath ? '图片' : item.textOnly ? '文字' : '备注'
   return '节点'
 }

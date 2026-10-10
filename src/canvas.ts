@@ -18,6 +18,7 @@ export type CanvasTone = 'default' | 'accent' | 'success' | 'warning' | 'danger'
 export type CanvasShape = 'rounded' | 'square' | 'pill'
 export type CanvasLineStyle = 'solid' | 'dashed' | 'dotted'
 export type CanvasMarkerEnd = 'none' | 'arrow'
+export type CanvasImageFit = 'contain' | 'cover'
 export type CanvasEmphasis = 'primary' | 'secondary' | 'muted'
 export type CanvasRouting = 'straight' | 'orthogonal'
 export type CanvasAnchor = 'auto' | 'top' | 'right' | 'bottom' | 'left'
@@ -135,6 +136,8 @@ export interface CanvasNote {
   fontSize?: number
   fontWeight?: 400 | 500 | 600 | 700
   textColor?: string
+  imagePath?: string
+  imageFit?: CanvasImageFit
 }
 
 export interface CanvasArrow {
@@ -306,7 +309,7 @@ export function serializeCanvasScene(scene: CanvasScene): string {
   return `${JSON.stringify(scene, null, 2)}\n`
 }
 
-export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: string; panel?: string; text?: string; border?: string; note?: string }): string {
+export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: string; panel?: string; text?: string; border?: string; note?: string; imageSources?: Readonly<Record<string, string>> }): string {
   const sourceScene = scene
   const architectureMode = Boolean(sourceScene.architecture)
   const architectureTheme = sourceScene.architecture?.theme ?? 'enterprise'
@@ -397,6 +400,14 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       const lineHeight = Math.round(fontSize * 1.35)
       const lines = item.text.split('\n').slice(0, 8)
       return `<g opacity="${opacity}">${lines.map((line, index) => `<text x="${item.x}" y="${item.y + fontSize + index * lineHeight}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${escapeXml(textFill)}">${escapeXml(line)}</text>`).join('')}</g>`
+    }
+    if (item.type === 'note' && item.imagePath) {
+      const imageSource = colors?.imageSources?.[item.imagePath]
+      const radius = item.cornerRadius ?? 10
+      const content = imageSource
+        ? `<image x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" href="${escapeXml(imageSource)}" preserveAspectRatio="${item.imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'}"/>`
+        : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="${escapeXml(panel)}"/><text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + 4}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(item.text || '图片', 28))}</text>`
+      return `<g opacity="${item.opacity ?? 1}"><clipPath id="clip-${escapeXml(item.id)}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}"/></clipPath><g clip-path="url(#clip-${escapeXml(item.id)})">${content}</g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="none" stroke="${escapeXml(item.strokeColor ?? border)}" stroke-width="${item.strokeWidth ?? 1}"/></g>`
     }
     const architectureCard = item.type === 'node' && Boolean(item.iconRef || item.icon || item.stencil || item.c4Type)
     if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme)
@@ -1595,6 +1606,8 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(item.type === 'note' && typeof item.fontSize === 'number' && Number.isFinite(item.fontSize) && item.fontSize >= 8 && item.fontSize <= 96 ? { fontSize: item.fontSize } : {}),
     ...(item.type === 'note' && [400, 500, 600, 700].includes(item.fontWeight ?? 0) ? { fontWeight: item.fontWeight } : {}),
     ...(item.type === 'note' && normalizedHexColor(item.textColor) ? { textColor: normalizedHexColor(item.textColor) } : {}),
+    ...(item.type === 'note' && typeof item.imagePath === 'string' && item.imagePath.trim() ? { imagePath: item.imagePath.trim().slice(0, 500) } : {}),
+    ...(item.type === 'note' && (item.imageFit === 'contain' || item.imageFit === 'cover') ? { imageFit: item.imageFit } : {}),
   }
 }
 

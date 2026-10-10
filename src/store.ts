@@ -1,4 +1,5 @@
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { createCanvasSource, type CanvasWorkbenchMode } from './canvas.js'
@@ -7,6 +8,13 @@ import type { DiagramDocument, DiagramRevision, DiagramSummary, DiagramType, Mer
 
 const allowedExtensions = new Set(['.mmd', '.mermaid'])
 const allowedExportExtensions = new Set(['.svg', '.png'])
+const canvasImageMimeExtensions = new Map<string, string>([
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['image/webp', '.webp'],
+] as const)
+const canvasImageExtensionMimes = new Map<string, string>([...canvasImageMimeExtensions].map(([mime, extension]) => [extension, mime]))
+const maxCanvasImageBytes = 12 * 1024 * 1024
 const sourceExtensions = new Set([
   '.c', '.cc', '.cpp', '.cs', '.css', '.go', '.gradle', '.graphql', '.gql', '.h', '.hpp', '.html', '.java',
   '.js', '.jsx', '.json', '.kt', '.kts', '.less', '.mjs', '.cjs', '.php', '.properties', '.proto', '.py', '.rb',
@@ -130,6 +138,38 @@ export class DiagramStore {
     const target = await nextAvailablePath(directory, base, extension)
     await writeFile(target, content, { flag: 'wx' })
     return relativePathFromRoot(this.workspacePath, target)
+  }
+
+  async importCanvasImage(diagramPath: string, filename: string, mimeType: string, content: Uint8Array): Promise<{ path: string; mimeType: string }> {
+    await this.resolveExistingDiagram(diagramPath)
+    const extension = canvasImageMimeExtensions.get(mimeType)
+    if (!extension) throw new Error('只支持 PNG、JPEG 和 WebP 图片。')
+    if (!content.byteLength || content.byteLength > maxCanvasImageBytes) throw new Error('图片大小必须在 12MB 以内。')
+    const rawBase = path.basename(filename, path.extname(filename))
+    const base = slugify(rawBase) || 'image'
+    const directory = path.join(this.workspacePath, 'docs', 'diagrams', 'assets')
+    await mkdir(directory, { recursive: true })
+    const target = path.join(directory, `${base}-${randomUUID().slice(0, 8)}${extension}`)
+    assertInside(this.workspacePath, target)
+    await writeFile(target, content, { flag: 'wx' })
+    return { path: relativePathFromRoot(this.workspacePath, target), mimeType }
+  }
+
+  async readCanvasImage(relativePath: string): Promise<{ path: string; mimeType: string; content: Uint8Array }> {
+    if (!relativePath.trim()) throw new Error('图片资源路径不能为空。')
+    const lexical = path.resolve(this.workspacePath, relativePath)
+    const assetRoot = path.join(this.workspacePath, 'docs', 'diagrams', 'assets')
+    assertInside(assetRoot, lexical)
+    const extension = path.extname(lexical).toLowerCase()
+    const mimeType = canvasImageExtensionMimes.get(extension)
+    if (!mimeType) throw new Error('只支持 PNG、JPEG 和 WebP 图片。')
+    const target = await realpath(lexical).catch(() => null)
+    if (!target) throw new Error(`图片资源不存在：${relativePath}`)
+    assertInside(assetRoot, target)
+    const info = await lstat(target)
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('图片资源路径必须指向普通文件。')
+    if (info.size > maxCanvasImageBytes) throw new Error('图片大小超过 12MB。')
+    return { path: relativePathFromRoot(this.workspacePath, target), mimeType, content: await readFile(target) }
   }
 
   private async scan(directory: string, depth: number, results: DiagramSummary[]): Promise<void> {

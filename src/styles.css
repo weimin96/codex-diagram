@@ -717,6 +717,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .freeform-box.is-text-only .freeform-text-hitbox { fill: transparent !important; stroke: transparent !important; }
 .freeform-box.is-text-only.is-selected .freeform-text-hitbox { stroke: color-mix(in srgb, var(--accent) 50%, transparent) !important; stroke-width: 1 !important; stroke-dasharray: 4 4; }
 .freeform-box .freeform-plain-text { fill: var(--text-primary); font-family: var(--font-sans); pointer-events: none; }
+.freeform-image-input { display: none; }
+.freeform-image-error { position: absolute; z-index: 18; top: 52px; left: 50%; max-width: min(440px, calc(100% - 32px)); display: flex; align-items: center; gap: 10px; transform: translateX(-50%); padding: 7px 9px 7px 11px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--surface-panel) 96%, var(--danger) 4%); color: var(--text-primary); box-shadow: 0 8px 24px rgba(0,0,0,.12); font-size: 11px; }
+.freeform-image-error button { height: 24px; padding: 0 7px; border: 0; border-radius: 6px; background: var(--surface-hover); color: var(--text-secondary); }
+.freeform-box.is-image .freeform-image-frame { fill: var(--surface-muted); stroke: none; }
+.freeform-box.is-image .freeform-image-outline { fill: none; stroke: var(--canvas-box-stroke, var(--border-strong)); stroke-width: var(--canvas-box-stroke-width, 1px); vector-effect: non-scaling-stroke; pointer-events: none; }
+.freeform-box.is-image.is-selected .freeform-image-outline { stroke: var(--accent); stroke-width: 1.5px; }
+.freeform-box .freeform-image-placeholder { fill: var(--text-tertiary); font-size: 12px; pointer-events: none; }
 .freeform-box.is-reconnect-target > rect:first-of-type { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 24%, transparent)); }
 .freeform-box.is-reconnect-target > .freeform-shape-body { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 24%, transparent)); }
 .freeform-box.is-collision > rect:first-of-type { stroke: var(--danger); stroke-width: 2.6; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--danger) 22%, transparent)); }

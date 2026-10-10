@@ -123,6 +123,25 @@ test('exports SVG and PNG assets without overwriting previous exports', async ()
   }
 })
 
+test('persists Canvas image assets inside the diagram asset directory and reads them back safely', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-image-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const diagram = await store.create('canvas', 'Image Board', 'freeform')
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const imported = await store.importCanvasImage(diagram.path, 'Screen Shot.png', 'image/png', bytes)
+    assert.match(imported.path, /^docs\/diagrams\/assets\/screen-shot-[a-f0-9]{8}\.png$/)
+    assert.equal(imported.mimeType, 'image/png')
+    const loaded = await store.readCanvasImage(imported.path)
+    assert.equal(loaded.mimeType, 'image/png')
+    assert.deepEqual([...loaded.content], [...bytes])
+    await assert.rejects(() => store.readCanvasImage('docs/diagrams/image-board.diagram.json'), /当前工作空间内/)
+    await assert.rejects(() => store.importCanvasImage(diagram.path, 'icon.svg', 'image/svg+xml', bytes), /只支持 PNG、JPEG 和 WebP/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('creates and manages freeform Canvas diagrams beside Mermaid files', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-canvas-'))
   try {

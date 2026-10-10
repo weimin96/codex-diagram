@@ -61,6 +61,21 @@ interface DiagramExportResult {
   path: string
 }
 
+interface DiagramImageAssetResult {
+  kind: 'diagram-image-asset'
+  workspacePath: string
+  path: string
+  mimeType: string
+}
+
+interface DiagramImageAssetContentResult {
+  kind: 'diagram-image-asset-content'
+  workspacePath: string
+  path: string
+  mimeType: string
+  content: string
+}
+
 interface DiagramThreadStateResult {
   kind: 'diagram-thread-state'
   activeDiagramPath?: string
@@ -1554,7 +1569,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!selected || selected.type !== 'canvas' || !canvasSelection?.elements.length) return
     const compact = canvasSelection.elements.map((element) => {
       if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points, labelPosition: element.labelPosition, emphasis: element.emphasis, bundleKey: element.bundleKey }
-      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, icon: element.icon, stencil: element.stencil, c4Type: element.c4Type, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
+      return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, tone: element.tone, shape: element.shape, shapeRef: element.shapeRef, textOnly: element.type === 'note' ? element.textOnly : undefined, fontSize: element.type === 'note' ? element.fontSize : undefined, fontWeight: element.type === 'note' ? element.fontWeight : undefined, textColor: element.type === 'note' ? element.textColor : undefined, imagePath: element.type === 'note' ? element.imagePath : undefined, imageFit: element.type === 'note' ? element.imageFit : undefined, icon: element.icon, stencil: element.stencil, c4Type: element.c4Type, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
     })
     if (!openai.message) {
       setError('当前 Codex Host 没有提供对话消息能力。')
@@ -1586,13 +1601,27 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function importCanvasImage(input: { filename: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; content: string }) {
+    if (!selected || selected.type !== 'canvas') throw new Error('只有 Canvas 图支持图片资源。')
+    return callTool<DiagramImageAssetResult>('diagram.importImageAsset', {
+      workspacePath,
+      path: selected.path,
+      ...input,
+    })
+  }
+
+  async function resolveCanvasImage(path: string): Promise<string> {
+    const result = await callTool<DiagramImageAssetContentResult>('diagram.readImageAsset', { workspacePath, path })
+    return `data:${result.mimeType};base64,${result.content}`
+  }
+
   async function exportSvg() {
     if (!selected || exporting) return
     setExporting(true)
     setError(null)
     try {
       const svg = selected.type === 'canvas'
-        ? renderCanvasSvg(source)
+        ? await renderCanvasSvg(source, workspacePath)
         : await renderMermaidSvg(source, `export-${Date.now()}`)
       const filename = `${safeFilename(selected.name)}.svg`
       const destination = await deliverExport(filename, 'svg', svg)
@@ -1610,7 +1639,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setError(null)
     try {
       const svg = selected.type === 'canvas'
-        ? renderCanvasSvg(source)
+        ? await renderCanvasSvg(source, workspacePath)
         : await renderMermaidSvg(source, `export-png-${Date.now()}`)
       const blob = await svgToPngBase64(svg, resolveCssColor('--app-bg', '#ffffff'))
       const filename = `${safeFilename(selected.name)}.png`
@@ -2018,6 +2047,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                         onOpenSource={(path) => void openWorkspaceSource(path)}
                         onSearchSources={searchSourceFiles}
                         onAnalyzeGitImpact={() => analyzeGitImpact()}
+                        onImportImage={importCanvasImage}
+                        onResolveImage={resolveCanvasImage}
                         focusElementIds={canvasFocus?.ids}
                         focusKey={canvasFocus?.key}
                         traceRequest={canvasFocus?.trace ? { ...canvasFocus.trace, key: canvasFocus.key } : undefined}
@@ -3035,14 +3066,20 @@ function serializeSafeSvg(markup: string): string {
   return new XMLSerializer().serializeToString(createSafeSvgElement(markup))
 }
 
-function renderCanvasSvg(source: string): string {
+async function renderCanvasSvg(source: string, workspacePath: string): Promise<string> {
   const scene = parseCanvasScene(source)
+  const imagePaths = [...new Set(scene.elements.flatMap((item) => item.type === 'note' && item.imagePath ? [item.imagePath] : []))]
+  const imageSources = Object.fromEntries(await Promise.all(imagePaths.map(async (path) => {
+    const result = await callTool<DiagramImageAssetContentResult>('diagram.readImageAsset', { workspacePath, path })
+    return [path, `data:${result.mimeType};base64,${result.content}`] as const
+  })))
   return canvasSceneToSvg(scene, {
     background: resolveCssColor('--app-bg', '#ffffff'),
     panel: resolveCssColor('--surface-raised', '#f5f5f5'),
     text: resolveCssColor('--text-primary', '#171717'),
     border: resolveCssColor('--border-strong', '#8a8a8a'),
     note: '#fff4b8',
+    imageSources,
   })
 }
 

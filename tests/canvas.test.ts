@@ -83,6 +83,7 @@ test('round-trips free drawing lines and explicit style overrides', () => {
       { id: 'free-arrow', type: 'arrow', from: '', to: '', start: { x: 120, y: 340 }, end: { x: 420, y: 420 }, markerEnd: 'arrow', routing: 'orthogonal' },
       { id: 'stroke', type: 'arrow', from: '', to: '', start: { x: 120, y: 500 }, end: { x: 360, y: 520 }, points: [{ x: 180, y: 470 }, { x: 260, y: 550 }], markerEnd: 'none', strokeColor: '#22a45d', freehand: true },
       { id: 'text', type: 'note', x: 520, y: 120, width: 240, height: 56, text: '独立文字', textOnly: true, fontSize: 28, fontWeight: 700, textColor: '#2f73d9' },
+      { id: 'image', type: 'note', x: 520, y: 240, width: 260, height: 180, text: 'screen.png', imagePath: 'docs/diagrams/assets/screen-12345678.png', imageFit: 'cover', cornerRadius: 12 },
     ],
   }
   const parsed = parseCanvasScene(serializeCanvasScene(scene))
@@ -103,12 +104,18 @@ test('round-trips free drawing lines and explicit style overrides', () => {
   assert.equal(text.fontSize, 28)
   assert.equal(text.fontWeight, 700)
   assert.equal(text.textColor, '#2f73d9')
+  const image = parsed.elements.find((item) => item.id === 'image')
+  assert.ok(image && image.type === 'note')
+  assert.equal(image.imagePath, 'docs/diagrams/assets/screen-12345678.png')
+  assert.equal(image.imageFit, 'cover')
 
-  const svg = canvasSceneToSvg(parsed)
+  const svg = canvasSceneToSvg(parsed, { imageSources: { 'docs/diagrams/assets/screen-12345678.png': 'data:image/png;base64,iVBORw0KGgo=' } })
   assert.match(svg, /stroke="#ef3340" stroke-width="3"/)
   assert.match(svg, /fill="#ffffff" stroke="#2f73d9" stroke-width="2\.5"/)
   assert.match(svg, /Q 180 470 220 510/)
   assert.match(svg, /font-size="28" font-weight="700" fill="#2f73d9">独立文字<\/text>/)
+  assert.match(svg, /href="data:image\/png;base64,iVBORw0KGgo="/)
+  assert.match(svg, /preserveAspectRatio="xMidYMid slice"/)
   assert.equal((svg.match(/marker-end="url\(#arrow\)"/g) ?? []).length, 1)
 })
 

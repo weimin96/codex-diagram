@@ -1730,6 +1730,53 @@ server.registerTool('diagram.exportAsset', {
   }
 })
 
+server.registerTool('diagram.importImageAsset', {
+  title: 'Import Canvas image asset',
+  description: 'Internal app bridge for persisting a PNG, JPEG or WebP used by a Canvas diagram.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+    filename: z.string().min(1).max(220),
+    mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+    content: z.string().min(1).max(18 * 1024 * 1024),
+  }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, path: diagramPath, filename, mimeType, content }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const asset = await store.importCanvasImage(diagramPath, filename, mimeType, Buffer.from(content, 'base64'))
+  const payload = { kind: 'diagram-image-asset', workspacePath: store.workspacePath, ...asset }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
+server.registerTool('diagram.readImageAsset', {
+  title: 'Read Canvas image asset',
+  description: 'Internal app bridge for loading a persisted Canvas image asset.',
+  inputSchema: z.object({
+    workspacePath: z.string().optional(),
+    path: z.string().min(1),
+  }),
+  annotations: readonly,
+  _meta: appOnly,
+}, async ({ workspacePath, path: assetPath }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const asset = await store.readCanvasImage(assetPath)
+  const payload = {
+    kind: 'diagram-image-asset-content',
+    workspacePath: store.workspacePath,
+    path: asset.path,
+    mimeType: asset.mimeType,
+    content: Buffer.from(asset.content).toString('base64'),
+  }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
 await server.connect(new StdioServerTransport())
 
 function registerWorkspaceResource(name: string, uri: string, surface: DiagramSurface = 'workspace'): void {
