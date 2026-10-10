@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,15 +30,16 @@ import { diagramTypes, isMermaidDiagramType, type DiagramSurface, type DiagramTy
 declare const __CODEX_DIAGRAM_VERSION__: string
 
 const version = __CODEX_DIAGRAM_VERSION__
-const legacyUiUri = 'ui://codex-diagram/workspace-v1'
-const workspaceUiUri = `ui://codex-diagram/workspace-v${version}`
-const threadUiUri = `ui://codex-diagram/thread-v${version}`
 const uiTemplate = 'ui://codex-diagram/workspace-v{version}'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const [appJs, appCss] = await Promise.all([
   readFile(path.join(here, 'app.js'), 'utf8'),
   readFile(path.join(here, 'app.css'), 'utf8'),
 ])
+const uiRevision = createHash('sha256').update(appJs).update('\0').update(appCss).digest('hex').slice(0, 12)
+const legacyUiUri = 'ui://codex-diagram/workspace-v1'
+const workspaceUiUri = `ui://codex-diagram/workspace-v${version}-${uiRevision}`
+const threadUiUri = `ui://codex-diagram/thread-v${version}-${uiRevision}`
 const icons = await loadDiagramIcons()
 
 const html = (surface: DiagramSurface) => `<!doctype html>
