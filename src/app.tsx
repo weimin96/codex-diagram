@@ -3083,7 +3083,7 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
                   <Button
                     key={item.key}
                     type="button"
-                    variant={choice?.key === item.key ? 'secondary' : 'outline'}
+                    variant={choice?.key === item.key ? 'default' : 'secondary'}
                     className="h-auto min-h-10 justify-between px-3 py-2 text-left"
                     onClick={() => {
                       setChoice(item)
