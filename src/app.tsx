@@ -404,6 +404,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     | null
   >(null)
   const [creatingBlankCanvas, setCreatingBlankCanvas] = useState(false)
+  const threadDiagramMenu = useRef<HTMLDetailsElement>(null)
+  const threadNewMenu = useRef<HTMLDetailsElement>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
@@ -424,6 +426,17 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       || diagramLabel(diagram.type).toLocaleLowerCase().includes(query)
     ))
   }, [diagramQuery, snapshot.diagrams])
+
+  useEffect(() => {
+    if (!isThread) return
+    const closeMenus = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && !threadDiagramMenu.current?.contains(target)) threadDiagramMenu.current?.removeAttribute('open')
+      if (target && !threadNewMenu.current?.contains(target)) threadNewMenu.current?.removeAttribute('open')
+    }
+    window.addEventListener('pointerdown', closeMenus)
+    return () => window.removeEventListener('pointerdown', closeMenus)
+  }, [isThread])
 
   function backgroundSyncSucceeded(kind: 'thread' | 'revision') {
     backgroundFailures.current[kind] = 0
@@ -1866,7 +1879,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       <section className="diagram-main">
         {isThread ? (
           <div className="thread-companion-head">
-            <div className="thread-diagram-picker">
+            <div className="thread-companion-primary">
               <button
                 className={`thread-follow-toggle${followConversation ? ' is-active' : ''}`}
                 type="button"
@@ -1877,19 +1890,42 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span className="thread-link-status" />
                 跟随
               </button>
-              <select
-                aria-label="当前图表"
-                value={selected?.path ?? ''}
-                onChange={(event) => {
-                  if (event.target.value) void selectDiagram(event.target.value)
-                }}
-              >
-                {!selected && snapshot.diagrams.length > 0 ? <option value="">未打开图表</option> : null}
-                {snapshot.diagrams.length === 0 ? <option value="">当前还没有图表</option> : null}
-                {snapshot.diagrams.map((diagram) => (
-                  <option key={diagram.path} value={diagram.path}>{diagram.name} · {diagramLabel(diagram.type)}</option>
-                ))}
-              </select>
+              <details className="thread-diagram-menu" ref={threadDiagramMenu}>
+                <summary aria-label="选择图表">
+                  <span className="thread-diagram-current">
+                    <strong>{selected?.name ?? '选择图表'}</strong>
+                    <small>{selected ? diagramLabel(selected.type) : snapshot.diagrams.length ? `${snapshot.diagrams.length} 个可用图表` : '暂无图表'}</small>
+                  </span>
+                  <span className="thread-menu-chevron" aria-hidden="true" />
+                </summary>
+                <div className="thread-diagram-menu-popover" role="menu" aria-label="图表列表">
+                  <div className="thread-menu-head">
+                    <strong>图表</strong>
+                    <span>{snapshot.diagrams.length}</span>
+                  </div>
+                  <div className="thread-diagram-menu-list">
+                    {snapshot.diagrams.map((diagram) => (
+                      <button
+                        key={diagram.path}
+                        className={selected?.path === diagram.path ? 'is-active' : ''}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          threadDiagramMenu.current?.removeAttribute('open')
+                          void selectDiagram(diagram.path)
+                        }}
+                      >
+                        <span>
+                          <strong>{diagram.name}</strong>
+                          <small>{shortPath(diagram.path)}</small>
+                        </span>
+                        <em>{diagramLabel(diagram.type)}</em>
+                      </button>
+                    ))}
+                    {snapshot.diagrams.length === 0 ? <div className="thread-menu-empty">当前项目还没有图表</div> : null}
+                  </div>
+                </div>
+              </details>
               {selected ? (
                 <button
                   className="thread-current-close"
@@ -1899,10 +1935,40 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   onClick={() => void closeThreadTab(selected.path)}
                 >×</button>
               ) : null}
-            </div>
-            <div className="thread-new-actions">
-              <button className="thread-new-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '空白画板'}</button>
-              <button className="thread-new-button" type="button" onClick={() => setAiOpen(true)}>AI 新图</button>
+              {selected ? (
+                <details className="thread-new-menu" ref={threadNewMenu}>
+                  <summary>新建</summary>
+                  <div className="thread-new-menu-popover" role="menu" aria-label="新建图表">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={creatingBlankCanvas}
+                      onClick={() => {
+                        threadNewMenu.current?.removeAttribute('open')
+                        void createBlankCanvas()
+                      }}
+                    >
+                      <span>
+                        <strong>{creatingBlankCanvas ? '创建中…' : '新建画板'}</strong>
+                        <small>从空白自由画布开始</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        threadNewMenu.current?.removeAttribute('open')
+                        setAiOpen(true)
+                      }}
+                    >
+                      <span>
+                        <strong>AI 生成</strong>
+                        <small>根据对话和代码生成图表</small>
+                      </span>
+                    </button>
+                  </div>
+                </details>
+              ) : null}
             </div>
             {threadTabs.length > 0 ? (
               <div className="thread-diagram-tabs" aria-label="当前对话图表">
@@ -2128,13 +2194,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ) : (
           <div className="main-empty">
             <div className="empty-graphic"><span /><span /><span /></div>
-            <h2>{isThread ? '当前没有打开的图表' : '选择或创建一个图表'}</h2>
-            <p>{isThread ? '可以新建空白画板，也可以从上方列表打开已有图表。' : '结构化图使用 Mermaid；自由布局的架构草图和说明使用 Canvas 文档。'}</p>
+            <h2>{isThread ? '未打开图表' : '选择或创建一个图表'}</h2>
+            <p>{isThread ? '从上方选择已有图表，或新建一个画板。' : '结构化图使用 Mermaid；自由布局的架构草图和说明使用 Canvas 文档。'}</p>
             <div className="empty-actions">
               {isThread ? (
                 <>
-                  <button className="primary-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '空白画板'}</button>
-                  <button type="button" onClick={() => setAiOpen(true)}>AI 新图</button>
+                  <button className="primary-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '新建画板'}</button>
+                  <button type="button" onClick={() => setAiOpen(true)}>AI 生成</button>
                 </>
               ) : (
                 <>

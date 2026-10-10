@@ -146,20 +146,49 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .form-actions button { height: 30px; font-size: 12px; }
 
 .diagram-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
-.thread-companion-head { min-height: 82px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 9px 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
-.thread-diagram-picker { min-width: 0; display: flex; align-items: center; gap: 7px; }
-.thread-follow-toggle { height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 10px; }
+.thread-companion-head { min-height: 0; display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface-panel); }
+.thread-companion-primary { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.thread-follow-toggle { height: 32px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 10px; }
 .thread-follow-toggle:hover { background: var(--surface-hover); color: var(--text-primary); }
 .thread-follow-toggle.is-active { color: var(--text-secondary); background: color-mix(in srgb, #22a06b 7%, transparent); }
 .thread-link-status { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: #22a06b; box-shadow: 0 0 0 3px color-mix(in srgb, #22a06b 12%, transparent); }
 .thread-follow-toggle:not(.is-active) .thread-link-status { background: var(--text-tertiary); box-shadow: none; }
-.thread-diagram-picker select { min-width: 0; width: 100%; height: 30px; border: 1px solid var(--border); border-radius: 7px; padding: 0 27px 0 8px; background: var(--app-bg); color: var(--text-primary); font-size: 12px; font-weight: 560; }
-.thread-current-close { width: 30px; height: 30px; flex: 0 0 30px; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 16px; line-height: 1; }
+.thread-diagram-menu { position: relative; min-width: 0; flex: 1 1 auto; }
+.thread-diagram-menu > summary { min-width: 0; height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 9px 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-primary); cursor: pointer; list-style: none; }
+.thread-diagram-menu > summary::-webkit-details-marker, .thread-new-menu > summary::-webkit-details-marker { display: none; }
+.thread-diagram-menu > summary:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.thread-diagram-menu[open] > summary { border-color: color-mix(in srgb, var(--accent) 50%, var(--border-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
+.thread-diagram-current { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.thread-diagram-current strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.thread-diagram-current small { flex: 0 0 auto; color: var(--text-tertiary); font-size: 10px; font-weight: 500; white-space: nowrap; }
+.thread-menu-chevron { width: 7px; height: 7px; flex: 0 0 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; color: var(--text-tertiary); transform: translateY(-2px) rotate(45deg); transition: transform 120ms ease; }
+.thread-diagram-menu[open] .thread-menu-chevron { transform: translateY(2px) rotate(225deg); }
+.thread-diagram-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); left: 0; right: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
+.thread-menu-head { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); }
+.thread-menu-head strong { color: var(--text-secondary); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
+.thread-menu-head span { font-size: 10px; font-variant-numeric: tabular-nums; }
+.thread-diagram-menu-list { max-height: min(320px, 46vh); overflow-y: auto; padding: 4px; }
+.thread-diagram-menu-list > button { width: 100%; min-width: 0; min-height: 43px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; }
+.thread-diagram-menu-list > button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.thread-diagram-menu-list > button.is-active { background: color-mix(in srgb, var(--accent) 7%, var(--surface-muted)); color: var(--text-primary); }
+.thread-diagram-menu-list > button > span { min-width: 0; display: grid; gap: 2px; }
+.thread-diagram-menu-list strong { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.thread-diagram-menu-list small { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.thread-diagram-menu-list em { padding: 2px 5px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-tertiary); font-size: 9px; font-style: normal; white-space: nowrap; }
+.thread-diagram-menu-list > button.is-active em { border-color: color-mix(in srgb, var(--accent) 24%, var(--border)); color: var(--accent); }
+.thread-menu-empty { padding: 18px 12px; color: var(--text-tertiary); font-size: 11px; text-align: center; }
+.thread-current-close { width: 32px; height: 32px; flex: 0 0 32px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 16px; line-height: 1; }
 .thread-current-close:hover { background: var(--surface-hover); color: var(--text-primary); }
-.thread-new-actions { display: flex; align-items: center; gap: 5px; }
-.thread-new-button { height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12px; }
-.thread-new-button:hover { background: var(--surface-hover); color: var(--text-primary); }
-.thread-diagram-tabs { grid-column: 1 / -1; min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+.thread-new-menu { position: relative; flex: 0 0 auto; }
+.thread-new-menu > summary { height: 32px; display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 11px; font-weight: 600; list-style: none; }
+.thread-new-menu > summary:hover, .thread-new-menu[open] > summary { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text-primary); }
+.thread-new-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); right: 0; width: 230px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
+.thread-new-menu-popover button { width: 100%; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; }
+.thread-new-menu-popover button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.thread-new-menu-popover button > span { display: grid; gap: 2px; }
+.thread-new-menu-popover strong { font-size: 11px; font-weight: 620; }
+.thread-new-menu-popover small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; }
+.thread-diagram-tabs { min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
 .thread-diagram-tabs::-webkit-scrollbar { display: none; }
 .thread-diagram-tab { height: 29px; min-width: 0; flex: 0 0 auto; display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); }
 .thread-diagram-tab.is-active { border-color: var(--border-strong); background: var(--surface-panel); box-shadow: inset 0 -2px 0 var(--accent); }
@@ -169,7 +198,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-diagram-tab.is-active .thread-diagram-tab-main { color: var(--text-primary); }
 .thread-diagram-tab-close { width: 24px; height: 100%; padding: 0; border: 0; border-left: 1px solid transparent; background: transparent; color: var(--text-tertiary); font-size: 13px; }
 .thread-diagram-tab-close:hover { border-left-color: var(--border); background: var(--surface-hover); color: var(--text-primary); }
-.thread-chat-actions { grid-column: 1 / -1; min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+.thread-chat-actions { min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
 .thread-chat-actions::-webkit-scrollbar { display: none; }
 .thread-chat-actions button { height: 28px; flex: 0 0 auto; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .thread-chat-actions button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
@@ -1295,6 +1324,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .thread-companion .editor-toolbar { position: static; flex-direction: row; }
   .thread-companion .toolbar-actions { flex-wrap: nowrap; }
   .thread-companion .ai-panel { position: absolute; }
+  .thread-companion-head { padding: 6px; }
+  .thread-companion-primary { gap: 4px; }
+  .thread-follow-toggle { width: 32px; padding: 0; justify-content: center; font-size: 0; }
+  .thread-diagram-current small { display: none; }
+  .thread-current-close { width: 30px; flex-basis: 30px; }
+  .thread-new-menu > summary { padding-inline: 8px; }
+  .thread-new-menu-popover { width: min(230px, calc(100vw - 20px)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
