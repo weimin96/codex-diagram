@@ -156,7 +156,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-diagram-menu { position: relative; min-width: 200px; width: 300px; max-width: calc(100% - 94px); flex: 0 1 300px; }
 .thread-diagram-menu > summary { min-width: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 9px 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-primary); cursor: pointer; list-style: none; }
 .thread-diagram-menu > summary::-webkit-details-marker, .thread-new-menu > summary::-webkit-details-marker { display: none; }
-.thread-diagram-menu > summary:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.thread-diagram-menu > summary:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 6%, var(--app-bg)); }
 .thread-diagram-menu[open] > summary { border-color: color-mix(in srgb, var(--accent) 50%, var(--border-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
 .thread-diagram-current { min-width: 0; flex: 1 1 auto; display: block; }
 .thread-diagram-current strong { display: block; min-width: 0; overflow: hidden; font-size: 12px; font-weight: 620; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
