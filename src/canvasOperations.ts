@@ -25,6 +25,127 @@ export interface CanvasSmartSnapResult {
   sameHeight: boolean
 }
 
+export type CanvasResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+
+export interface CanvasTransformBox extends CanvasSnapRect {
+  rotation?: number
+}
+
+export function resizeCanvasTransformBox(
+  box: CanvasTransformBox,
+  handle: CanvasResizeHandle,
+  pointer: CanvasPoint,
+  options: { center?: boolean; preserveAspect?: boolean; minWidth?: number; minHeight?: number } = {},
+): CanvasTransformBox {
+  const minWidth = options.minWidth ?? 100
+  const minHeight = options.minHeight ?? 60
+  const rotation = box.rotation ?? 0
+  const radians = (rotation * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  const toLocal = (point: CanvasPoint, origin: CanvasPoint) => {
+    const dx = point.x - origin.x
+    const dy = point.y - origin.y
+    return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos }
+  }
+  const hasX = handle.includes('e') || handle.includes('w')
+  const hasY = handle.includes('n') || handle.includes('s')
+  const signX = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0
+  const signY = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0
+  let width = box.width
+  let height = box.height
+  let nextCenter = { ...center }
+
+  if (options.center) {
+    const local = toLocal(pointer, center)
+    if (hasX) width = Math.max(minWidth, Math.abs(local.x) * 2)
+    if (hasY) height = Math.max(minHeight, Math.abs(local.y) * 2)
+  } else {
+    const anchorLocal = { x: -signX * box.width / 2, y: -signY * box.height / 2 }
+    const anchor = {
+      x: center.x + anchorLocal.x * cos - anchorLocal.y * sin,
+      y: center.y + anchorLocal.x * sin + anchorLocal.y * cos,
+    }
+    const local = toLocal(pointer, anchor)
+    if (hasX) width = Math.max(minWidth, Math.abs(local.x))
+    if (hasY) height = Math.max(minHeight, Math.abs(local.y))
+    nextCenter = {
+      x: anchor.x + (signX * width / 2) * cos - (signY * height / 2) * sin,
+      y: anchor.y + (signX * width / 2) * sin + (signY * height / 2) * cos,
+    }
+  }
+
+  if (options.preserveAspect && (hasX || hasY)) {
+    const requestedScale = hasX && hasY
+      ? Math.max(width / box.width, height / box.height)
+      : hasX ? width / box.width : height / box.height
+    const scale = Math.max(requestedScale, minWidth / box.width, minHeight / box.height)
+    width = box.width * scale
+    height = box.height * scale
+    if (!options.center) {
+      const anchorLocal = { x: -signX * box.width / 2, y: -signY * box.height / 2 }
+      const anchor = {
+        x: center.x + anchorLocal.x * cos - anchorLocal.y * sin,
+        y: center.y + anchorLocal.x * sin + anchorLocal.y * cos,
+      }
+      nextCenter = {
+        x: anchor.x + (signX * width / 2) * cos - (signY * height / 2) * sin,
+        y: anchor.y + (signX * width / 2) * sin + (signY * height / 2) * cos,
+      }
+    }
+  }
+
+  return {
+    x: nextCenter.x - width / 2,
+    y: nextCenter.y - height / 2,
+    width,
+    height,
+    ...(rotation ? { rotation } : {}),
+  }
+}
+
+export function scaleCanvasTransformBoxes(
+  boxes: ReadonlyMap<string, CanvasTransformBox>,
+  bounds: CanvasSnapRect,
+  handle: CanvasResizeHandle,
+  pointer: CanvasPoint,
+  options: { center?: boolean; preserveAspect?: boolean; minWidth?: number; minHeight?: number } = {},
+): Map<string, CanvasTransformBox> {
+  const minWidth = options.minWidth ?? 100
+  const minHeight = options.minHeight ?? 60
+  const minimumScaleX = Math.max(...[...boxes.values()].map((box) => minWidth / box.width), 0)
+  const minimumScaleY = Math.max(...[...boxes.values()].map((box) => minHeight / box.height), 0)
+  const target = resizeCanvasTransformBox(bounds, handle, pointer, {
+    ...options,
+    minWidth: Math.max(1, bounds.width * minimumScaleX),
+    minHeight: Math.max(1, bounds.height * minimumScaleY),
+  })
+  const scaleX = target.width / Math.max(1, bounds.width)
+  const scaleY = target.height / Math.max(1, bounds.height)
+  const result = new Map<string, CanvasTransformBox>()
+  for (const [id, box] of boxes) {
+    result.set(id, {
+      x: target.x + (box.x - bounds.x) * scaleX,
+      y: target.y + (box.y - bounds.y) * scaleY,
+      width: box.width * scaleX,
+      height: box.height * scaleY,
+      ...(box.rotation ? { rotation: box.rotation } : {}),
+    })
+  }
+  return result
+}
+
+export function canvasRotationFromPointer(center: CanvasPoint, start: CanvasPoint, current: CanvasPoint, initialRotation = 0, snapStep = 1): number {
+  const startAngle = Math.atan2(start.y - center.y, start.x - center.x)
+  const currentAngle = Math.atan2(current.y - center.y, current.x - center.x)
+  const delta = ((currentAngle - startAngle) * 180) / Math.PI
+  const value = initialRotation + delta
+  const snapped = Math.round(value / Math.max(0.1, snapStep)) * Math.max(0.1, snapStep)
+  const normalized = ((snapped % 360) + 360) % 360
+  return normalized > 180 ? normalized - 360 : normalized
+}
+
 export function computeCanvasSmartSnap(
   proposed: CanvasSnapRect,
   targets: CanvasSnapRect[],

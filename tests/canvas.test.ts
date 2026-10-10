@@ -67,6 +67,11 @@ test('auto anchors respect ellipse and decision geometry instead of the bounding
   const ellipsePoint = anchorPoint(ellipse, 'auto', { x: 320, y: 210 })
   const ellipseEquation = ((ellipsePoint.x - 180) / 80) ** 2 + ((ellipsePoint.y - 150) / 50) ** 2
   assert.ok(Math.abs(ellipseEquation - 1) < 1e-9)
+
+  const rotated = { x: 100, y: 100, width: 200, height: 100, rotation: 90 }
+  const right = anchorPoint(rotated, 'right', { x: 400, y: 150 })
+  assert.ok(Math.abs(right.x - 200) < 1e-9)
+  assert.ok(Math.abs(right.y - 250) < 1e-9)
 })
 
 test('round-trips free drawing lines and explicit style overrides', () => {
@@ -78,7 +83,7 @@ test('round-trips free drawing lines and explicit style overrides', () => {
     width: 900,
     height: 600,
     elements: [
-      { id: 'box', type: 'node', x: 80, y: 80, width: 180, height: 88, text: 'Styled', shapeRef: 'basic:rounded', fillColor: '#ffffff', strokeColor: '#2f73d9', strokeWidth: 2.5, opacity: 0.8, cornerRadius: 24 },
+      { id: 'box', type: 'node', x: 80, y: 80, width: 180, height: 88, text: 'Styled', shapeRef: 'basic:rounded', fillColor: '#ffffff', strokeColor: '#2f73d9', strokeWidth: 2.5, opacity: 0.8, cornerRadius: 24, rotation: 30 },
       { id: 'line', type: 'arrow', from: '', to: '', start: { x: 120, y: 260 }, end: { x: 420, y: 260 }, markerEnd: 'none', strokeColor: '#ef3340', strokeWidth: 3, opacity: 0.7 },
       { id: 'free-arrow', type: 'arrow', from: '', to: '', start: { x: 120, y: 340 }, end: { x: 420, y: 420 }, markerEnd: 'arrow', routing: 'orthogonal' },
       { id: 'stroke', type: 'arrow', from: '', to: '', start: { x: 120, y: 500 }, end: { x: 360, y: 520 }, points: [{ x: 180, y: 470 }, { x: 260, y: 550 }], markerEnd: 'none', strokeColor: '#22a45d', freehand: true },
@@ -95,6 +100,7 @@ test('round-trips free drawing lines and explicit style overrides', () => {
   const box = parsed.elements.find((item) => item.id === 'box')
   assert.ok(box && box.type === 'node')
   assert.equal(box.cornerRadius, 24)
+  assert.equal(box.rotation, 30)
   const stroke = parsed.elements.find((item) => item.id === 'stroke')
   assert.ok(stroke && stroke.type === 'arrow')
   assert.equal(stroke.freehand, true)
@@ -112,6 +118,7 @@ test('round-trips free drawing lines and explicit style overrides', () => {
   const svg = canvasSceneToSvg(parsed, { imageSources: { 'docs/diagrams/assets/screen-12345678.png': 'data:image/png;base64,iVBORw0KGgo=' } })
   assert.match(svg, /stroke="#ef3340" stroke-width="3"/)
   assert.match(svg, /fill="#ffffff" stroke="#2f73d9" stroke-width="2\.5"/)
+  assert.match(svg, /transform="rotate\(30 170 124\)"/)
   assert.match(svg, /Q 180 470 220 510/)
   assert.match(svg, /font-size="28" font-weight="700" fill="#2f73d9">独立文字<\/text>/)
   assert.match(svg, /href="data:image\/png;base64,iVBORw0KGgo="/)

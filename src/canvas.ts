@@ -102,6 +102,7 @@ export interface CanvasNode {
   strokeWidth?: number
   opacity?: number
   cornerRadius?: number
+  rotation?: number
 }
 
 export interface CanvasNote {
@@ -132,6 +133,7 @@ export interface CanvasNote {
   strokeWidth?: number
   opacity?: number
   cornerRadius?: number
+  rotation?: number
   textOnly?: boolean
   fontSize?: number
   fontWeight?: 400 | 500 | 600 | 700
@@ -389,6 +391,9 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${architectureMode ? 2.4 : 2.2}"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((item) => {
+    const wrapRotation = (markup: string) => item.rotation
+      ? `<g transform="rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})">${markup}</g>`
+      : markup
     const palette = architectureMode
       ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
       : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
@@ -399,7 +404,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       const opacity = item.opacity ?? 1
       const lineHeight = Math.round(fontSize * 1.35)
       const lines = item.text.split('\n').slice(0, 8)
-      return `<g opacity="${opacity}">${lines.map((line, index) => `<text x="${item.x}" y="${item.y + fontSize + index * lineHeight}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${escapeXml(textFill)}">${escapeXml(line)}</text>`).join('')}</g>`
+      return wrapRotation(`<g opacity="${opacity}">${lines.map((line, index) => `<text x="${item.x}" y="${item.y + fontSize + index * lineHeight}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${escapeXml(textFill)}">${escapeXml(line)}</text>`).join('')}</g>`)
     }
     if (item.type === 'note' && item.imagePath) {
       const imageSource = colors?.imageSources?.[item.imagePath]
@@ -407,10 +412,10 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       const content = imageSource
         ? `<image x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" href="${escapeXml(imageSource)}" preserveAspectRatio="${item.imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'}"/>`
         : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="${escapeXml(panel)}"/><text x="${item.x + item.width / 2}" y="${item.y + item.height / 2 + 4}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(item.text || '图片', 28))}</text>`
-      return `<g opacity="${item.opacity ?? 1}"><clipPath id="clip-${escapeXml(item.id)}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}"/></clipPath><g clip-path="url(#clip-${escapeXml(item.id)})">${content}</g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="none" stroke="${escapeXml(item.strokeColor ?? border)}" stroke-width="${item.strokeWidth ?? 1}"/></g>`
+      return wrapRotation(`<g opacity="${item.opacity ?? 1}"><clipPath id="clip-${escapeXml(item.id)}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}"/></clipPath><g clip-path="url(#clip-${escapeXml(item.id)})">${content}</g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="none" stroke="${escapeXml(item.strokeColor ?? border)}" stroke-width="${item.strokeWidth ?? 1}"/></g>`)
     }
     const architectureCard = item.type === 'node' && Boolean(item.iconRef || item.icon || item.stencil || item.c4Type)
-    if (architectureMode && architectureCard) return renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme)
+    if (architectureMode && architectureCard) return wrapRotation(renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme))
     const cardTemplate = canvasArchitectureCardTemplate(item)
     const showSubtitle = Boolean(item.subtitle && (!architectureCard || projection.density !== 'dense'))
     const cardTitleLimit = projection.density === 'dense' ? 22 : projection.density === 'compact' ? 26 : 30
@@ -439,7 +444,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
           return `<g transform="translate(${item.x} ${item.y})"><path d="${geometry.bodyPath}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${escapeXml(strokeColor)}" stroke-width="${Math.max(1, strokeWidth * 0.86)}"/>`).join('')}</g>`
         })()
       : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${item.cornerRadius ?? shapeRadius(item.shape, item.height)}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>`
-    return `<g opacity="${opacity}">${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`
+    return wrapRotation(`<g opacity="${opacity}">${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`)
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = architectureMode
@@ -1221,7 +1226,7 @@ function isInsideCollapsedAncestor(groupId: string, groups: CanvasGroup[]): bool
   return false
 }
 
-type CanvasAnchorBox = Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'> & Partial<Pick<CanvasNode, 'shapeRef'>>
+type CanvasAnchorBox = Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'> & Partial<Pick<CanvasNode, 'shapeRef' | 'rotation'>>
 
 function centerOfCanvasBox(item: CanvasAnchorBox) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
@@ -1229,8 +1234,13 @@ function centerOfCanvasBox(item: CanvasAnchorBox) {
 
 function edgePoint(item: CanvasAnchorBox, toward: CanvasPoint) {
   const origin = centerOfCanvasBox(item)
-  const dx = toward.x - origin.x
-  const dy = toward.y - origin.y
+  const rotation = ((item.rotation ?? 0) * Math.PI) / 180
+  const inverseCos = Math.cos(-rotation)
+  const inverseSin = Math.sin(-rotation)
+  const worldDx = toward.x - origin.x
+  const worldDy = toward.y - origin.y
+  const dx = worldDx * inverseCos - worldDy * inverseSin
+  const dy = worldDx * inverseSin + worldDy * inverseCos
   if (dx === 0 && dy === 0) return origin
   const halfWidth = Math.max(1, item.width / 2)
   const halfHeight = Math.max(1, item.height / 2)
@@ -1239,18 +1249,33 @@ function edgePoint(item: CanvasAnchorBox, toward: CanvasPoint) {
     : item.shapeRef === 'basic:diamond' || item.shapeRef === 'flowchart:decision'
       ? 1 / (Math.abs(dx) / halfWidth + Math.abs(dy) / halfHeight)
       : 1 / Math.max(Math.abs(dx) / halfWidth, Math.abs(dy) / halfHeight)
-  return { x: origin.x + dx * scale, y: origin.y + dy * scale }
+  const localX = dx * scale
+  const localY = dy * scale
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  return {
+    x: origin.x + localX * cos - localY * sin,
+    y: origin.y + localX * sin + localY * cos,
+  }
 }
 
 export function anchorPoint(item: CanvasAnchorBox, anchor: CanvasAnchor | undefined, toward: CanvasPoint): CanvasPoint {
   const center = centerOfCanvasBox(item)
-  switch (anchor) {
-    case 'top': return { x: center.x, y: item.y }
-    case 'right': return { x: item.x + item.width, y: center.y }
-    case 'bottom': return { x: center.x, y: item.y + item.height }
-    case 'left': return { x: item.x, y: center.y }
-    default: return edgePoint(item, toward)
-  }
+  if (!anchor || anchor === 'auto') return edgePoint(item, toward)
+  const local = anchor === 'top'
+    ? { x: center.x, y: item.y }
+    : anchor === 'right'
+      ? { x: item.x + item.width, y: center.y }
+      : anchor === 'bottom'
+        ? { x: center.x, y: item.y + item.height }
+        : { x: item.x, y: center.y }
+  const rotation = ((item.rotation ?? 0) * Math.PI) / 180
+  if (!rotation) return local
+  const dx = local.x - center.x
+  const dy = local.y - center.y
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+  return { x: center.x + dx * cos - dy * sin, y: center.y + dx * sin + dy * cos }
 }
 
 export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor' | 'freehand'>): string {
@@ -1542,6 +1567,13 @@ function normalizedUnitInterval(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined
 }
 
+function normalizedRotation(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const normalized = ((value % 360) + 360) % 360
+  const signed = normalized > 180 ? normalized - 360 : normalized
+  return Math.abs(signed) < 0.0001 ? undefined : Math.round(signed * 100) / 100
+}
+
 function normalizeCanvasElement(item: CanvasElement): CanvasElement {
   if (item.type === 'arrow') {
     const emphases: CanvasEmphasis[] = ['primary', 'secondary', 'muted']
@@ -1602,6 +1634,7 @@ function normalizeCanvasElement(item: CanvasElement): CanvasElement {
     ...(typeof item.strokeWidth === 'number' && Number.isFinite(item.strokeWidth) && item.strokeWidth > 0 && item.strokeWidth <= 12 ? { strokeWidth: item.strokeWidth } : {}),
     ...(normalizedUnitInterval(item.opacity) !== undefined ? { opacity: normalizedUnitInterval(item.opacity) } : {}),
     ...(typeof item.cornerRadius === 'number' && Number.isFinite(item.cornerRadius) && item.cornerRadius >= 0 && item.cornerRadius <= 80 ? { cornerRadius: item.cornerRadius } : {}),
+    ...(normalizedRotation(item.rotation) !== undefined ? { rotation: normalizedRotation(item.rotation) } : {}),
     ...(item.type === 'note' && item.textOnly === true ? { textOnly: true } : {}),
     ...(item.type === 'note' && typeof item.fontSize === 'number' && Number.isFinite(item.fontSize) && item.fontSize >= 8 && item.fontSize <= 96 ? { fontSize: item.fontSize } : {}),
     ...(item.type === 'note' && [400, 500, 600, 700].includes(item.fontWeight ?? 0) ? { fontWeight: item.fontWeight } : {}),

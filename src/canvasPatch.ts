@@ -55,7 +55,7 @@ export interface CanvasSubgraphContext {
 const boxFields = new Set([
   'x', 'y', 'width', 'height', 'text', 'tone', 'shape', 'shapeRef', 'locked', 'groupId', 'sourcePaths', 'icon', 'stencil', 'iconRef',
   'subtitle', 'description', 'tags', 'laneId', 'c4Type', 'emphasis', 'fillColor', 'strokeColor', 'strokeWidth', 'opacity', 'cornerRadius',
-  'textOnly', 'fontSize', 'fontWeight', 'textColor',
+  'rotation', 'textOnly', 'fontSize', 'fontWeight', 'textColor',
 ])
 const arrowFields = new Set([
   'from', 'to', 'label', 'lineStyle', 'routing', 'fromAnchor', 'toAnchor', 'points', 'labelPosition', 'emphasis', 'bundleKey',
@@ -63,7 +63,7 @@ const arrowFields = new Set([
 ])
 const requiredBoxFields = new Set(['x', 'y', 'width', 'height', 'text'])
 const requiredArrowFields = new Set(['from', 'to'])
-const geometryFields = new Set(['x', 'y', 'width', 'height'])
+const geometryFields = new Set(['x', 'y', 'width', 'height', 'rotation'])
 const arrowRouteFields = ['routing', 'fromAnchor', 'toAnchor', 'lineStyle', 'points', 'labelPosition', 'bundleKey'] as const
 
 export function buildCanvasSubgraphPatch(base: CanvasScene, patch: CanvasSubgraphPatchInput): CanvasSubgraphPatchResult {
@@ -758,6 +758,10 @@ function validatePatchField(type: CanvasElement['type'], key: string, value: unk
     }
     if (key === 'cornerRadius') {
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 80) fail()
+      return
+    }
+    if (key === 'rotation') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < -180 || value > 180) fail()
       return
     }
     if (key === 'textOnly') {

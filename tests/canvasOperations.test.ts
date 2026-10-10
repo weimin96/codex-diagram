@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, searchArchitectureNodeTemplates } from '../src/architectureNodeTemplates.js'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, computeCanvasSmartSnap, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
+import { alignCanvasSelection, canvasRotationFromPointer, computeCanvasSmartSnap, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -74,6 +74,71 @@ test('smart snap equalizes spacing between neighboring shapes and reports matchi
   assert.deepEqual(result.spacingGuides.map((guide) => guide.distance), [100, 100])
   assert.equal(result.sameWidth, true)
   assert.equal(result.sameHeight, true)
+})
+
+test('resizes from directional handles and preserves the opposite edge', () => {
+  const east = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100 },
+    'e',
+    { x: 360, y: 150 },
+  )
+  assert.deepEqual(east, { x: 100, y: 100, width: 260, height: 100 })
+
+  const west = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100 },
+    'w',
+    { x: 40, y: 150 },
+  )
+  assert.deepEqual(west, { x: 40, y: 100, width: 260, height: 100 })
+
+  const centered = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100 },
+    'se',
+    { x: 350, y: 225 },
+    { center: true },
+  )
+  assert.deepEqual(centered, { x: 50, y: 75, width: 300, height: 150 })
+
+  const rotated = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100, rotation: 90 },
+    'e',
+    { x: 200, y: 310 },
+  )
+  assert.deepEqual(rotated, { x: 70, y: 130, width: 260, height: 100, rotation: 90 })
+})
+
+test('keeps aspect ratio for corner resize and scales a multi selection as one frame', () => {
+  const aspect = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100 },
+    'se',
+    { x: 360, y: 220 },
+    { preserveAspect: true },
+  )
+  assert.equal(aspect.width / aspect.height, 2)
+  assert.equal(aspect.x, 100)
+  assert.equal(aspect.y, 100)
+
+  const sideAspect = resizeCanvasTransformBox(
+    { x: 100, y: 100, width: 200, height: 100 },
+    'e',
+    { x: 400, y: 150 },
+    { preserveAspect: true },
+  )
+  assert.deepEqual(sideAspect, { x: 100, y: 75, width: 300, height: 150 })
+
+  const boxes = new Map([
+    ['a', { x: 0, y: 0, width: 100, height: 80 }],
+    ['b', { x: 200, y: 100, width: 100, height: 80 }],
+  ])
+  const scaled = scaleCanvasTransformBoxes(boxes, { x: 0, y: 0, width: 300, height: 180 }, 'se', { x: 600, y: 360 })
+  assert.deepEqual(scaled.get('a'), { x: 0, y: 0, width: 200, height: 160 })
+  assert.deepEqual(scaled.get('b'), { x: 400, y: 200, width: 200, height: 160 })
+})
+
+test('rotates from pointer angle and snaps rotation when requested', () => {
+  const center = { x: 100, y: 100 }
+  assert.equal(canvasRotationFromPointer(center, { x: 100, y: 0 }, { x: 200, y: 100 }), 90)
+  assert.equal(canvasRotationFromPointer(center, { x: 100, y: 0 }, { x: 180, y: 40 }, 0, 15), 60)
 })
 
 test('copies standalone drawing lines with their absolute geometry', () => {

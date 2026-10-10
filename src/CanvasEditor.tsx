@@ -4,7 +4,7 @@ import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchit
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
-import { alignCanvasSelection, assignCanvasSelectionToLane, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, reverseCanvasArrow, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasSpacingGuide, type CanvasTraceDirection } from './canvasOperations.js'
+import { alignCanvasSelection, assignCanvasSelectionToLane, canvasRotationFromPointer, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasResizeHandle, type CanvasSpacingGuide, type CanvasTraceDirection, type CanvasTransformBox } from './canvasOperations.js'
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
 import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
@@ -89,7 +89,9 @@ type DragState =
   | { kind: 'move'; pointerId: number; startX: number; startY: number; before: string; positions: Map<string, { x: number; y: number }> }
   | { kind: 'pan'; pointerId: number; clientX: number; clientY: number; start: Viewport }
   | { kind: 'marquee'; pointerId: number; startX: number; startY: number }
-  | { kind: 'resize'; pointerId: number; id: string; startX: number; startY: number; width: number; height: number; before: string }
+  | { kind: 'resize'; pointerId: number; id: string; handle: CanvasResizeHandle; box: CanvasTransformBox; before: string }
+  | { kind: 'multi-resize'; pointerId: number; handle: CanvasResizeHandle; bounds: CanvasTransformBox; boxes: Map<string, CanvasTransformBox>; before: string }
+  | { kind: 'rotate'; pointerId: number; id: string; center: CanvasPoint; start: CanvasPoint; initialRotation: number; before: string }
   | { kind: 'arrow-point'; pointerId: number; id: string; index: number; before: string }
   | { kind: 'arrow-endpoint'; pointerId: number; id: string; endpoint: 'from' | 'to'; before: string }
   | { kind: 'arrow-label'; pointerId: number; id: string; before: string }
@@ -278,7 +280,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({})
   const [gesturePositionOverrides, setGesturePositionOverrides] = useState<Record<string, CanvasPoint> | null>(null)
-  const [resizeDraft, setResizeDraft] = useState<{ id: string; width: number; height: number } | null>(null)
+  const [transformDrafts, setTransformDrafts] = useState<Record<string, CanvasTransformBox> | null>(null)
   const [arrowPointDraft, setArrowPointDraft] = useState<{ id: string; points: CanvasPoint[] } | null>(null)
   const [arrowLabelDraft, setArrowLabelDraft] = useState<{ id: string; position: CanvasPoint } | null>(null)
   const [lineDraft, setLineDraft] = useState<LineDraft | null>(null)
@@ -327,7 +329,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const arrowEndpointPreviewRef = useRef<typeof arrowEndpointPreview>(null)
   const insertTargetRef = useRef<typeof insertTarget>(null)
   const gesturePositionOverridesRef = useRef<typeof gesturePositionOverrides>(null)
-  const resizeDraftRef = useRef<typeof resizeDraft>(null)
+  const transformDraftsRef = useRef<typeof transformDrafts>(null)
   const arrowPointDraftRef = useRef<typeof arrowPointDraft>(null)
   const arrowLabelDraftRef = useRef<typeof arrowLabelDraft>(null)
   const lineDraftRef = useRef<typeof lineDraft>(null)
@@ -1279,32 +1281,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const semanticLodLevel = semanticLodProjection.level
   const autoCollapsedGroupIds = new Set(semanticLodProjection.autoCollapsedGroupIds)
   const renderSceneBase = semanticLodProjection.scene
-  const renderScene = gesturePositionOverrides
+  const renderScene = gesturePositionOverrides || transformDrafts || arrowPointDraft
     ? {
         ...renderSceneBase,
         elements: renderSceneBase.elements.map((item) => {
           if (item.type === 'arrow') return arrowPointDraft?.id === item.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item
-          const position = gesturePositionOverrides[item.id]
-          const size = resizeDraft?.id === item.id ? resizeDraft : null
-          if (!position && !size) return item
+          const position = gesturePositionOverrides?.[item.id]
+          const transform = transformDrafts?.[item.id]
+          if (!position && !transform) return item
           return {
             ...item,
+            ...(transform ? { x: transform.x, y: transform.y, width: transform.width, height: transform.height, rotation: transform.rotation } : {}),
             ...(position ? { x: position.x, y: position.y } : {}),
-            ...(size ? { width: size.width, height: size.height } : {}),
           }
         }),
       }
-    : resizeDraft
-      ? {
-          ...renderSceneBase,
-          elements: renderSceneBase.elements.map((item) => {
-            if (item.type === 'arrow') return arrowPointDraft?.id === item.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item
-            return item.id === resizeDraft.id ? { ...item, width: resizeDraft.width, height: resizeDraft.height } : item
-          }),
-        }
-      : arrowPointDraft
-        ? { ...renderSceneBase, elements: renderSceneBase.elements.map((item) => item.type === 'arrow' && item.id === arrowPointDraft.id ? { ...item, points: arrowPointDraft.points, bundleKey: undefined } : item) }
-        : renderSceneBase
+    : renderSceneBase
   const architectureBreadcrumbs = scopedArchitectureProjection?.breadcrumbs ?? []
   const projectedBoxes = renderScene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const projectedArrows = renderScene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
@@ -1312,6 +1304,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedSingle = selected.length === 1 ? selected[0] : null
   const selectedBox = selectedSingle && selectedSingle.type !== 'arrow' ? selectedSingle : null
   const selectedBoxes = selected.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const projectedSelectedBoxes = projectedBoxes.filter((item) => selectedIds.includes(item.id))
+  const multiTransformBounds = !architectureWorkbench && projectedSelectedBoxes.length > 1 && selectedBoxes.every((item) => !item.locked) ? canvasBoxesBounds(projectedSelectedBoxes) : null
   const selectedTextBox = selectedBox?.type === 'note' && selectedBox.textOnly ? selectedBox : null
   const selectedImageBox = selectedBox?.type === 'note' && selectedBox.imagePath ? selectedBox : null
   const batchStyleBoxes = selectedBoxes.filter((item) => !(item.type === 'note' && (item.textOnly || item.imagePath)))
@@ -1348,7 +1342,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const selectedLocked = selectedBoxes.filter((item) => item.locked)
   const selectedGroupIds = [...new Set(selectedBoxes.map((item) => item.groupId).filter((value): value is string => Boolean(value)))]
   const groupBounds = staticGroupBounds
-  const hasGeometryDraft = Boolean(gesturePositionOverrides || resizeDraft || arrowPointDraft)
+  const hasGeometryDraft = Boolean(gesturePositionOverrides || transformDrafts || arrowPointDraft)
   const projectedGroupBounds = hasGeometryDraft ? canvasGroupFrames(renderScene) : staticProjectedGroupBounds
   const displayGroupBounds = projectedGroupBounds.map((group) => playback?.groupFrameOverrides?.[group.id] ?? group)
   // Only an explicitly selected boundary owns the boundary inspector. Nodes that
@@ -1525,10 +1519,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       window.cancelAnimationFrame(geometryDraftFrameRef.current)
       geometryDraftFrameRef.current = null
     }
-    resizeDraftRef.current = null
+    transformDraftsRef.current = null
     arrowPointDraftRef.current = null
     arrowLabelDraftRef.current = null
-    setResizeDraft(null)
+    setTransformDrafts(null)
     setArrowPointDraft(null)
     setArrowLabelDraft(null)
   }
@@ -1537,7 +1531,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (geometryDraftFrameRef.current !== null) return
     geometryDraftFrameRef.current = window.requestAnimationFrame(() => {
       geometryDraftFrameRef.current = null
-      setResizeDraft(resizeDraftRef.current)
+      setTransformDrafts(transformDraftsRef.current)
       setArrowPointDraft(arrowPointDraftRef.current)
       setArrowLabelDraft(arrowLabelDraftRef.current)
     })
@@ -2499,14 +2493,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (geometryChanged) commit(next, false)
       recordGesture(active.before)
       clearGestureVisual()
-    } else if (active.kind === 'resize') {
-      const draft = resizeDraftRef.current
-      if (draft) {
+    } else if (active.kind === 'resize' || active.kind === 'multi-resize' || active.kind === 'rotate') {
+      const drafts = transformDraftsRef.current
+      if (drafts) {
+        const changedIds = Object.keys(drafts)
         let next: CanvasScene = {
           ...currentScene(),
-          elements: currentScene().elements.map((item) => item.type !== 'arrow' && item.id === draft.id ? { ...item, width: draft.width, height: draft.height } : item),
+          elements: currentScene().elements.map((item) => {
+            if (item.type === 'arrow') return item
+            const draft = drafts[item.id]
+            return draft ? { ...item, x: draft.x, y: draft.y, width: draft.width, height: draft.height, rotation: draft.rotation } : item
+          }),
         }
-        if (next.architecture) next = routeArchitectureEdgesIncremental(next, [draft.id])
+        if (next.architecture) next = routeArchitectureEdgesIncremental(next, changedIds)
         commit(next, false)
         recordGesture(active.before)
       }
@@ -2589,8 +2588,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       setFreehandDraft(null)
     }
     if (active.kind === 'move') clearGestureVisual()
-    if (active.kind === 'resize' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
-    if (active.kind === 'resize') setSnapGuides({})
+    if (active.kind === 'resize' || active.kind === 'multi-resize' || active.kind === 'rotate' || active.kind === 'arrow-point' || active.kind === 'arrow-label') clearGeometryDrafts()
+    if (active.kind === 'resize' || active.kind === 'multi-resize' || active.kind === 'rotate') setSnapGuides({})
     if (active.kind === 'arrow-endpoint') {
       arrowEndpointPreviewRef.current = null
       setArrowEndpointPreview(null)
@@ -2691,52 +2690,91 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
   }
 
-  function beginResize(event: React.PointerEvent<SVGRectElement>, item: CanvasNode | CanvasNote) {
+  function beginResize(event: React.PointerEvent<SVGElement>, item: CanvasNode | CanvasNote, handle: CanvasResizeHandle) {
     if (item.locked) return
     event.stopPropagation()
-    const live = currentScene()
-    const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    drag.current = { kind: 'resize', pointerId: event.pointerId, id: item.id, startX: point.x, startY: point.y, width: item.width, height: item.height, before: sourceRef.current }
-    const draft = { id: item.id, width: item.width, height: item.height }
-    resizeDraftRef.current = draft
-    setResizeDraft(draft)
+    const box: CanvasTransformBox = { x: item.x, y: item.y, width: item.width, height: item.height, ...(item.rotation ? { rotation: item.rotation } : {}) }
+    drag.current = { kind: 'resize', pointerId: event.pointerId, id: item.id, handle, box, before: sourceRef.current }
+    transformDraftsRef.current = { [item.id]: box }
+    setTransformDrafts({ [item.id]: box })
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
-  function moveResize(event: React.PointerEvent<SVGRectElement>) {
+  function moveResize(event: React.PointerEvent<SVGElement>) {
     const active = drag.current
-    if (!active || active.kind !== 'resize' || active.pointerId !== event.pointerId) return
+    if (!active || (active.kind !== 'resize' && active.kind !== 'multi-resize') || active.pointerId !== event.pointerId) return
     const live = currentScene()
-    const point = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
-    const rawWidth = Math.max(100, active.width + point.x - active.startX)
-    const rawHeight = Math.max(60, active.height + point.y - active.startY)
-    let width = event.altKey ? rawWidth : snap(rawWidth)
-    let height = event.altKey ? rawHeight : snap(rawHeight)
+    const rawPoint = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
+    const rotatedSingle = active.kind === 'resize' && Boolean(active.box.rotation)
+    const point = event.altKey || rotatedSingle ? rawPoint : { x: snap(rawPoint.x), y: snap(rawPoint.y) }
+    if (active.kind === 'multi-resize') {
+      const drafts = scaleCanvasTransformBoxes(active.boxes, active.bounds, active.handle, point, { center: event.altKey, preserveAspect: event.shiftKey })
+      transformDraftsRef.current = Object.fromEntries(drafts)
+      setSnapGuides({})
+      scheduleGeometryDraftRender()
+      return
+    }
+    let draft = resizeCanvasTransformBox(active.box, active.handle, point, { center: event.altKey, preserveAspect: event.shiftKey })
     let sameWidth = false
     let sameHeight = false
-    if (!event.altKey) {
+    if (!event.altKey && !event.shiftKey && !active.box.rotation) {
       const others = live.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id !== active.id)
       const threshold = Math.max(4, 8 / Math.max(viewport.zoom, 0.5))
-      const widthTarget = nearestValue(width, others.map((item) => item.width), threshold)
-      const heightTarget = nearestValue(height, others.map((item) => item.height), threshold)
+      const widthTarget = nearestValue(draft.width, others.map((item) => item.width), threshold)
+      const heightTarget = nearestValue(draft.height, others.map((item) => item.height), threshold)
       if (widthTarget !== undefined) {
-        width = widthTarget
+        const delta = widthTarget - draft.width
+        draft = { ...draft, width: widthTarget, x: active.handle.includes('w') ? draft.x - delta : draft.x }
         sameWidth = true
       }
       if (heightTarget !== undefined) {
-        height = heightTarget
+        const delta = heightTarget - draft.height
+        draft = { ...draft, height: heightTarget, y: active.handle.includes('n') ? draft.y - delta : draft.y }
         sameHeight = true
       }
-      const source = others.length ? live.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === active.id) : undefined
-      setSnapGuides(source && (sameWidth || sameHeight) ? {
-        sizeLabel: sameWidth && sameHeight ? '同宽 · 同高' : sameWidth ? '同宽' : '同高',
-        sizePoint: { x: source.x + width, y: source.y - 12 },
-      } : {})
-    } else {
-      setSnapGuides({})
     }
-    const draft = { id: active.id, width, height }
-    resizeDraftRef.current = draft
+    setSnapGuides(sameWidth || sameHeight ? {
+      sizeLabel: sameWidth && sameHeight ? '同宽 · 同高' : sameWidth ? '同宽' : '同高',
+      sizePoint: { x: draft.x + draft.width, y: draft.y - 12 },
+    } : {})
+    transformDraftsRef.current = { [active.id]: draft }
+    scheduleGeometryDraftRender()
+  }
+
+  function beginMultiResize(event: React.PointerEvent<SVGElement>, handle: CanvasResizeHandle) {
+    if (architectureWorkbench || selectedBoxes.length < 2 || selectedBoxes.some((item) => item.locked)) return
+    event.stopPropagation()
+    const boxes = new Map(selectedBoxes.map((item) => [item.id, { x: item.x, y: item.y, width: item.width, height: item.height, ...(item.rotation ? { rotation: item.rotation } : {}) } satisfies CanvasTransformBox]))
+    const bounds = canvasBoxesBounds([...boxes.values()])
+    drag.current = { kind: 'multi-resize', pointerId: event.pointerId, handle, bounds, boxes, before: sourceRef.current }
+    transformDraftsRef.current = Object.fromEntries(boxes)
+    setTransformDrafts(Object.fromEntries(boxes))
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function beginRotate(event: React.PointerEvent<SVGElement>, item: CanvasNode | CanvasNote) {
+    if (architectureWorkbench || item.locked) return
+    event.stopPropagation()
+    const live = currentScene()
+    const start = scenePoint(event.clientX, event.clientY, svgRef.current!, live, viewport)
+    const center = { x: item.x + item.width / 2, y: item.y + item.height / 2 }
+    drag.current = { kind: 'rotate', pointerId: event.pointerId, id: item.id, center, start, initialRotation: item.rotation ?? 0, before: sourceRef.current }
+    const draft: CanvasTransformBox = { x: item.x, y: item.y, width: item.width, height: item.height, ...(item.rotation ? { rotation: item.rotation } : {}) }
+    transformDraftsRef.current = { [item.id]: draft }
+    setTransformDrafts({ [item.id]: draft })
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveRotate(event: React.PointerEvent<SVGElement>) {
+    const active = drag.current
+    if (!active || active.kind !== 'rotate' || active.pointerId !== event.pointerId) return
+    const point = scenePoint(event.clientX, event.clientY, svgRef.current!, currentScene(), viewport)
+    const rotation = canvasRotationFromPointer(active.center, active.start, point, active.initialRotation, event.shiftKey ? 15 : 1)
+    const source = currentScene().elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === active.id)
+    if (!source) return
+    const draft: CanvasTransformBox = { x: source.x, y: source.y, width: source.width, height: source.height, ...(rotation ? { rotation } : {}) }
+    transformDraftsRef.current = { [active.id]: draft }
+    setSnapGuides({ sizeLabel: `${Math.round(rotation)}°`, sizePoint: { x: source.x + source.width / 2, y: source.y - 34 } })
     scheduleGeometryDraftRender()
   }
 
@@ -3456,6 +3494,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <label><span>W</span><input aria-label="元素宽度" type="number" min="100" disabled={selectedBox.locked} value={Math.round(selectedBox.width)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, width: Math.max(100, Number(event.target.value) || 100) })} /></label>
                     <label><span>H</span><input aria-label="元素高度" type="number" min="60" disabled={selectedBox.locked} value={Math.round(selectedBox.height)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, height: Math.max(60, Number(event.target.value) || 60) })} /></label>
                   </div>
+                  <label><span>旋转</span><input aria-label="元素旋转角度" type="number" min="-180" max="180" disabled={selectedBox.locked} value={Math.round(selectedBox.rotation ?? 0)} onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, rotation: clamp(Number(event.target.value) || 0, -180, 180) || undefined })} /></label>
                   {selectedImageBox ? <>
                     <div className="freeform-section-caption">图片</div>
                     <label><span>适配</span><select aria-label="图片适配方式" disabled={selectedImageBox.locked} value={selectedImageBox.imageFit ?? 'contain'} onChange={(event) => updateElement(selectedImageBox.id, (item) => item.type === 'note' ? { ...item, imageFit: event.target.value as 'contain' | 'cover' } : item)}><option value="contain">完整显示</option><option value="cover">铺满裁切</option></select></label>
@@ -4027,7 +4066,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               key={item.id}
               className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${imagePath ? ' is-image' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
               style={canvasBoxVisualStyle(displayItem)}
-              transform={`translate(${displayX} ${displayY})`}
+              transform={`translate(${displayX} ${displayY})${displayItem.rotation ? ` rotate(${displayItem.rotation} ${displayItem.width / 2} ${displayItem.height / 2})` : ''}`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
               onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
@@ -4104,22 +4143,75 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   <circle cx={displayItem.width / 2} cy={displayItem.height} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'bottom')} />
                   <circle cx={0} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'left')} />
               </g> : null}
-              {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? (
+              {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? architectureWorkbench ? (
                 <rect
                   className="freeform-resize-handle"
+                  data-handle="se"
                   x={displayItem.width - 7}
                   y={displayItem.height - 7}
                   width="14"
                   height="14"
                   rx="3"
-                  onPointerDown={(event) => beginResize(event, item)}
+                  onPointerDown={(event) => beginResize(event, item, 'se')}
                   onPointerMove={moveResize}
                   onPointerUp={finishGesture}
                   onPointerCancel={cancelGesture}
                 />
-              ) : null}
+              ) : <>
+                {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((handle) => {
+                  const point = canvasResizeHandlePoint(handle, displayItem.width, displayItem.height)
+                  return <rect
+                    key={handle}
+                    className="freeform-resize-handle"
+                    data-handle={handle}
+                    x={point.x - 6}
+                    y={point.y - 6}
+                    width="12"
+                    height="12"
+                    rx="3"
+                    onPointerDown={(event) => beginResize(event, item, handle)}
+                    onPointerMove={moveResize}
+                    onPointerUp={finishGesture}
+                    onPointerCancel={cancelGesture}
+                  />
+                })}
+                <path className="freeform-rotate-stem" d={`M ${displayItem.width / 2} 0 V -26`} />
+                <circle
+                  className="freeform-rotate-handle"
+                  cx={displayItem.width / 2}
+                  cy={-32}
+                  r="7"
+                  onPointerDown={(event) => beginRotate(event, item)}
+                  onPointerMove={moveRotate}
+                  onPointerUp={finishGesture}
+                  onPointerCancel={cancelGesture}
+                />
+              </> : null}
             </g>
           )})}
+          {multiTransformBounds ? (
+            <g className="freeform-multi-transform" pointerEvents="none">
+              <rect x={multiTransformBounds.x} y={multiTransformBounds.y} width={multiTransformBounds.width} height={multiTransformBounds.height} />
+              {(['nw', 'ne', 'se', 'sw'] as const).map((handle) => {
+                const local = canvasResizeHandlePoint(handle, multiTransformBounds.width, multiTransformBounds.height)
+                return <rect
+                  key={handle}
+                  className="freeform-resize-handle"
+                  data-handle={handle}
+                  x={multiTransformBounds.x + local.x - 7}
+                  y={multiTransformBounds.y + local.y - 7}
+                  width="14"
+                  height="14"
+                  rx="3"
+                  pointerEvents="all"
+                  onPointerDown={(event) => beginMultiResize(event, handle)}
+                  onPointerMove={moveResize}
+                  onPointerUp={finishGesture}
+                  onPointerCancel={cancelGesture}
+                />
+              })}
+            </g>
+          ) : null}
           {insertTarget ? (
             <g className="freeform-insert-target" transform={`translate(${insertTarget.point.x} ${insertTarget.point.y})`} pointerEvents="none">
               <circle r="11" />
@@ -4735,6 +4827,21 @@ function center(item: Pick<CanvasNode, 'x' | 'y' | 'width' | 'height'>) {
   return { x: item.x + item.width / 2, y: item.y + item.height / 2 }
 }
 
+function canvasBoxesBounds(items: Array<Pick<CanvasNode | CanvasNote, 'x' | 'y' | 'width' | 'height'>>): CanvasTransformBox {
+  const left = Math.min(...items.map((item) => item.x))
+  const top = Math.min(...items.map((item) => item.y))
+  const right = Math.max(...items.map((item) => item.x + item.width))
+  const bottom = Math.max(...items.map((item) => item.y + item.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function canvasResizeHandlePoint(handle: CanvasResizeHandle, width: number, height: number): CanvasPoint {
+  return {
+    x: handle.includes('w') ? 0 : handle.includes('e') ? width : width / 2,
+    y: handle.includes('n') ? 0 : handle.includes('s') ? height : height / 2,
+  }
+}
+
 function pathLabelPoint(start: CanvasPoint, end: CanvasPoint, points?: CanvasPoint[]): CanvasPoint {
   if (!points?.length) return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
   const path = [start, ...points, end]
@@ -4843,11 +4950,12 @@ function nearestNodeAnchor(
 ): { nodeId: string; anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint } | null {
   let best: { nodeId: string; anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint; distance: number } | null = null
   for (const node of scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !excludedIds.has(item.id))) {
+    const toward = center(node)
     const anchors: Array<{ anchor: Exclude<CanvasAnchor, 'auto'>; point: CanvasPoint }> = [
-      { anchor: 'top', point: { x: node.x + node.width / 2, y: node.y } },
-      { anchor: 'right', point: { x: node.x + node.width, y: node.y + node.height / 2 } },
-      { anchor: 'bottom', point: { x: node.x + node.width / 2, y: node.y + node.height } },
-      { anchor: 'left', point: { x: node.x, y: node.y + node.height / 2 } },
+      { anchor: 'top', point: anchorPoint(node, 'top', toward) },
+      { anchor: 'right', point: anchorPoint(node, 'right', toward) },
+      { anchor: 'bottom', point: anchorPoint(node, 'bottom', toward) },
+      { anchor: 'left', point: anchorPoint(node, 'left', toward) },
     ]
     for (const candidate of anchors) {
       const distance = Math.hypot(candidate.point.x - point.x, candidate.point.y - point.y)
