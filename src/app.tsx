@@ -402,10 +402,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     | { kind: 'diagram'; path: string }
     | { kind: 'workspace' }
     | { kind: 'close-thread'; path: string }
-    | { kind: 'blank-canvas' }
+    | { kind: 'new-diagram'; type: DiagramType; title: string; canvasWorkbench?: CanvasWorkbenchMode }
     | null
   >(null)
-  const [creatingBlankCanvas, setCreatingBlankCanvas] = useState(false)
   const threadDiagramMenu = useRef<HTMLDetailsElement>(null)
   const threadNewMenu = useRef<HTMLDetailsElement>(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
@@ -926,8 +925,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       void closeThreadTab(target.path, true)
       return
     }
-    if (target.kind === 'blank-canvas') {
-      void createBlankCanvas(true)
+    if (target.kind === 'new-diagram') {
+      void createDiagram(target.type, target.title, target.canvasWorkbench)
       return
     }
     void selectDiagram(target.path, true)
@@ -1526,24 +1525,24 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setCreating(false)
+      threadNewMenu.current?.removeAttribute('open')
       rememberThreadTab(result.diagram.path)
     } catch (cause) {
       setError(errorMessage(cause))
     }
   }
 
-  async function createBlankCanvas(force = false) {
-    if (!force && dirty) {
-      setDiscardTarget({ kind: 'blank-canvas' })
+  async function requestCreateDiagram(type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode) {
+    if (dirty) {
+      setDiscardTarget({ kind: 'new-diagram', type, title, canvasWorkbench })
       return
     }
-    if (creatingBlankCanvas) return
-    setCreatingBlankCanvas(true)
-    try {
-      await createDiagram('canvas', '未命名画板', 'freeform')
-    } finally {
-      setCreatingBlankCanvas(false)
-    }
+    await createDiagram(type, title, canvasWorkbench)
+  }
+
+  function openThreadNewDiagramMenu() {
+    threadDiagramMenu.current?.removeAttribute('open')
+    threadNewMenu.current?.setAttribute('open', '')
   }
 
   async function renameDiagram() {
@@ -1868,7 +1867,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           <button className="workspace-path" type="button" onClick={requestWorkspaceSwitch} title={workspacePath}>{workspacePath}</button>
         </div>
 
-        {creating ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={createDiagram} /> : null}
+        {creating ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={requestCreateDiagram} /> : null}
 
         <div className="diagram-search-wrap">
           <input
@@ -1998,40 +1997,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   onClick={() => void closeThreadTab(selected.path)}
                 >×</button>
               ) : null}
-              {selected ? (
-                <details className="thread-new-menu" ref={threadNewMenu}>
-                  <summary>新建</summary>
-                  <div className="thread-new-menu-popover" role="menu" aria-label="新建图表">
+              <details className="thread-new-menu" ref={threadNewMenu}>
+                <summary>新建</summary>
+                <div className="thread-new-menu-popover" role="dialog" aria-label="新建图表">
+                  <NewDiagramForm
+                    key={`thread-new-${snapshot.diagrams.length}`}
+                    onCancel={() => threadNewMenu.current?.removeAttribute('open')}
+                    onCreate={requestCreateDiagram}
+                  />
+                  <div className="thread-new-ai-action">
                     <button
                       type="button"
-                      role="menuitem"
-                      disabled={creatingBlankCanvas}
-                      onClick={() => {
-                        threadNewMenu.current?.removeAttribute('open')
-                        void createBlankCanvas()
-                      }}
-                    >
-                      <span>
-                        <strong>{creatingBlankCanvas ? '创建中…' : '新建画板'}</strong>
-                        <small>从空白自由画布开始</small>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
                       onClick={() => {
                         threadNewMenu.current?.removeAttribute('open')
                         setAiOpen(true)
                       }}
-                    >
-                      <span>
-                        <strong>AI 生成</strong>
-                        <small>根据对话和代码生成图表</small>
-                      </span>
-                    </button>
+                    >AI 生成</button>
                   </div>
-                </details>
-              ) : null}
+                </div>
+              </details>
             </div>
             {threadTabs.length > 0 ? (
               <div className="thread-diagram-tabs" aria-label="当前对话图表">
@@ -2262,7 +2246,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <div className="empty-actions">
               {isThread ? (
                 <>
-                  <button className="primary-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '新建画板'}</button>
+                  <button className="primary-button" type="button" onClick={openThreadNewDiagramMenu}>新建图表</button>
                   <button type="button" onClick={() => setAiOpen(true)}>AI 生成</button>
                 </>
               ) : (
@@ -3009,8 +2993,22 @@ const canvasWorkbenchChoices: NewDiagramChoice[] = [
   { key: 'canvas:freeform', label: '自由画布', meta: '通用绘图', type: 'canvas', canvasWorkbench: 'freeform' },
 ]
 
+const newDiagramChoiceGroups = [
+  { key: 'canvas', label: '画布', items: canvasWorkbenchChoices },
+  ...diagramTypeGroups.filter((group) => group.category !== 'canvas').map((group) => ({
+    key: group.category,
+    label: group.label,
+    items: group.items.map((item) => ({
+      key: `mermaid:${item.type}`,
+      label: item.type === 'flowchart' ? '自动布局流程图' : item.label,
+      meta: '自动布局',
+      type: item.type,
+    } satisfies NewDiagramChoice)),
+  })),
+]
+
 function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (type: DiagramType, title: string, canvasWorkbench?: CanvasWorkbenchMode) => Promise<void> }) {
-  const [choice, setChoice] = useState<NewDiagramChoice>(canvasWorkbenchChoices[0])
+  const [choice, setChoice] = useState<NewDiagramChoice | null>(null)
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -3019,42 +3017,30 @@ function NewDiagramForm({ onCancel, onCreate }: { onCancel: () => void; onCreate
       className="new-diagram-form"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!title.trim()) return
+        if (!choice || !title.trim()) return
         setSubmitting(true)
         void onCreate(choice.type, title, choice.canvasWorkbench).finally(() => setSubmitting(false))
       }}
     >
-      <div className="new-diagram-form-head"><strong>选择图类型</strong><button type="button" onClick={onCancel} aria-label="关闭新建图表">×</button></div>
-      <div className="new-diagram-workbench-list" aria-label="绘图工作台">
-        {canvasWorkbenchChoices.map((item) => (
-          <button key={item.key} type="button" className={choice.key === item.key ? 'is-selected' : ''} onClick={() => setChoice(item)}>
-            <strong>{item.label}</strong><small>{item.meta}</small>
-          </button>
+      <div className="new-diagram-form-head"><strong>新建图表</strong><button type="button" onClick={onCancel} aria-label="关闭新建图表">×</button></div>
+      <div className="new-diagram-type-groups" aria-label="图表类型">
+        {newDiagramChoiceGroups.map((group) => (
+          <section className="new-diagram-type-group" key={group.key}>
+            <span>{group.label}</span>
+            <div>
+              {group.items.map((item) => (
+                <button key={item.key} type="button" className={choice?.key === item.key ? 'is-selected' : ''} onClick={() => setChoice(item)}>
+                  <strong>{item.label}</strong><small>{item.meta}</small>
+                </button>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
-      <label className="new-diagram-auto-layout">
-        <span>自动布局图</span>
-        <select
-          value={choice.type === 'canvas' ? '' : choice.type}
-          onChange={(event) => {
-            const type = event.target.value as DiagramType | ''
-            if (!type) return
-            const option = diagramTypes.find((item) => item.type === type)
-            if (option) setChoice({ key: `mermaid:${type}`, label: option.label, meta: 'Mermaid 自动布局', type })
-          }}
-        >
-          <option value="">选择其他类型…</option>
-          {diagramTypeGroups.filter((group) => group.category !== 'canvas').map((group) => (
-            <optgroup key={group.category} label={group.label}>
-              {group.items.map((item) => <option key={item.type} value={item.type}>{item.type === 'flowchart' ? 'Mermaid 流程图' : item.label}</option>)}
-            </optgroup>
-          ))}
-        </select>
-      </label>
-      <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`${choice.label}名称`} />
+      <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={choice ? `${choice.label}名称` : '图表名称'} />
       <div className="form-actions">
         <button type="button" onClick={onCancel}>取消</button>
-        <button className="primary-button compact" disabled={submitting || !title.trim()}>{submitting ? '创建中…' : '创建'}</button>
+        <button className="primary-button compact" disabled={submitting || !choice || !title.trim()}>{submitting ? '创建中…' : '创建'}</button>
       </div>
     </form>
   )

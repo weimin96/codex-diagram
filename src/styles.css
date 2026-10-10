@@ -134,14 +134,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .new-diagram-form-head strong { font-size: 12px; font-weight: 680; }
 .new-diagram-form-head button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-tertiary); font-size: 16px; }
 .new-diagram-form-head button:hover { background: var(--surface-hover); color: var(--text-primary); }
-.new-diagram-workbench-list { display: grid; gap: 4px; }
-.new-diagram-workbench-list > button { min-height: 42px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-primary); text-align: left; }
-.new-diagram-workbench-list > button:hover { border-color: var(--border-strong); background: var(--surface-hover); }
-.new-diagram-workbench-list > button.is-selected { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel)); box-shadow: inset 2px 0 0 var(--accent); }
-.new-diagram-workbench-list strong { font-size: 11px; font-weight: 680; }
-.new-diagram-workbench-list small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; }
-.new-diagram-auto-layout { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 6px; color: var(--text-tertiary); font-size: 10px; }
-.new-diagram-auto-layout select { min-width: 0; height: 30px; }
+.new-diagram-type-groups { min-height: 0; max-height: 310px; overflow-y: auto; display: grid; gap: 8px; padding-right: 2px; }
+.new-diagram-type-group { display: grid; gap: 4px; }
+.new-diagram-type-group > span { padding-inline: 2px; color: var(--text-tertiary); font-size: 10px; font-weight: 620; }
+.new-diagram-type-group > div { display: grid; gap: 4px; }
+.new-diagram-type-group button { min-width: 0; min-height: 38px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-primary); text-align: left; }
+.new-diagram-type-group button:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-panel)); }
+.new-diagram-type-group button.is-selected { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface-panel)); box-shadow: inset 2px 0 0 var(--accent); }
+.new-diagram-type-group strong { min-width: 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.new-diagram-type-group small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; white-space: nowrap; }
 .form-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .form-actions button { height: 30px; font-size: 12px; }
 
@@ -189,12 +190,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .thread-new-menu { position: relative; flex: 0 0 auto; }
 .thread-new-menu > summary { height: 30px; display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
 .thread-new-menu > summary:hover, .thread-new-menu[open] > summary { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text-primary); }
-.thread-new-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); right: 0; width: 230px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
-.thread-new-menu-popover button { width: 100%; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; }
-.thread-new-menu-popover button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
-.thread-new-menu-popover button > span { display: grid; gap: 2px; }
-.thread-new-menu-popover strong { font-size: 11px; font-weight: 620; }
-.thread-new-menu-popover small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; }
+.thread-new-menu-popover { position: absolute; z-index: 18; top: calc(100% + 6px); right: 0; width: min(420px, calc(100vw - 28px)); overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-panel); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16); }
+.thread-new-menu-popover .new-diagram-form { padding: 10px; border-bottom: 0; background: var(--surface-panel); }
+.thread-new-menu-popover .new-diagram-type-group > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.thread-new-ai-action { padding: 7px 10px 10px; border-top: 1px solid var(--border); }
+.thread-new-ai-action button { width: 100%; height: 30px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-panel); color: var(--text-secondary); font-size: 11px; }
+.thread-new-ai-action button:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--text-primary) 5%, var(--surface-panel)); color: var(--text-primary); }
 .thread-diagram-tabs { min-width: 0; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
 .thread-diagram-tabs::-webkit-scrollbar { display: none; }
 .thread-diagram-tab { height: 29px; min-width: 0; flex: 0 0 auto; display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); }
@@ -1337,7 +1338,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .thread-diagram-menu { min-width: 0; width: auto; max-width: none; flex: 1 1 auto; }
   .thread-current-close { width: 30px; flex-basis: 30px; }
   .thread-new-menu > summary { padding-inline: 8px; }
-  .thread-new-menu-popover { width: min(230px, calc(100vw - 20px)); }
+  .thread-new-menu-popover { width: min(380px, calc(100vw - 20px)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
