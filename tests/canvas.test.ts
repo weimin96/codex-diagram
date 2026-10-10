@@ -7,7 +7,13 @@ test('round-trips a Canvas scene and renders standalone SVG', () => {
   const scene = parseCanvasScene(source)
   assert.equal(scene.type, 'codex-diagram-canvas')
   assert.equal(scene.title, 'Architecture')
-  assert.equal(scene.elements.filter((item) => item.type === 'node').length, 2)
+  assert.equal(scene.workbench, 'freeform')
+  assert.equal(scene.elements.length, 0)
+  scene.elements = [
+    { id: 'source', type: 'node', x: 120, y: 120, width: 180, height: 80, text: 'Architecture' },
+    { id: 'target', type: 'node', x: 420, y: 260, width: 180, height: 80, text: 'Target' },
+    { id: 'source-target', type: 'arrow', from: 'source', to: 'target' },
+  ]
   assert.equal(parseCanvasScene(serializeCanvasScene(scene)).elements.length, scene.elements.length)
 
   const svg = canvasSceneToSvg(scene)

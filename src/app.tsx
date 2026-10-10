@@ -396,7 +396,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [changeReview, setChangeReview] = useState<{ before: DiagramDocument; after: DiagramDocument } | null>(null)
   const [changeReviewOpen, setChangeReviewOpen] = useState(false)
   const [syncIssue, setSyncIssue] = useState<string | null>(null)
-  const [discardTarget, setDiscardTarget] = useState<{ kind: 'diagram'; path: string } | { kind: 'workspace' } | null>(null)
+  const [discardTarget, setDiscardTarget] = useState<
+    | { kind: 'diagram'; path: string }
+    | { kind: 'workspace' }
+    | { kind: 'close-thread'; path: string }
+    | { kind: 'blank-canvas' }
+    | null
+  >(null)
+  const [creatingBlankCanvas, setCreatingBlankCanvas] = useState(false)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
@@ -598,7 +605,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }, [aiProposal, dirty, followConversation, gitImpactReport, isThread, onSnapshot, selected, snapshot, workspacePath])
 
   useEffect(() => {
-    if (!isThread || selected || dirty) return
+    if (!isThread || selected || dirty || snapshot.diagrams.length > 0) return
     let disposed = false
     let inFlight = false
     const discover = () => {
@@ -761,14 +768,37 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     })
   }
 
-  function closeThreadTab(diagramPath: string) {
+  async function closeThreadTab(diagramPath: string, force = false) {
     if (!isThread) return
+    if (!force && selected?.path === diagramPath && dirty) {
+      setDiscardTarget({ kind: 'close-thread', path: diagramPath })
+      return
+    }
     const index = threadTabs.indexOf(diagramPath)
     const next = threadTabs.filter((path) => path !== diagramPath)
     setThreadTabs(next)
-    if (selected?.path !== diagramPath || next.length === 0) return
+    if (selected?.path !== diagramPath) return
     const fallback = next[Math.min(Math.max(0, index - 1), next.length - 1)]
-    if (fallback) void selectDiagram(fallback, true, false)
+    if (fallback) {
+      await selectDiagram(fallback, true, false)
+      return
+    }
+    selectRequestSeq.current += 1
+    setSelected(null)
+    setSource('')
+    setCanvasSelection(null)
+    setCanvasFocus(null)
+    setCanvasPlayback(null)
+    setGitImpactReport(null)
+    setGitImpactOpen(false)
+    setPatchHistoryOpen(false)
+    setPatchHistoryEntries([])
+    onSnapshot({ ...snapshot, activeDiagramPath: undefined })
+    try {
+      await callTool<{ kind: 'diagram-thread-closed'; path?: string }>('diagram.closeThreadDiagram', { path: diagramPath })
+    } catch (cause) {
+      setError(`关闭当前图失败：${errorMessage(cause)}`)
+    }
   }
 
   async function selectDiagram(diagramPath: string, force = false, remember = true) {
@@ -845,6 +875,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!target) return
     if (target.kind === 'workspace') {
       onSwitch()
+      return
+    }
+    if (target.kind === 'close-thread') {
+      void closeThreadTab(target.path, true)
+      return
+    }
+    if (target.kind === 'blank-canvas') {
+      void createBlankCanvas(true)
       return
     }
     void selectDiagram(target.path, true)
@@ -1449,6 +1487,20 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  async function createBlankCanvas(force = false) {
+    if (!force && dirty) {
+      setDiscardTarget({ kind: 'blank-canvas' })
+      return
+    }
+    if (creatingBlankCanvas) return
+    setCreatingBlankCanvas(true)
+    try {
+      await createDiagram('canvas', '未命名画板', 'freeform')
+    } finally {
+      setCreatingBlankCanvas(false)
+    }
+  }
+
   async function renameDiagram() {
     if (!selected || dirty || !renameTitle.trim()) return
     setError(null)
@@ -1832,13 +1884,26 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   if (event.target.value) void selectDiagram(event.target.value)
                 }}
               >
+                {!selected && snapshot.diagrams.length > 0 ? <option value="">未打开图表</option> : null}
                 {snapshot.diagrams.length === 0 ? <option value="">当前还没有图表</option> : null}
                 {snapshot.diagrams.map((diagram) => (
                   <option key={diagram.path} value={diagram.path}>{diagram.name} · {diagramLabel(diagram.type)}</option>
                 ))}
               </select>
+              {selected ? (
+                <button
+                  className="thread-current-close"
+                  type="button"
+                  aria-label={`关闭 ${selected.name}`}
+                  title="关闭当前图，不删除文件"
+                  onClick={() => void closeThreadTab(selected.path)}
+                >×</button>
+              ) : null}
             </div>
-            <button className="thread-new-button" type="button" onClick={() => setAiOpen(true)}>新图</button>
+            <div className="thread-new-actions">
+              <button className="thread-new-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '空白画板'}</button>
+              <button className="thread-new-button" type="button" onClick={() => setAiOpen(true)}>AI 新图</button>
+            </div>
             {threadTabs.length > 0 ? (
               <div className="thread-diagram-tabs" aria-label="当前对话图表">
                 {threadTabs.map((path) => {
@@ -2063,11 +2128,20 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         ) : (
           <div className="main-empty">
             <div className="empty-graphic"><span /><span /><span /></div>
-            <h2>选择或创建一个图表</h2>
-            <p>结构化图使用 Mermaid；自由布局的架构草图和说明使用 Canvas 文档。</p>
+            <h2>{isThread ? '当前没有打开的图表' : '选择或创建一个图表'}</h2>
+            <p>{isThread ? '可以新建空白画板，也可以从上方列表打开已有图表。' : '结构化图使用 Mermaid；自由布局的架构草图和说明使用 Canvas 文档。'}</p>
             <div className="empty-actions">
-              <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
-              <button type="button" onClick={() => setAiOpen(true)}>从代码生成</button>
+              {isThread ? (
+                <>
+                  <button className="primary-button" type="button" disabled={creatingBlankCanvas} onClick={() => void createBlankCanvas()}>{creatingBlankCanvas ? '创建中…' : '空白画板'}</button>
+                  <button type="button" onClick={() => setAiOpen(true)}>AI 新图</button>
+                </>
+              ) : (
+                <>
+                  <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
+                  <button type="button" onClick={() => setAiOpen(true)}>从代码生成</button>
+                </>
+              )}
             </div>
           </div>
         )}

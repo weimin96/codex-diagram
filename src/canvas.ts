@@ -254,13 +254,6 @@ export interface CanvasArchitectureCardTemplate {
 }
 
 export function createCanvasSource(title: string, workbench: CanvasWorkbenchMode = 'freeform'): string {
-  const elements: CanvasElement[] = workbench === 'freeform'
-    ? [
-        { id: 'node-start', type: 'node', x: 180, y: 180, width: 220, height: 96, text: title.trim() || '核心模块' },
-        { id: 'node-next', type: 'node', x: 560, y: 330, width: 220, height: 96, text: '双击文字编辑' },
-        { id: 'arrow-start-next', type: 'arrow', from: 'node-start', to: 'node-next' },
-      ]
-    : []
   return serializeCanvasScene({
     type: 'codex-diagram-canvas',
     version: 1,
@@ -268,7 +261,7 @@ export function createCanvasSource(title: string, workbench: CanvasWorkbenchMode
     width: 1600,
     height: 1000,
     workbench,
-    elements,
+    elements: [],
     ...(workbench === 'architecture' ? { architecture: { theme: 'enterprise', view: 'detail', density: 'auto' } as const } : {}),
   })
 }

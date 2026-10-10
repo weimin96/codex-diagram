@@ -274,6 +274,27 @@ server.registerTool('diagram.threadState', {
   }
 })
 
+server.registerTool('diagram.closeThreadDiagram', {
+  title: 'Close active diagram for this conversation',
+  description: 'Internal app bridge for closing the active Diagram view in this conversation without deleting the diagram file.',
+  inputSchema: z.object({ path: z.string().min(1).optional() }),
+  annotations: readonly,
+  _meta: appOnly,
+}, async ({ path: diagramPath }, extra) => {
+  const threadId = toolThreadId(extra._meta)
+  if (threadId) {
+    const current = threadSelection.get(threadId)
+    if (!diagramPath || !current?.path || current.path === diagramPath) {
+      threadSelection.set(threadId, { updatedAt: new Date().toISOString() })
+    }
+  }
+  const payload = { kind: 'diagram-thread-closed', path: diagramPath }
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
+    structuredContent: payload,
+  }
+})
+
 server.registerTool('diagram.list', {
   title: 'List diagrams',
   description: 'List Mermaid and Canvas diagram files in the current workspace.',

@@ -149,7 +149,7 @@ test('creates and manages freeform Canvas diagrams beside Mermaid files', async 
     const canvas = await store.create('canvas', 'Service Landscape')
     assert.equal(canvas.path, 'docs/diagrams/service-landscape.diagram.json')
     assert.equal(canvas.type, 'canvas')
-    assert.equal(parseCanvasScene(canvas.source).elements.length, 3)
+    assert.equal(parseCanvasScene(canvas.source).elements.length, 0)
 
     const architecture = await store.create('canvas', 'Architecture Board', 'architecture')
     assert.equal(parseCanvasScene(architecture.source).workbench, 'architecture')
