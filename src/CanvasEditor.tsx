@@ -1,3 +1,4 @@
+import { canvasArrowLabelText } from './canvasLabelText.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
@@ -3913,21 +3914,21 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const end = standalone ? displayArrow.end! : anchorPoint(to!, displayArrow.toAnchor, displayArrow.points?.at(-1) ?? fromCenter)
             const path = canvasArrowPath(start, end, displayArrow)
             const overridden = Boolean(playback?.arrowOverrides?.[arrow.id])
-            const fallbackLabelPoint = pathLabelPoint(start, end, displayArrow.points)
-            const automaticLabelLayout = (overridden || standalone) && displayArrow.label
-              ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - 10, width: Math.max(46, Math.min(220, displayArrow.label.length * 7 + 20)), height: 22 }
+            const fallbackLabelPoint = displayArrow.labelPosition ?? pathLabelPoint(start, end, displayArrow.points)
+            const automaticLabelLayout = overridden && displayArrow.label
+              ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - (displayArrow.labelPosition ? 0 : 10), ...canvasArrowLabelText(displayArrow.label) }
               : relationLabelLayouts.get(arrow.id)
             const labelLayout = arrowLabelDraft?.id === arrow.id && displayArrow.label
               ? {
                   id: arrow.id,
                   x: arrowLabelDraft.position.x,
                   y: arrowLabelDraft.position.y,
-                  width: automaticLabelLayout?.width ?? Math.max(46, Math.min(220, displayArrow.label.length * 7 + 20)),
-                  height: automaticLabelLayout?.height ?? 22,
+                  ...canvasArrowLabelText(displayArrow.label),
                 }
               : automaticLabelLayout
             return (
               <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+                {displayArrow.label ? <title>{displayArrow.label}</title> : null}
                 <path className="freeform-arrow-hit-path" d={path} />
                 <path
                   className="freeform-arrow-line"
@@ -3946,8 +3947,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     onPointerCancel={selectedIds.includes(arrow.id) ? cancelGesture : undefined}
                     onDoubleClick={selectedIds.includes(arrow.id) ? (event) => { event.stopPropagation(); updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item) } : undefined}
                   >
-                    <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={labelLayout.height / 2} />
-                    <text x={labelLayout.x} y={labelLayout.y + 4} textAnchor="middle">{truncate(displayArrow.label, 30)}</text>
+                    <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={8} />
+                    <text x={labelLayout.x} y={labelLayout.y + 4 - (labelLayout.lines.length - 1) * 8} textAnchor="middle">{labelLayout.lines.map((line, index) => <tspan key={index} x={labelLayout.x} dy={index ? 16 : 0}>{line}</tspan>)}</text>
                   </g>
                 ) : null}
                 {selectedIds.includes(arrow.id) && !displayArrow.freehand ? displayArrow.points?.map((point, index) => (

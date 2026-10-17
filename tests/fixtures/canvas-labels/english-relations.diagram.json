@@ -1,0 +1,50 @@
+{
+  "type": "codex-diagram-canvas",
+  "version": 1,
+  "title": "英文与独立连线标签",
+  "width": 1100,
+  "height": 600,
+  "elements": [
+    {
+      "id": "gateway",
+      "type": "node",
+      "x": 40,
+      "y": 240,
+      "width": 180,
+      "height": 80,
+      "text": "Gateway"
+    },
+    {
+      "id": "service",
+      "type": "node",
+      "x": 850,
+      "y": 240,
+      "width": 180,
+      "height": 80,
+      "text": "Order Service"
+    },
+    {
+      "id": "request",
+      "type": "arrow",
+      "from": "gateway",
+      "to": "service",
+      "routing": "straight",
+      "label": "Validate authorization and persist approved order transaction"
+    },
+    {
+      "id": "standalone",
+      "type": "arrow",
+      "from": "",
+      "to": "",
+      "start": {
+        "x": 300,
+        "y": 440
+      },
+      "end": {
+        "x": 760,
+        "y": 440
+      },
+      "label": "Background subscription acknowledged"
+    }
+  ]
+}

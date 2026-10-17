@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { canvasArrowLabelText } from '../src/canvasLabelText.js'
+
+test('关系标签按显示宽度换行，中文、英文和超长文本保持有界', () => {
+  for (const label of ['事务提交后持久化订单及关联审批记录', 'Validate authorization and persist approved order transaction', '审批处理'.repeat(80)]) {
+    const layout = canvasArrowLabelText(label)
+    assert.equal(layout.lines.length, 2)
+    assert.ok(layout.width <= 218)
+    assert.equal(layout.height, 40)
+  }
+  assert.ok(canvasArrowLabelText('审批处理'.repeat(80)).lines[1].endsWith('…'))
+  assert.equal(canvasArrowLabelText('HTTP').lines.join(''), 'HTTP')
+})
+
+test('自动标签避让人工位置，并为独立连线生成相同的标签布局', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas', version: 1, title: '标签占用', width: 1000, height: 600,
+    elements: [
+      { id: 'a', type: 'node', x: 0, y: 200, width: 100, height: 80, text: '入口' },
+      { id: 'b', type: 'node', x: 900, y: 200, width: 100, height: 80, text: '服务' },
+      { id: 'automatic', type: 'arrow', from: 'a', to: 'b', fromAnchor: 'right', toAnchor: 'left', label: '自动布局的关系标签', emphasis: 'primary' },
+      { id: 'manual', type: 'arrow', from: '', to: '', start: { x: 200, y: 400 }, end: { x: 800, y: 400 }, label: '人工指定位置', labelPosition: { x: 500, y: 226 } },
+    ],
+  }
+  const source = serializeCanvasScene(scene)
+  const labels = canvasArrowLabelLayouts(scene)
+  const manual = labels.get('manual')!
+  const automatic = labels.get('automatic')!
+  assert.ok(manual)
+  assert.deepEqual([manual.x, manual.y], [500, 226])
+  assert.ok(Math.abs(automatic.x - manual.x) >= (automatic.width + manual.width) / 2
+    || Math.abs(automatic.y - manual.y) >= (automatic.height + manual.height) / 2)
+  assert.equal(serializeCanvasScene(scene), source)
+})
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')

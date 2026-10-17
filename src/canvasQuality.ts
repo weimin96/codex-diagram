@@ -1,6 +1,8 @@
 import {
   anchorPoint,
   canvasArrowRoutePoints,
+  canvasArrowLabelLayouts,
+  canvasArchitectureRelationLabelVisible,
   type CanvasArrow,
   type CanvasNode,
   type CanvasNote,
@@ -13,6 +15,9 @@ export type CanvasQualityIssueCode =
   | 'edge-through-node'
   | 'edge-crossing'
   | 'edge-overlap'
+  | 'label-overlap'
+  | 'label-through-node'
+  | 'label-outside-canvas'
   | 'long-label'
   | 'flat-architecture'
 
@@ -35,6 +40,9 @@ export interface CanvasVisualQualityAssessment {
     edgeNodeIntersections: number
     edgeCrossings: number
     edgeOverlaps: number
+    labelOverlaps: number
+    labelNodeIntersections: number
+    labelOverflows: number
     longLabels: number
   }
 }
@@ -111,6 +119,35 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
     }
   }
 
+  const labelScene = scene.architecture ? {
+    ...scene,
+    elements: scene.elements.map((item) => item.type === 'arrow' && !canvasArchitectureRelationLabelVisible(item) ? { ...item, label: undefined } : item),
+  } : scene
+  const labels = [...canvasArrowLabelLayouts(labelScene).values()].map((label) => ({
+    ...label, x: label.x - label.width / 2, y: label.y - label.height / 2,
+  }))
+  let labelOverlaps = 0
+  let labelNodeIntersections = 0
+  let labelOverflows = 0
+  for (let index = 0; index < labels.length; index += 1) {
+    const label = labels[index]
+    if (label.x < 0 || label.y < 0 || label.x + label.width > scene.width || label.y + label.height > scene.height) {
+      labelOverflows += 1
+      issues.push({ code: 'label-outside-canvas', severity: 'warning', message: `${label.id} 的关系标签超出画布`, elementIds: [label.id] })
+    }
+    for (const box of boxes) {
+      if (!boxesOverlap(label, box)) continue
+      labelNodeIntersections += 1
+      issues.push({ code: 'label-through-node', severity: 'warning', message: `${label.id} 的关系标签遮挡 ${box.text}`, elementIds: [label.id, box.id] })
+    }
+    for (let otherIndex = index + 1; otherIndex < labels.length; otherIndex += 1) {
+      const other = labels[otherIndex]
+      if (!boxesOverlap(label, other)) continue
+      labelOverlaps += 1
+      issues.push({ code: 'label-overlap', severity: 'warning', message: `${label.id} 与 ${other.id} 的关系标签重叠`, elementIds: [label.id, other.id] })
+    }
+  }
+
   let longLabels = 0
   for (const box of boxes) {
     if (box.text.length <= 48 && (box.subtitle?.length ?? 0) <= 44) continue
@@ -154,12 +191,15 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
       edgeNodeIntersections,
       edgeCrossings,
       edgeOverlaps,
+      labelOverlaps,
+      labelNodeIntersections,
+      labelOverflows,
       longLabels,
     },
   }
 }
 
-function boxesOverlap(left: CanvasBox, right: CanvasBox): boolean {
+function boxesOverlap(left: Pick<CanvasBox, 'x' | 'y' | 'width' | 'height'>, right: Pick<CanvasBox, 'x' | 'y' | 'width' | 'height'>): boolean {
   const inset = 2
   return left.x + inset < right.x + right.width - inset
     && left.x + left.width - inset > right.x + inset
@@ -168,6 +208,7 @@ function boxesOverlap(left: CanvasBox, right: CanvasBox): boolean {
 }
 
 function arrowRoute(arrow: CanvasArrow, boxes: Map<string, CanvasBox>): CanvasPoint[] | undefined {
+  if (arrow.start && arrow.end) return canvasArrowRoutePoints(arrow.start, arrow.end, arrow)
   const from = boxes.get(arrow.from)
   const to = boxes.get(arrow.to)
   if (!from || !to) return undefined

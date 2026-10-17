@@ -1,0 +1,67 @@
+{
+  "type": "codex-diagram-canvas",
+  "version": 1,
+  "title": "人工标签位置避让",
+  "width": 1100,
+  "height": 600,
+  "elements": [
+    {
+      "id": "client",
+      "type": "node",
+      "x": 40,
+      "y": 170,
+      "width": 180,
+      "height": 80,
+      "text": "客户端"
+    },
+    {
+      "id": "api",
+      "type": "node",
+      "x": 850,
+      "y": 170,
+      "width": 180,
+      "height": 80,
+      "text": "API 服务"
+    },
+    {
+      "id": "worker",
+      "type": "node",
+      "x": 40,
+      "y": 390,
+      "width": 180,
+      "height": 80,
+      "text": "处理任务"
+    },
+    {
+      "id": "queue",
+      "type": "node",
+      "x": 850,
+      "y": 390,
+      "width": 180,
+      "height": 80,
+      "text": "消息队列"
+    },
+    {
+      "id": "automatic",
+      "type": "arrow",
+      "from": "client",
+      "to": "api",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "routing": "straight",
+      "emphasis": "primary",
+      "label": "POST /api/orders 审批请求"
+    },
+    {
+      "id": "manual",
+      "type": "arrow",
+      "from": "worker",
+      "to": "queue",
+      "label": "事件订阅结果",
+      "labelPosition": {
+        "x": 535,
+        "y": 196
+      }
+    }
+  ]
+}

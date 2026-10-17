@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { assessCanvasVisualQuality } from '../src/canvasQuality.js'
 import type { CanvasScene } from '../src/canvas.js'
+
+test('中英文、人工位置与独立连线固定样例的标签不遮挡节点或互相重叠', () => {
+  for (const name of ['chinese-relations', 'english-relations', 'manual-reservation']) {
+    const scene: CanvasScene = JSON.parse(readFileSync(new URL(`./fixtures/canvas-labels/${name}.diagram.json`, import.meta.url), 'utf8'))
+    const quality = assessCanvasVisualQuality(scene)
+    assert.equal(quality.metrics.labelOverlaps, 0, name)
+    assert.equal(quality.metrics.labelNodeIntersections, 0, name)
+    assert.equal(quality.metrics.labelOverflows, 0, name)
+  }
+})
+
+test('质量检查报告人工标签与节点和其他标签的碰撞', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas', version: 1, title: '人工标签碰撞', width: 900, height: 500,
+    elements: [
+      { id: 'a', type: 'node', x: 20, y: 180, width: 180, height: 80, text: '入口' },
+      { id: 'b', type: 'node', x: 680, y: 180, width: 180, height: 80, text: '服务' },
+      { id: 'request', type: 'arrow', from: 'a', to: 'b', label: '请求处理', labelPosition: { x: 100, y: 220 } },
+      { id: 'response', type: 'arrow', from: 'b', to: 'a', label: '返回结果', labelPosition: { x: 100, y: 220 } },
+    ],
+  }
+  const quality = assessCanvasVisualQuality(scene)
+  assert.ok(quality.issues.some((issue) => issue.code === 'label-through-node'))
+  assert.ok(quality.issues.some((issue) => issue.code === 'label-overlap'))
+  assert.equal(quality.metrics.labelOverlaps, 1)
+  assert.equal(quality.metrics.labelNodeIntersections, 2)
+})
 
 test('Canvas quality gate catches overlap, edge-through-node and long labels', () => {
   const scene: CanvasScene = {

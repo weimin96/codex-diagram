@@ -1,3 +1,4 @@
+import { canvasArrowLabelText } from './canvasLabelText.js'
 import {
   CANVAS_ROLE_ICON_IDS,
   CANVAS_STENCIL_IDS,
@@ -195,6 +196,7 @@ export interface CanvasBundleTrunk {
 }
 
 export interface CanvasArrowLabelLayout {
+  lines: string[]
   id: string
   x: number
   y: number
@@ -363,11 +365,10 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1')
     const stroke = arrow.strokeColor ?? (architectureMode ? architectureBorder : border)
     const visibleLabel = architectureMode && arrow.label && !canvasArchitectureRelationLabelVisible(arrow) ? undefined : arrow.label
-    const label = visibleLabel ? labelLayouts.get(arrow.id) ?? { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 10, width: Math.max(46, Math.min(220, visibleLabel.length * 7 + 20)), height: 22 } : undefined
+    const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
+    const labelText = label ? `<text x="${label.x}" y="${label.y + 4 - (label.lines.length - 1) * 8}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="${escapeXml(text)}"${architectureMode ? ` stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke"` : ''}>${label.lines.map((line, index) => `<tspan x="${label.x}" dy="${index ? 16 : 0}">${escapeXml(line)}</tspan>`).join('')}</text>` : ''
     const labelMarkup = visibleLabel && label
-      ? architectureMode
-        ? `<text x="${label.x}" y="${label.y + 3}" text-anchor="middle" font-size="12" font-weight="620" fill="${escapeXml(text)}" stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke">${escapeXml(truncateCanvasText(visibleLabel, 26))}</text>`
-        : `<g><rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="${label.height / 2}" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/><text x="${label.x}" y="${label.y + 4}" text-anchor="middle" font-size="12" font-weight="600" fill="${escapeXml(text)}">${escapeXml(truncateCanvasText(visibleLabel, 30))}</text></g>`
+      ? `<g class="canvas-arrow-label"><title>${escapeXml(visibleLabel)}</title>${architectureMode ? '' : `<rect x="${label.x - label.width / 2}" y="${label.y - label.height / 2}" width="${label.width}" height="${label.height}" rx="8" fill="${escapeXml(background)}" stroke="${escapeXml(border)}" stroke-opacity="0.28"/>`}${labelText}</g>`
       : ''
     const markerEnd = arrow.markerEnd === 'none' ? '' : ' marker-end="url(#arrow)"'
     return `<g opacity="${opacity}"><path d="${geometry}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}"${dash}${markerEnd}/>${labelMarkup}</g>`
@@ -996,65 +997,72 @@ export function canvasArchitectureHeader(scene: CanvasScene): CanvasArchitecture
 }
 
 export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasArrowLabelLayout> {
-  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow').map((item) => [item.id, item]))
+  const collapsedOwners = canvasCollapsedOwners(scene)
+  const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !collapsedOwners.has(item.id)).map((item) => [item.id, item]))
   const occupiedBoxes = [...boxes.values()].map((item) => ({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }))
   const occupiedLabels: Array<{ x: number; y: number; width: number; height: number }> = []
   const arrows = scene.elements
     .filter((item): item is CanvasArrow => item.type === 'arrow' && Boolean(item.label))
     .slice()
-    .sort((left, right) => emphasisRank(left.emphasis) - emphasisRank(right.emphasis) || left.id.localeCompare(right.id))
+    .sort((left, right) => Number(!left.labelPosition) - Number(!right.labelPosition) || emphasisRank(left.emphasis) - emphasisRank(right.emphasis) || left.id.localeCompare(right.id))
+  const outgoing = new Map<string, number>()
+  const incoming = new Map<string, number>()
+  arrows.forEach((arrow) => {
+    outgoing.set(arrow.from, (outgoing.get(arrow.from) ?? 0) + 1)
+    incoming.set(arrow.to, (incoming.get(arrow.to) ?? 0) + 1)
+  })
   const result = new Map<string, CanvasArrowLabelLayout>()
 
   for (const arrow of arrows) {
     const from = boxes.get(arrow.from)
     const to = boxes.get(arrow.to)
-    if (!from || !to || !arrow.label) continue
-    const fromCenter = centerOfCanvasBox(from)
-    const toCenter = centerOfCanvasBox(to)
-    const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
-    const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const standalone = Boolean(arrow.start && arrow.end)
+    if ((!standalone && (!from || !to)) || !arrow.label) continue
+    const start = standalone ? arrow.start! : anchorPoint(from!, arrow.fromAnchor, arrow.points?.[0] ?? centerOfCanvasBox(to!))
+    const end = standalone ? arrow.end! : anchorPoint(to!, arrow.toAnchor, arrow.points?.at(-1) ?? centerOfCanvasBox(from!))
     const route = canvasArrowRoutePoints(start, end, arrow)
-    const segments = route.slice(0, -1).map((point, index) => {
-      const next = route[index + 1]
-      const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
-      const length = Math.abs(next.x - point.x) + Math.abs(next.y - point.y)
-      const bundledEndpoint = (arrow.bundleKey?.startsWith('from:') && index === 0)
-        || (arrow.bundleKey?.startsWith('to:') && index === route.length - 2)
-      return { point, next, horizontal, length, bundledEndpoint }
-    }).filter((segment) => segment.length >= 28)
-      .sort((left, right) => Number(left.bundledEndpoint) - Number(right.bundledEndpoint) || Number(right.horizontal) - Number(left.horizontal) || right.length - left.length)
-    if (!segments.length) continue
-
-    const width = Math.min(220, Math.max(48, 18 + Array.from(arrow.label).length * 7))
-    const height = 24
+    const dimensions = canvasArrowLabelText(arrow.label)
+    const { width, height } = dimensions
     if (arrow.labelPosition) {
-      const placed = { id: arrow.id, x: arrow.labelPosition.x, y: arrow.labelPosition.y, width, height }
+      const placed = { id: arrow.id, ...arrow.labelPosition, ...dimensions }
       occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
       result.set(arrow.id, placed)
       continue
     }
+    const segments = route.slice(0, -1).map((point, index) => {
+      const next = route[index + 1]
+      const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
+      const length = Math.abs(next.x - point.x) + Math.abs(next.y - point.y)
+      const bundledEndpoint = ((arrow.bundleKey?.startsWith('from:') || (outgoing.get(arrow.from) ?? 0) > 1) && index === 0)
+        || ((arrow.bundleKey?.startsWith('to:') || (incoming.get(arrow.to) ?? 0) > 1) && index === route.length - 2)
+      return { point, next, horizontal, length, bundledEndpoint }
+    }).filter((segment) => segment.length >= 28)
+      .sort((left, right) => Number(left.bundledEndpoint) - Number(right.bundledEndpoint) || Number(right.horizontal) - Number(left.horizontal) || right.length - left.length)
     let placed: CanvasArrowLabelLayout | undefined
     for (const segment of segments) {
-      const mid = { x: (segment.point.x + segment.next.x) / 2, y: (segment.point.y + segment.next.y) / 2 }
-      for (const offset of [0, -26, 26, -52, 52]) {
-        const x = mid.x + (segment.horizontal ? 0 : 14 + offset)
-        const y = mid.y + (segment.horizontal ? -14 + offset : 0)
-        const rect = { x: x - width / 2, y: y - height / 2, width, height }
-        if (occupiedBoxes.some((box) => rectanglesOverlap(rect, box)) || occupiedLabels.some((label) => rectanglesOverlap(rect, label))) continue
-        placed = { id: arrow.id, x, y, width, height }
-        occupiedLabels.push(rect)
-        break
+      const gap = (segment.horizontal ? height : width) / 2 + 6
+      for (const fraction of [0.5, 0.25, 0.75]) {
+        for (const offset of [-gap, gap, -gap - height - 8, gap + height + 8]) {
+          const x = segment.point.x + (segment.next.x - segment.point.x) * fraction + (segment.horizontal ? 0 : offset)
+          const y = segment.point.y + (segment.next.y - segment.point.y) * fraction + (segment.horizontal ? offset : 0)
+          const rect = { x: x - width / 2, y: y - height / 2, width, height }
+          if (rect.x < 0 || rect.y < 0 || rect.x + width > scene.width || rect.y + height > scene.height) continue
+          if (occupiedBoxes.some((box) => rectanglesOverlap(rect, box)) || occupiedLabels.some((label) => rectanglesOverlap(rect, label))) continue
+          placed = { id: arrow.id, x, y, ...dimensions }
+          break
+        }
+        if (placed) break
       }
       if (placed) break
     }
     if (!placed) {
       const segment = segments[0]
-      const x = (segment.point.x + segment.next.x) / 2 + (segment.horizontal ? 0 : 14)
-      const y = (segment.point.y + segment.next.y) / 2 + (segment.horizontal ? -14 : 0)
-      const rect = { x: x - width / 2, y: y - height / 2, width, height }
-      placed = { id: arrow.id, x, y, width, height }
-      occupiedLabels.push(rect)
+      const midpoint = segment
+        ? { x: (segment.point.x + segment.next.x) / 2, y: (segment.point.y + segment.next.y) / 2 }
+        : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+      placed = { id: arrow.id, x: midpoint.x, y: midpoint.y - height / 2 - 6, ...dimensions }
     }
+    occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
     result.set(arrow.id, placed)
   }
   return result

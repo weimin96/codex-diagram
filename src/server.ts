@@ -943,7 +943,7 @@ server.registerTool('diagram.routeArchitectureEdges', {
 
 server.registerTool('diagram.inspectQuality', {
   title: 'Inspect diagram quality',
-  description: 'Run the built-in visual/structural quality gate on the current Mermaid or Canvas diagram, or on an unsaved candidate passed in source. Canvas checks node overlap, edge-through-node, line crossings, flat architecture hierarchy and oversized labels; Mermaid checks type-specific density and split thresholds. Use after creation or a material redesign before considering the diagram finished.',
+  description: 'Run the built-in visual/structural quality gate on the current Mermaid or Canvas diagram, or on an unsaved candidate passed in source. Canvas checks node overlap, edge-through-node, line crossings/overlap, label collisions/overflow, flat architecture hierarchy and oversized labels; Mermaid checks type-specific density and split thresholds. Use after creation or a material redesign before considering the diagram finished.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     path: z.string().optional(),
