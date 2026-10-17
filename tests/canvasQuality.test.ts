@@ -140,3 +140,19 @@ test('Canvas quality gate passes a simple clean diagram', () => {
   assert.equal(quality.needsRevision, false)
   assert.deepEqual(quality.issues, [])
 })
+
+test('长注释不会被当作节点标题触发改写', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas',
+    version: 1,
+    title: 'Note',
+    width: 800,
+    height: 400,
+    elements: [
+      { id: 'a', type: 'node', x: 20, y: 20, width: 160, height: 60, text: '入口' },
+      { id: 'n', type: 'note', x: 20, y: 140, width: 400, height: 120, text: '说明'.repeat(40) },
+    ],
+  }
+  const quality = assessCanvasVisualQuality(scene)
+  assert.equal(quality.issues.some((issue) => issue.code === 'long-label'), false)
+})

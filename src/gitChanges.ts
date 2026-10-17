@@ -33,6 +33,8 @@ export async function readGitChanges(workspacePath: string, options: { baseRef?:
   }
   if (options.baseRef?.trim()) {
     const baseRef = options.baseRef.trim()
+    // baseRef 会拼成 `<ref>...HEAD` 交给 git，前导 - 会被当成命令行选项（例如 --output）。
+    if (baseRef.startsWith('-') || /\s/.test(baseRef)) throw new Error('baseRef 必须是 Git 引用名。')
     await collect(repoRoot, ['diff', '--name-only', '-z', `${baseRef}...HEAD`, '--', pathspec], 'base', relativePrefix, changes)
   }
 

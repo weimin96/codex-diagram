@@ -219,7 +219,7 @@ export class DiagramStore {
 
   private async scan(directory: string, depth: number, results: DiagramSummary[]): Promise<void> {
     if (depth > maxDepth || results.length >= maxDiagrams) return
-    const entries = await readdir(directory, { withFileTypes: true })
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
       if (results.length >= maxDiagrams) return
       const target = path.join(directory, entry.name)
@@ -228,10 +228,15 @@ export class DiagramStore {
         continue
       }
       if (!entry.isFile() || !isDiagramFile(entry.name)) continue
-      const info = await lstat(target)
-      if (info.isSymbolicLink()) continue
-      const source = await readFile(target, 'utf8')
-      results.push(this.summary(relativePathFromRoot(this.workspacePath, target), source, info.mtime))
+      // 扫描期间被删除、无读权限或断链的文件只跳过，不能让整次 list 失败。
+      try {
+        const info = await lstat(target)
+        if (info.isSymbolicLink()) continue
+        const source = await readFile(target, 'utf8')
+        results.push(this.summary(relativePathFromRoot(this.workspacePath, target), source, info.mtime))
+      } catch {
+        continue
+      }
     }
   }
 

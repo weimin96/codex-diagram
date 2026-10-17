@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, searchArchitectureNodeTemplates } from '../src/architectureNodeTemplates.js'
 import type { CanvasArrow, CanvasScene } from '../src/canvas.js'
-import { alignCanvasSelection, canvasRotationFromPointer, computeCanvasSmartSnap, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
+import { alignCanvasSelection, canvasRotationFromPointer, computeCanvasSmartSnap, copyCanvasSelection, deleteCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, nextCanvasGroupId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel } from '../src/canvasOperations.js'
 
 function scene(): CanvasScene {
   return {
@@ -168,6 +168,23 @@ test('deleting a canvas node also deletes connected arrows', () => {
   assert.deepEqual(deleted.elements.map((item) => item.id).sort(), ['node-1', 'node-3'])
 })
 
+test('keeps ancestor groups that only contain nested groups when deleting an element', () => {
+  const source = scene()
+  source.groups = [
+    { id: 'group-1', label: 'Parent' },
+    { id: 'group-2', label: 'Child', parentId: 'group-1' },
+  ]
+  source.elements = source.elements.map((item) => item.id === 'node-1' || item.id === 'node-2' ? { ...item, groupId: 'group-2' } : item)
+  const deleted = deleteCanvasSelection(source, ['node-3'])
+  assert.deepEqual(deleted.groups?.map((group) => group.id), ['group-1', 'group-2'])
+})
+
+test('never reuses a group id that already exists on the scene', () => {
+  const source = scene()
+  source.groups = [{ id: 'group-1', label: 'Existing' }]
+  assert.equal(nextCanvasGroupId(source), 'group-2')
+})
+
 test('architecture node templates cover builtin and selected cloud providers', () => {
   assert.ok(ARCHITECTURE_NODE_TEMPLATES.length >= 60)
   for (const provider of ['builtin', 'aws', 'azure', 'gcp'] as const) {
@@ -220,6 +237,18 @@ test('aligns selected canvas boxes while retaining unrelated elements', () => {
   assert.ok(second && second.type === 'node')
   assert.equal(first.x, second.x)
   assert.deepEqual(aligned.elements.find((item) => item.id === 'node-3'), scene().elements.find((item) => item.id === 'node-3'))
+})
+
+test('aligns boxes of different sizes on a shared center line', () => {
+  const source = scene()
+  source.elements = [
+    { id: 'node-1', type: 'node', x: 100, y: 120, width: 200, height: 90, text: 'A' },
+    { id: 'node-2', type: 'node', x: 500, y: 360, width: 90, height: 40, text: 'B' },
+  ]
+  const aligned = alignCanvasSelection(source, ['node-1', 'node-2'], 'x', 16)
+  const centers = aligned.elements.map((item) => item.type === 'arrow' ? Number.NaN : item.x + item.width / 2)
+  assert.equal(centers[0], centers[1])
+  assert.equal(centers[0] % 16, 0)
 })
 
 test('reconnects an arrow endpoint and clears stale manual routing', () => {

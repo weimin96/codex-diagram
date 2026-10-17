@@ -1001,9 +1001,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function reloadSelected() {
     if (!selected) return
+    const requestSeq = selectRequestSeq.current
     setError(null)
     try {
       const result = await callTool<DiagramResult>('diagram.get', { workspacePath, path: selected.path })
+      if (requestSeq !== selectRequestSeq.current) return
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setExternalChange(false)
@@ -1013,7 +1015,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       })
       setNotice('已重新载入磁盘版本')
     } catch (cause) {
-      setError(errorMessage(cause))
+      if (requestSeq === selectRequestSeq.current) setError(errorMessage(cause))
     }
   }
 
@@ -2205,6 +2207,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                     </div>
                   </div>
                   <MermaidEditor
+                    key={selected.path}
                     value={source}
                     onChange={setSource}
                     onSave={() => void saveDiagram()}

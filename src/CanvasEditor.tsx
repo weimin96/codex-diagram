@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowBoxRoute, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, canvasRotationFromPointer, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasResizeHandle, type CanvasSpacingGuide, type CanvasTraceDirection, type CanvasTransformBox } from './canvasOperations.js'
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
@@ -1126,9 +1126,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           if (!arrow || !from || !to) continue
           const fromDisplay = livePlaybackBox(from)
           const toDisplay = livePlaybackBox(to)
-          const fromAnchorPoint = anchorPoint(fromDisplay, arrow.fromAnchor, center(toDisplay))
-          const toAnchorPoint = anchorPoint(toDisplay, arrow.toAnchor, center(fromDisplay))
-          const previewPath = canvasArrowPath(fromAnchorPoint, toAnchorPoint, arrow)
+          const route = canvasArrowBoxRoute(fromDisplay, toDisplay, arrow, arrow.from === arrow.to)
+          const fromAnchorPoint = route[0]
+          const toAnchorPoint = route.at(-1)!
+          const previewPath = canvasArrowRoutePath(route, arrow.freehand)
           setPlayback((current) => current ? {
             ...current,
             phase: 'connecting',
@@ -3901,13 +3902,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const from = playbackBoxLookup.get(arrow.from)
             const to = playbackBoxLookup.get(arrow.to)
             if (!from || !to) return null
-            const fromCenter = center(from)
-            const toCenter = center(to)
-            const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
-            const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+            const route = canvasArrowBoxRoute(from, to, arrow, arrow.from === arrow.to)
             return (
               <g key={`ghost-${arrow.id}`} className={`freeform-arrow freeform-ai-ghost${playback?.deletingIds?.includes(arrow.id) ? ' is-deleting' : ''}`} pointerEvents="none">
-                <path d={canvasArrowPath(start, end, arrow)} markerEnd="url(#canvas-arrow)" />
+                <path d={canvasArrowRoutePath(route, arrow.freehand)} markerEnd="url(#canvas-arrow)" />
               </g>
             )
           })}
@@ -3920,13 +3918,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const from = fromRaw ? playbackBoxPosition(fromRaw) : undefined
             const to = toRaw ? playbackBoxPosition(toRaw) : undefined
             if (!standalone && (!from || !to)) return null
-            const fromCenter = from ? center(from) : displayArrow.start!
-            const toCenter = to ? center(to) : displayArrow.end!
-            const start = standalone ? displayArrow.start! : anchorPoint(from!, displayArrow.fromAnchor, displayArrow.points?.[0] ?? toCenter)
-            const end = standalone ? displayArrow.end! : anchorPoint(to!, displayArrow.toAnchor, displayArrow.points?.at(-1) ?? fromCenter)
-            const path = canvasArrowPath(start, end, displayArrow)
+            const route = standalone
+              ? canvasArrowRoutePoints(displayArrow.start!, displayArrow.end!, displayArrow)
+              : canvasArrowBoxRoute(from!, to!, displayArrow, displayArrow.from === displayArrow.to)
+            const start = route[0]
+            const end = route.at(-1)!
+            const path = canvasArrowRoutePath(route, displayArrow.freehand)
             const overridden = Boolean(playback?.arrowOverrides?.[arrow.id])
-            const fallbackLabelPoint = displayArrow.labelPosition ?? pathLabelPoint(start, end, displayArrow.points)
+            const fallbackLabelPoint = displayArrow.labelPosition ?? pathLabelPoint(route[0], route.at(-1)!, route.slice(1, -1))
             const automaticLabelLayout = overridden && displayArrow.label
               ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - (displayArrow.labelPosition ? 0 : 10), ...canvasArrowLabelText(displayArrow.label) }
               : relationLabelLayouts.get(arrow.id)
@@ -4907,6 +4906,13 @@ function splitTags(value: string): string[] | undefined {
 }
 
 function scenePoint(clientX: number, clientY: number, svg: SVGSVGElement, scene: CanvasScene, viewport: Viewport) {
+  const matrix = svg.getScreenCTM()
+  if (matrix) {
+    // viewBox 比例恒等于画布比例，面板比例不同时 SVG 会按 xMidYMid meet 留出黑边，
+    // 线性换算会忽略这段偏移。用屏幕矩阵反算才能得到真实画布坐标。
+    const point = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse())
+    return { x: point.x, y: point.y }
+  }
   const bounds = svg.getBoundingClientRect()
   return {
     x: viewport.x + ((clientX - bounds.left) / Math.max(1, bounds.width)) * (scene.width / viewport.zoom),

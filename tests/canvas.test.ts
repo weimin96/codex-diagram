@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowLabelLayouts, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureProjection, canvasArchitectureScopeProjection, canvasArrowBoxRoute, canvasArrowLabelLayouts, canvasArrowRoutePath, canvasBundleTrunks, canvasCollapsedConnections, canvasIconRefMarkup, canvasSemanticLodProjection, canvasSceneToSvg, createCanvasSource, parseCanvasScene, resolveCanvasSemanticLod, serializeCanvasScene, type CanvasScene } from '../src/canvas.js'
 import { canvasArrowLabelText } from '../src/canvasLabelText.js'
 
 test('关系标签按显示宽度换行，中文、英文和超长文本保持有界', () => {
@@ -33,6 +33,26 @@ test('自动标签避让人工位置，并为独立连线生成相同的标签�
   assert.ok(Math.abs(automatic.x - manual.x) >= (automatic.width + manual.width) / 2
     || Math.abs(automatic.y - manual.y) >= (automatic.height + manual.height) / 2)
   assert.equal(serializeCanvasScene(scene), source)
+})
+
+test('自环关系绕出节点，而不是塌成一个点', () => {
+  const box = { x: 100, y: 100, width: 120, height: 60 }
+  const route = canvasArrowBoxRoute(box, box, { routing: 'orthogonal' }, true)
+  assert.equal(route.length, 5)
+  assert.deepEqual(route[0], { x: 220, y: 130 })
+  assert.deepEqual(route.at(-1), { x: 160, y: 100 })
+  const path = canvasArrowRoutePath(route)
+  assert.equal(path, 'M 220 130 L 256 130 L 256 64 L 160 64 L 160 100')
+})
+
+test('正交路由在混合锚点时沿各自锚点法线进出', () => {
+  const from = { x: 100, y: 100, width: 100, height: 60 }
+  const to = { x: 400, y: 300, width: 100, height: 60 }
+  const route = canvasArrowBoxRoute(from, to, { routing: 'orthogonal', fromAnchor: 'top', toAnchor: 'left' })
+  assert.deepEqual(route[0], { x: 150, y: 100 })
+  assert.deepEqual(route.at(-1), { x: 400, y: 330 })
+  assert.equal(route[1].x, route[0].x)
+  assert.equal(route.at(-2)!.y, route.at(-1)!.y)
 })
 
 test('round-trips a Canvas scene and renders standalone SVG', () => {

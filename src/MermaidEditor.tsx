@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { basicSetup } from 'codemirror'
 import { StreamLanguage, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
 import { openSearchPanel } from '@codemirror/search'
-import { EditorState, Prec } from '@codemirror/state'
+import { EditorState, Prec, Transaction } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 
@@ -133,7 +133,12 @@ export function MermaidEditor({ value, onChange, onSave, searchRequest, syntax =
     const current = view.state.doc.toString()
     if (current === value) return
     externalUpdate.current = true
-    view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
+    // 外部同步（Codex 写回、重新载入、接受 Proposal）不能进入撤销栈，
+    // 否则 Cmd+Z 会用上一版内容覆盖刚刚同步进来的文档。
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: value },
+      annotations: Transaction.addToHistory.of(false),
+    })
     externalUpdate.current = false
   }, [value])
 

@@ -1,5 +1,5 @@
 import {
-  anchorPoint,
+  canvasArrowBoxRoute,
   canvasArrowRoutePoints,
   canvasArrowLabelLayouts,
   canvasArchitectureRelationLabelVisible,
@@ -49,10 +49,117 @@ export interface CanvasVisualQualityAssessment {
 
 type CanvasBox = CanvasNode | CanvasNote
 
+interface IndexedRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const maxIndexedCellsPerRect = 256
+const cellIndexLimit = 1_000_000
+
+/** 均匀网格：把 O(元素²) 的几何两两比较收敛到“附近元素”。 */
+class RectIndex {
+  private readonly cells = new Map<number, number[]>()
+  private readonly oversized: number[] = []
+  private readonly stamps: Int32Array
+  private generation = 0
+
+  constructor(private readonly cellSize: number, count: number) {
+    this.stamps = new Int32Array(count)
+  }
+
+  add(index: number, rect: IndexedRect): void {
+    const range = this.cellRange(rect)
+    if ((range.maxX - range.minX + 1) * (range.maxY - range.minY + 1) > maxIndexedCellsPerRect) {
+      this.oversized.push(index)
+      return
+    }
+    for (let cx = range.minX; cx <= range.maxX; cx += 1) {
+      for (let cy = range.minY; cy <= range.maxY; cy += 1) {
+        const key = cellKey(cx, cy)
+        const bucket = this.cells.get(key)
+        if (bucket) bucket.push(index)
+        else this.cells.set(key, [index])
+      }
+    }
+  }
+
+  beginQuery(): void {
+    this.generation += 1
+  }
+
+  /** 追加与矩形所在网格相交的候选下标；同一次 beginQuery 内不重复。 */
+  query(rect: IndexedRect, out: number[]): void {
+    const range = this.cellRange(rect)
+    for (let cx = range.minX; cx <= range.maxX; cx += 1) {
+      for (let cy = range.minY; cy <= range.maxY; cy += 1) {
+        const bucket = this.cells.get(cellKey(cx, cy))
+        if (!bucket) continue
+        for (const index of bucket) this.push(index, out)
+      }
+    }
+    for (const index of this.oversized) this.push(index, out)
+  }
+
+  private push(index: number, out: number[]): void {
+    if (this.stamps[index] === this.generation) return
+    this.stamps[index] = this.generation
+    out.push(index)
+  }
+
+  private cellRange(rect: IndexedRect): { minX: number; minY: number; maxX: number; maxY: number } {
+    const toCell = (value: number) => Math.max(-cellIndexLimit, Math.min(cellIndexLimit, Math.floor(value / this.cellSize)))
+    return {
+      minX: toCell(rect.x),
+      minY: toCell(rect.y),
+      maxX: toCell(rect.x + rect.width),
+      maxY: toCell(rect.y + rect.height),
+    }
+  }
+}
+
+function cellKey(cx: number, cy: number): number {
+  return (cx + 1_048_576) * 2_097_152 + (cy + 1_048_576)
+}
+
+/** 网格边长按“每个格子约 4 个元素”推算，避免稀疏大画布退化成逐格空查。 */
+function gridCellSize(scene: CanvasScene, count: number): number {
+  if (count === 0) return 256
+  const area = Math.max(1, scene.width * scene.height)
+  return Math.min(2048, Math.max(128, Math.round(Math.sqrt(area / count) * 2)))
+}
+
+function segmentBounds(a: CanvasPoint, b: CanvasPoint): IndexedRect {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(b.x - a.x),
+    height: Math.abs(b.y - a.y),
+  }
+}
+
+function routeBounds(route: CanvasPoint[]): IndexedRect {
+  let minX = route[0].x
+  let minY = route[0].y
+  let maxX = minX
+  let maxY = minY
+  for (const point of route) {
+    if (point.x < minX) minX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.x > maxX) maxX = point.x
+    if (point.y > maxY) maxY = point.y
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
 export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQualityAssessment {
   const boxes = scene.elements.filter((item): item is CanvasBox => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const boxById = new Map(boxes.map((item) => [item.id, item]))
+  const boxIndex = new RectIndex(gridCellSize(scene, boxes.length), boxes.length)
+  boxes.forEach((box, index) => boxIndex.add(index, box))
   const issues: CanvasQualityIssue[] = []
 
   let nodeOverlaps = 0
@@ -77,7 +184,14 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
     const route = arrowRoute(arrow, boxById)
     if (!route) continue
     routes.set(arrow.id, route)
-    for (const box of boxes) {
+    boxIndex.beginQuery()
+    const candidates: number[] = []
+    for (let index = 0; index < route.length - 1; index += 1) {
+      boxIndex.query(segmentBounds(route[index], route[index + 1]), candidates)
+    }
+    candidates.sort((left, right) => left - right)
+    for (const index of candidates) {
+      const box = boxes[index]
       if (box.id === arrow.from || box.id === arrow.to) continue
       if (!routeCutsBox(route, box)) continue
       edgeNodeIntersections += 1
@@ -92,13 +206,24 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
 
   let edgeCrossings = 0
   let edgeOverlaps = 0
+  const routeIndex = new RectIndex(gridCellSize(scene, arrows.length), arrows.length)
+  arrows.forEach((arrow, index) => {
+    const route = routes.get(arrow.id)
+    if (route) routeIndex.add(index, routeBounds(route))
+  })
   for (let leftIndex = 0; leftIndex < arrows.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < arrows.length; rightIndex += 1) {
-      const left = arrows[leftIndex]
+    const left = arrows[leftIndex]
+    const leftRoute = routes.get(left.id)
+    if (!leftRoute) continue
+    routeIndex.beginQuery()
+    const candidates: number[] = []
+    routeIndex.query(routeBounds(leftRoute), candidates)
+    candidates.sort((first, second) => first - second)
+    for (const rightIndex of candidates) {
+      if (rightIndex <= leftIndex) continue
       const right = arrows[rightIndex]
-      const leftRoute = routes.get(left.id)
       const rightRoute = routes.get(right.id)
-      if (!leftRoute || !rightRoute) continue
+      if (!rightRoute) continue
       if (!(left.bundleKey && left.bundleKey === right.bundleKey) && routesOverlap(leftRoute, rightRoute)) {
         edgeOverlaps += 1
         issues.push({
@@ -135,7 +260,12 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
       labelOverflows += 1
       issues.push({ code: 'label-outside-canvas', severity: 'warning', message: `${label.id} 的关系标签超出画布`, elementIds: [label.id] })
     }
-    for (const box of boxes) {
+    boxIndex.beginQuery()
+    const candidates: number[] = []
+    boxIndex.query(label, candidates)
+    candidates.sort((left, right) => left - right)
+    for (const index of candidates) {
+      const box = boxes[index]
       if (!boxesOverlap(label, box)) continue
       labelNodeIntersections += 1
       issues.push({ code: 'label-through-node', severity: 'warning', message: `${label.id} 的关系标签遮挡 ${box.text}`, elementIds: [label.id, box.id] })
@@ -150,6 +280,8 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
 
   let longLabels = 0
   for (const box of boxes) {
+    // note 是说明性注释，不是节点标题，不适用标题短句化规则。
+    if (box.type === 'note') continue
     if (box.text.length <= 48 && (box.subtitle?.length ?? 0) <= 44) continue
     longLabels += 1
     issues.push({
@@ -212,11 +344,7 @@ function arrowRoute(arrow: CanvasArrow, boxes: Map<string, CanvasBox>): CanvasPo
   const from = boxes.get(arrow.from)
   const to = boxes.get(arrow.to)
   if (!from || !to) return undefined
-  const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
-  const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
-  const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
-  const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
-  return canvasArrowRoutePoints(start, end, arrow)
+  return canvasArrowBoxRoute(from, to, arrow, arrow.from === arrow.to)
 }
 
 function routeCutsBox(route: CanvasPoint[], box: CanvasBox): boolean {

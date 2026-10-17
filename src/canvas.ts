@@ -351,14 +351,13 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const from = standalone ? undefined : nodes.get(arrow.from)
     const to = standalone ? undefined : nodes.get(arrow.to)
     if (!standalone && (!from || !to)) return ''
-    const fromCenter = from ? centerOfCanvasBox(from) : arrow.start!
-    const toCenter = to ? centerOfCanvasBox(to) : arrow.end!
-    const start = standalone ? arrow.start! : anchorPoint(from!, arrow.fromAnchor, arrow.points?.[0] ?? toCenter)
-    const end = standalone ? arrow.end! : anchorPoint(to!, arrow.toAnchor, arrow.points?.at(-1) ?? fromCenter)
+    const route = standalone
+      ? canvasArrowRoutePoints(arrow.start!, arrow.end!, arrow)
+      : canvasArrowBoxRoute(from!, to!, arrow, arrow.from === arrow.to)
     const dash = arrow.lineStyle === 'dotted'
       ? ' stroke-dasharray="2 5" stroke-linecap="round"'
       : arrow.lineStyle === 'dashed' || (architectureMode && architectureProfile.sketchEdges) ? ' stroke-dasharray="8 6"' : ''
-    const geometry = canvasArrowPath(start, end, arrow)
+    const geometry = canvasArrowRoutePath(route, arrow.freehand)
     const strokeWidth = arrow.strokeWidth ?? (architectureMode
       ? (arrow.emphasis === 'primary' ? 1.8 : arrow.emphasis === 'muted' ? 0.85 : 1.2) * architectureProfile.edgeScale
       : arrow.emphasis === 'primary' ? 3.2 : arrow.emphasis === 'muted' ? 1.35 : 2)
@@ -1027,9 +1026,9 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
     const to = boxes.get(arrow.to)
     const standalone = Boolean(arrow.start && arrow.end)
     if ((!standalone && (!from || !to)) || !arrow.label) continue
-    const start = standalone ? arrow.start! : anchorPoint(from!, arrow.fromAnchor, arrow.points?.[0] ?? centerOfCanvasBox(to!))
-    const end = standalone ? arrow.end! : anchorPoint(to!, arrow.toAnchor, arrow.points?.at(-1) ?? centerOfCanvasBox(from!))
-    const route = canvasArrowRoutePoints(start, end, arrow)
+    const route = standalone
+      ? canvasArrowRoutePoints(arrow.start!, arrow.end!, arrow)
+      : canvasArrowBoxRoute(from!, to!, arrow, arrow.from === arrow.to)
     const dimensions = canvasArrowLabelText(arrow.label)
     const { width, height } = dimensions
     if (arrow.labelPosition) {
@@ -1066,9 +1065,11 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
     }
     if (!placed) {
       const segment = segments[0]
+      const routeStart = route[0]
+      const routeEnd = route.at(-1)!
       const midpoint = segment
         ? { x: (segment.point.x + segment.next.x) / 2, y: (segment.point.y + segment.next.y) / 2 }
-        : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+        : { x: (routeStart.x + routeEnd.x) / 2, y: (routeStart.y + routeEnd.y) / 2 }
       placed = { id: arrow.id, x: midpoint.x, y: midpoint.y - height / 2 - 6, ...dimensions }
     }
     occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
@@ -1289,8 +1290,11 @@ export function anchorPoint(item: CanvasAnchorBox, anchor: CanvasAnchor | undefi
 }
 
 export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor' | 'freehand'>): string {
-  const route = canvasArrowRoutePoints(start, end, arrow)
-  if (arrow.freehand && route.length > 2) {
+  return canvasArrowRoutePath(canvasArrowRoutePoints(start, end, arrow), arrow.freehand)
+}
+
+export function canvasArrowRoutePath(route: CanvasPoint[], freehand?: boolean): string {
+  if (freehand && route.length > 2) {
     const commands = [`M ${route[0].x} ${route[0].y}`]
     for (let index = 1; index < route.length - 1; index += 1) {
       const current = route[index]
@@ -1303,11 +1307,46 @@ export function canvasArrowPath(start: CanvasPoint, end: CanvasPoint, arrow: Pic
   return [`M ${route[0].x} ${route[0].y}`, ...route.slice(1).map((point) => `L ${point.x} ${point.y}`)].join(' ')
 }
 
+/** 按两个节点的真实几何计算关系路径，覆盖手工折点、锚点和自环。 */
+export function canvasArrowBoxRoute(
+  from: CanvasAnchorBox,
+  to: CanvasAnchorBox,
+  arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor' | 'freehand'>,
+  selfLoop = false,
+): CanvasPoint[] {
+  const loop = selfLoop ? selfLoopPoints(from) : undefined
+  const start = anchorPoint(from, arrow.fromAnchor, arrow.points?.[0] ?? loop?.[0] ?? centerOfCanvasBox(to))
+  const end = anchorPoint(to, arrow.toAnchor, arrow.points?.at(-1) ?? loop?.at(-1) ?? centerOfCanvasBox(from))
+  return canvasArrowRoutePoints(start, end, loop ? { ...arrow, points: loop } : arrow)
+}
+
+// 自环没有可用的朝向向量，edgePoint 会退化到节点中心，整条线塌成一个点。
+// 用节点右上方的一段折线绕出节点，锚点再朝这些外部点取边缘交点。
+function selfLoopPoints(box: CanvasAnchorBox): CanvasPoint[] {
+  const stub = Math.max(24, Math.min(48, Math.min(box.width, box.height) * 0.6))
+  const right = box.x + box.width
+  const above = box.y - stub
+  return [
+    { x: right + stub, y: box.y + box.height / 2 },
+    { x: right + stub, y: above },
+    { x: box.x + box.width / 2, y: above },
+  ]
+}
+
 export function canvasArrowRoutePoints(start: CanvasPoint, end: CanvasPoint, arrow: Pick<CanvasArrow, 'routing' | 'points' | 'fromAnchor' | 'toAnchor'>): CanvasPoint[] {
   const points = arrow.points?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
   if (points.length > 0) return [start, ...points, end]
   if (arrow.routing !== 'orthogonal') return [start, end]
-  const axis = preferredOrthogonalAxis(arrow.fromAnchor, arrow.toAnchor, start, end)
+  const fromAxis = anchorAxis(arrow.fromAnchor)
+  const toAxis = anchorAxis(arrow.toAnchor)
+  // 两端法线互相垂直时，Z 形路线无法同时沿两条法线进出（会从锚点侧向滑出边框），
+  // 因此改走两条法线的交点，保证首段和末段都沿各自锚点方向。
+  if (fromAxis && toAxis && fromAxis !== toAxis) {
+    return dedupeRoutePoints(fromAxis === 'y'
+      ? [start, { x: start.x, y: end.y }, end]
+      : [start, { x: end.x, y: start.y }, end])
+  }
+  const axis = fromAxis ?? toAxis ?? (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y) ? 'x' : 'y')
   if (axis === 'y') {
     const midY = (start.y + end.y) / 2
     return dedupeRoutePoints([start, { x: start.x, y: midY }, { x: end.x, y: midY }, end])
@@ -1316,12 +1355,10 @@ export function canvasArrowRoutePoints(start: CanvasPoint, end: CanvasPoint, arr
   return dedupeRoutePoints([start, { x: midX, y: start.y }, { x: midX, y: end.y }, end])
 }
 
-function preferredOrthogonalAxis(from: CanvasAnchor | undefined, to: CanvasAnchor | undefined, start: CanvasPoint, end: CanvasPoint): 'x' | 'y' {
-  const horizontalAnchors = new Set<CanvasAnchor>(['left', 'right'])
-  const verticalAnchors = new Set<CanvasAnchor>(['top', 'bottom'])
-  if ((from && horizontalAnchors.has(from)) || (to && horizontalAnchors.has(to))) return 'x'
-  if ((from && verticalAnchors.has(from)) || (to && verticalAnchors.has(to))) return 'y'
-  return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y) ? 'x' : 'y'
+function anchorAxis(anchor: CanvasAnchor | undefined): 'x' | 'y' | undefined {
+  if (anchor === 'left' || anchor === 'right') return 'x'
+  if (anchor === 'top' || anchor === 'bottom') return 'y'
+  return undefined
 }
 
 function shapeRadius(shape: CanvasShape | undefined, height: number): number {

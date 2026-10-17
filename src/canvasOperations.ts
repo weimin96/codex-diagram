@@ -339,7 +339,18 @@ export function deleteCanvasSelection(scene: CanvasScene, ids: string[]): Canvas
     !removed.has(item.id)
     && !(item.type === 'arrow' && (removed.has(item.from) || removed.has(item.to)))
   ))
-  const usedGroups = new Set(elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!))
+  const groupById = new Map((scene.groups ?? []).map((group) => [group.id, group]))
+  const usedGroups = new Set<string>()
+  for (const item of elements) {
+    if (item.type === 'arrow') continue
+    let groupId = item.groupId
+    const seen = new Set<string>()
+    while (groupId && !seen.has(groupId)) {
+      seen.add(groupId)
+      usedGroups.add(groupId)
+      groupId = groupById.get(groupId)?.parentId
+    }
+  }
   return {
     ...scene,
     elements,
@@ -429,16 +440,23 @@ export function insertCanvasNodeOnArrow(scene: CanvasScene, nodeId: string, arro
 export function alignCanvasSelection(scene: CanvasScene, ids: string[], axis: 'x' | 'y', grid = 16): CanvasScene {
   const chosen = scene.elements.filter((item): item is CanvasNode | CanvasNote => ids.includes(item.id) && item.type !== 'arrow' && !item.locked)
   if (chosen.length < 2) return scene
-  const target = axis === 'x'
+  const extent = axis === 'x'
+    ? Math.max(...chosen.map((item) => item.width))
+    : Math.max(...chosen.map((item) => item.height))
+  const average = axis === 'x'
     ? chosen.reduce((sum, item) => sum + item.x + item.width / 2, 0) / chosen.length
     : chosen.reduce((sum, item) => sum + item.y + item.height / 2, 0) / chosen.length
+  const limit = axis === 'x' ? scene.width : scene.height
+  // 对齐的目标是共同中心线，因此只对中心吸附一次。逐项吸附边缘会让不同尺寸的节点重新错开。
+  // 边界也按中心计算：最大尺寸的节点放得下，其余节点必然放得下，无需逐项 clamp。
+  const target = clamp(snap(average, grid), extent / 2, Math.max(extent / 2, limit - extent / 2))
   return {
     ...scene,
     elements: scene.elements.map((item) => {
       if (item.type === 'arrow' || !ids.includes(item.id) || item.locked) return item
       return axis === 'x'
-        ? { ...item, x: clamp(snap(target - item.width / 2, grid), 0, scene.width - item.width) }
-        : { ...item, y: clamp(snap(target - item.height / 2, grid), 0, scene.height - item.height) }
+        ? { ...item, x: target - item.width / 2 }
+        : { ...item, y: target - item.height / 2 }
     }),
   }
 }
@@ -1195,6 +1213,7 @@ export function expandCanvasGroupSelection(scene: CanvasScene, ids: string[]): s
 export function nextCanvasGroupId(scene: CanvasScene, reserved: string[] = []): string {
   const used = new Set([
     ...reserved,
+    ...(scene.groups ?? []).map((group) => group.id),
     ...scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && Boolean(item.groupId)).map((item) => item.groupId!),
   ])
   for (let index = 1; index < 100_000; index += 1) {
