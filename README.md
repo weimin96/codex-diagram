@@ -12,7 +12,7 @@ Mermaid 支持每张图声明轻量视觉 Profile：在源码首部加入 `%% co
 
 Canvas 关系标签在浏览器中按实际字形宽度测量，最多显示两行，超长部分省略但完整文本保留在源文件及悬停标题中。预览与 SVG/PNG 导出共用换行规则，自动标签先避让人工指定的位置，再沿线路寻找空位；质量检查会报告标签重叠、遮挡节点和超出画布。服务端无浏览器字体时使用全角/半角宽度估算。固定中英文样例可运行 `node scripts/render-gallery.mjs --source-dir tests/fixtures/canvas-labels --output-dir test-results/canvas-labels` 查看。
 
-通用 Canvas 与流程画布新增四套内置视觉样式，使用 scene 顶层 `style` 字段：`ocean`（蓝色产品）、`warm`（暖色叙事）、`ink`（高对比评审）、`pastel`（柔彩语义）。样式统一背景、节点材质、边框、字体和连线，不改写业务内容、布局或节点手工覆盖；不指定时保留原始样式。AI 可通过 `diagram.designGuide` 读取适用场景并自主选择，编辑器工具栏也可切换和撤销。架构画布继续使用现有 `architecture.theme`，Mermaid 新图由 AI 按用途选择现有 Visual Profile。四套样式的明暗对照可运行 `node scripts/render-gallery.mjs --source-dir tests/fixtures/canvas-styles --output-dir test-results/canvas-styles`。
+共享视觉样式现覆盖通用 Canvas、流程画布、架构 Canvas，以及全部 19 种 Mermaid 图表。12 套样式为 `ocean`（蓝色产品）、`warm`（暖色叙事）、`ink`（高对比评审）、`pastel`（柔彩语义）、`forest`（森绿数据）、`blueprint`（工程蓝图）、`rose`（玫瑰叙事）、`violet`（紫罗兰方案）、`amber`（琥珀运营）、`graphite`（石墨极简）、`nord`（北欧冷静）、`coral`（珊瑚演示）。Canvas 使用顶层 `style` 字段，架构图保留 `architecture.theme` 的图元/边界形态；Mermaid 在首部使用 `%% codex-diagram:style=<id>`，原来的 technical/minimal/editorial/presentation 四种 Profile 继续兼容。编辑器可直接切换，AI 可从 `diagram.designGuide` 读取适用场景并选择；改旧图时保留用户原样式。样式不改变业务内容和图种，不向节点批量写入颜色。`pnpm visual:styles` 会在真实浏览器中执行 12 套样式 × 19 种 Mermaid 图表 × 明暗主题共 456 次渲染，并检查文字边界、节点重叠和尺寸。
 
 
 当前 Diagram Skill 进一步采用渐进式设计合同：每一种 Mermaid 类型显式声明适用的构图原型（例如线性主链、决策树、泳道、汇聚、层级树、定量流向等），并把“视觉论证 / 证据来源 / 密度 / 反模式 / 质量回检”分开。模型不应默认生成等权卡片墙；架构 Canvas 额外支持 backbone、fan-out、convergence、hub-spoke、layered/swimlane 等拓扑选择。直接通过 MCP 对话生成复杂图时，可先调用 `diagram.designGuide` 只读取当前类型的规则，避免把 19 种 Skill 一次性塞入上下文。完成生成或大改后调用 `diagram.inspectQuality` 做一次有界质量回检：Canvas 检查节点重叠、连线穿节点、关系交叉、层级过平和超长标签；Mermaid 检查各类型自己的密度与拆图阈值。若 `needsRevision=true`，只针对报告问题修正并最多再回检一次。

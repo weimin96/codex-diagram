@@ -199,6 +199,7 @@ function browserEntry(cases, update, probe) {
   const grammar = path.join(root, 'src/mermaidVisualGrammar.ts')
   return `
 import mermaid from 'mermaid'
+import { fitMermaidSvgToContent } from ${JSON.stringify(path.join(root, 'src/mermaidSvg.ts'))}
 import { mermaidVisualConfig, normalizeMermaidSourceForRender } from ${JSON.stringify(grammar)}
 
 const WIDTH = 1400
@@ -251,8 +252,10 @@ for (const mode of ['light', 'dark']) {
 
 async function rasterize(testCase, mode) {
   const source = normalizeMermaidSourceForRender(testCase.type, testCase.source)
-  mermaid.initialize({ ...mermaidVisualConfig(testCase.type, palettes[mode], source), fontFamily: 'Arial, sans-serif' })
-  const { svg } = await mermaid.render('golden-' + mode + '-' + safeName(testCase.name) + '-' + Math.random().toString(36).slice(2), source)
+  const config = mermaidVisualConfig(testCase.type, palettes[mode], source)
+  mermaid.initialize({ ...config, fontFamily: config.fontFamily ?? 'Arial, sans-serif' })
+  const { svg: renderedSvg } = await mermaid.render('golden-' + mode + '-' + safeName(testCase.name) + '-' + Math.random().toString(36).slice(2), source)
+  const svg = fitMermaidSvgToContent(renderedSvg, config.themeVariables?.background)
   document.body.replaceChildren()
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   const svgEl = parsed.documentElement

@@ -1,4 +1,6 @@
+import { diagramVisualStyleGuide } from '../diagramVisualStyles.js'
 export const commonMermaidVisualRules = [
+  ...diagramVisualStyleGuide('mermaid'),
   '只保留有决策价值的结构；图上文字短句化，详细解释留在图外，不把段落塞进节点、消息或状态。',
   '优先建立一个清晰阅读方向和一条主叙事线；次要分支降低视觉权重，不让所有元素同等抢眼。',
   '把图当作视觉论证而不是信息清单：主对象、关键关系和结果必须先被看到，辅助说明退到第二层级；不要把所有内容都包成相同大小的卡片。',

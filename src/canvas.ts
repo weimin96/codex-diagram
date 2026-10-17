@@ -1,4 +1,4 @@
-import { canvasVisualSkin, canvasStyledBox, isCanvasVisualStyle, type CanvasVisualStyle } from './canvasVisualStyles.js'
+import { canvasVisualSkin, canvasStyledBox, isDiagramVisualStyle, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import {
   CANVAS_ROLE_ICON_IDS,
@@ -66,7 +66,7 @@ export interface CanvasScene {
   height: number
   elements: CanvasElement[]
   workbench?: CanvasWorkbenchMode
-  style?: CanvasVisualStyle
+  style?: DiagramVisualStyle
   groups?: CanvasGroup[]
   lanes?: CanvasLane[]
   architecture?: {
@@ -282,7 +282,7 @@ export function parseCanvasScene(source: string): CanvasScene {
   if (scene.type !== 'codex-diagram-canvas' || scene.version !== 1 || !Array.isArray(scene.elements)) {
     throw new Error('不是受支持的 Codex Diagram Canvas 文档。')
   }
-  if (scene.style !== undefined && !isCanvasVisualStyle(scene.style)) throw new Error('不支持的画布样式，请使用 ocean、warm、ink 或 pastel。')
+  if (scene.style !== undefined && !isDiagramVisualStyle(scene.style)) throw new Error('不支持的画布样式，请从内置样式中选择。')
   const architecture = normalizeArchitectureAppearance(scene.architecture)
   const workbench = normalizeCanvasWorkbench(scene.workbench, Boolean(architecture))
   return {
@@ -293,7 +293,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     height: positive(scene.height, 1000),
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
     workbench,
-    ...(isCanvasVisualStyle(scene.style) ? { style: scene.style } : {}),
+    ...(isDiagramVisualStyle(scene.style) ? { style: scene.style } : {}),
     ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
     ...(Array.isArray(scene.lanes) ? { lanes: normalizeCanvasLanes(scene.lanes, positive(scene.width, 1600), positive(scene.height, 1000)) } : {}),
     ...(architecture ? { architecture } : {}),
@@ -318,7 +318,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const projection = canvasArchitectureProjection(scene)
   scene = projection.scene
   const baseBackground = colors?.background || '#ffffff'
-  const visualSkin = canvasVisualSkin(architectureMode ? undefined : scene.style, hexLuminance(baseBackground) < 0.18)
+  const visualSkin = canvasVisualSkin(scene.style, hexLuminance(baseBackground) < 0.18)
   const background = visualSkin?.background ?? (architectureMode && architectureTheme === 'technical'
     ? hexLuminance(baseBackground) < 0.18 ? '#111827' : '#f5f8fc'
     : baseBackground)
@@ -390,13 +390,13 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${architectureMode ? 2.4 : 2.2}"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
   }).join('')
   const shapes = [...nodes.values()].map((rawItem) => {
-    const skin = canvasVisualSkin(architectureMode || rawItem.type === 'note' ? undefined : scene.style, hexLuminance(baseBackground) < 0.18, rawItem.tone, rawItem.emphasis === 'primary')
+    const skin = canvasVisualSkin(rawItem.type === 'note' ? undefined : scene.style, hexLuminance(baseBackground) < 0.18, rawItem.tone, rawItem.emphasis === 'primary')
     const item = canvasStyledBox(rawItem, skin)
     const wrapRotation = (markup: string) => item.rotation
       ? `<g transform="rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})">${markup}</g>`
       : markup
     const palette = skin && item.type === 'node'
-      ? { fill: skin.fill, text: rawItem.fillColor ? text : skin.text, stroke: skin.stroke }
+      ? { fill: item.fillColor ?? skin.fill, text: rawItem.fillColor || architectureMode ? text : skin.text, stroke: item.strokeColor ?? skin.stroke }
       : architectureMode
         ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
         : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
@@ -418,7 +418,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
       return wrapRotation(`<g opacity="${item.opacity ?? 1}"><clipPath id="clip-${escapeXml(item.id)}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}"/></clipPath><g clip-path="url(#clip-${escapeXml(item.id)})">${content}</g><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${radius}" fill="none" stroke="${escapeXml(item.strokeColor ?? border)}" stroke-width="${item.strokeWidth ?? 1}"/></g>`)
     }
     const architectureCard = item.type === 'node' && Boolean(item.iconRef || item.icon || item.stencil || item.c4Type)
-    if (architectureMode && architectureCard) return wrapRotation(renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme))
+    if (architectureMode && architectureCard) return wrapRotation(renderArchitectureCanvasNode(item, palette, projection.density, architectureTheme, skin?.font))
     const cardTemplate = canvasArchitectureCardTemplate(item)
     const showSubtitle = Boolean(item.subtitle && (!architectureCard || projection.density !== 'dense'))
     const cardTitleLimit = projection.density === 'dense' ? 22 : projection.density === 'compact' ? 26 : 30
@@ -1335,6 +1335,7 @@ function renderArchitectureCanvasNode(
   palette: { fill: string; text: string; stroke: string },
   density: Exclude<CanvasArchitectureDensity, 'auto'>,
   theme: CanvasArchitectureTheme,
+  fontOverride?: string,
 ): string {
   const profile = canvasArchitectureThemeProfile(theme)
   const compact = density === 'dense'
@@ -1356,7 +1357,8 @@ function renderArchitectureCanvasNode(
       : item.icon
         ? architectureRoleMark(item.icon, iconX, iconY, iconSize, palette.stroke)
         : ''
-  const fontFamily = profile.fontFamily ? ` font-family="${profile.fontFamily}"` : ''
+  const family = fontOverride ?? profile.fontFamily
+  const fontFamily = family ? ` font-family="${family}"` : ''
   const subtitle = item.subtitle
     ? `<text x="${textX}" y="${subtitleY}" font-size="${subtitleSize}" fill="${escapeXml(palette.text)}" opacity="${profile.subtitleOpacity}"${fontFamily}>${escapeXml(truncateCanvasText(item.subtitle, compact ? 20 : 26))}</text>`
     : ''

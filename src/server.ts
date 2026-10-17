@@ -1,4 +1,4 @@
-import { canvasVisualStyleGuide } from './canvasVisualStyles.js'
+import { diagramVisualStyleGuide } from './diagramVisualStyles.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
@@ -163,10 +163,10 @@ server.registerTool('diagram.designGuide', {
   const routing = diagramIntentRoutingGuide()
   const rules = type === 'canvas'
     ? (isArchitectureIntent(intent ?? '')
-        ? ['内置 Architecture Diagram Skill：', ...architectureDesignSkill(architectureTheme)]
+        ? ['内置 Architecture Diagram Skill：', ...architectureDesignSkill(architectureTheme), ...diagramVisualStyleGuide()]
         : [
             '内置 Canvas Design Guide：',
-            ...canvasVisualStyleGuide(),
+            ...diagramVisualStyleGuide(),
             '先根据关系选择 linear / fan-out / convergence / hierarchy / swimlane 等构图原型，不要默认生成等权卡片墙。',
             '主对象与主关系形成第一视觉层级；辅助说明、次要依赖和装饰退到第二层级，并用留白表达分组。',
             '只把已确认的事实写入节点、关系、sourcePaths、stencil 和 C4 元数据；未知内容保持中性表达。',
@@ -840,7 +840,7 @@ server.registerTool('diagram.upsertSourceNodes', {
 
 server.registerTool('diagram.create', {
   title: 'Create diagram',
-  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. For Canvas choose canvasWorkbench=architecture for software architecture/C4/topology, flowchart for manually editable process diagrams, or freeform for a general drawing board. For new general Canvas/flowchart boards, call diagram.designGuide and choose an appropriate built-in scene.style before writing the source. Mermaid flowchart remains available when automatic Mermaid layout is preferred. Use the dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa) only when their semantic and data requirements are actually satisfied.',
+  description: 'Create a Mermaid or Canvas diagram under docs/diagrams in the current conversation workspace. For Canvas choose canvasWorkbench=architecture for software architecture/C4/topology, flowchart for manually editable process diagrams, or freeform for a general drawing board. For new Canvas boards including architecture, call diagram.designGuide and choose an appropriate built-in scene.style before writing the source. Mermaid flowchart remains available when automatic Mermaid layout is preferred. Use the dedicated analysis/data types (kanban/requirement/sankey/xychart/pie/radar/treemap/ishikawa) only when their semantic and data requirements are actually satisfied.',
   inputSchema: z.object({
     workspacePath: z.string().optional(),
     type: z.enum(diagramTypes.map((item) => item.type) as [DiagramType, ...DiagramType[]]).describe('Diagram kind. Choose canvas for architecture/system/module/service/C4/topology diagrams; otherwise choose the dedicated semantic or data visualization type rather than forcing the request into flowchart.'),

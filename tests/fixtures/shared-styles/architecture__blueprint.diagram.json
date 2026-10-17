@@ -1,0 +1,153 @@
+{
+  "type": "codex-diagram-canvas",
+  "version": 1,
+  "title": "中文关系标签",
+  "width": 960,
+  "height": 730,
+  "elements": [
+    {
+      "id": "entry",
+      "type": "node",
+      "x": 90,
+      "y": 114,
+      "width": 180,
+      "height": 80,
+      "text": "业务入口",
+      "icon": "web",
+      "tone": "default",
+      "shape": "rounded",
+      "groupId": "arch-experience",
+      "emphasis": "primary"
+    },
+    {
+      "id": "api",
+      "type": "node",
+      "x": 398,
+      "y": 114,
+      "width": 180,
+      "height": 80,
+      "text": "审批服务",
+      "icon": "service",
+      "tone": "default",
+      "shape": "rounded",
+      "groupId": "arch-application",
+      "emphasis": "primary"
+    },
+    {
+      "id": "db",
+      "type": "node",
+      "x": 398,
+      "y": 562,
+      "width": 180,
+      "height": 80,
+      "text": "订单数据库",
+      "icon": "database",
+      "tone": "default",
+      "shape": "rounded",
+      "groupId": "arch-data",
+      "emphasis": "primary"
+    },
+    {
+      "id": "events",
+      "type": "node",
+      "x": 398,
+      "y": 338,
+      "width": 180,
+      "height": 80,
+      "text": "事件队列",
+      "icon": "queue",
+      "tone": "muted",
+      "shape": "rounded",
+      "groupId": "arch-processing",
+      "emphasis": "secondary"
+    },
+    {
+      "id": "submit",
+      "type": "arrow",
+      "from": "entry",
+      "to": "api",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "routing": "orthogonal",
+      "label": "提交审批请求并校验业务权限与幂等状态",
+      "emphasis": "secondary",
+      "lineStyle": "solid"
+    },
+    {
+      "id": "persist",
+      "type": "arrow",
+      "from": "entry",
+      "to": "db",
+      "label": "事务提交后持久化订单及关联审批记录",
+      "routing": "orthogonal",
+      "emphasis": "primary",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "lineStyle": "solid",
+      "points": [
+        {
+          "x": 270,
+          "y": 602
+        }
+      ]
+    },
+    {
+      "id": "publish",
+      "type": "arrow",
+      "from": "entry",
+      "to": "events",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "routing": "orthogonal",
+      "points": [
+        {
+          "x": 270,
+          "y": 202
+        },
+        {
+          "x": 334,
+          "y": 202
+        },
+        {
+          "x": 334,
+          "y": 378
+        }
+      ],
+      "label": "发布 OrderApproved 事件供异步订阅消费",
+      "emphasis": "secondary",
+      "lineStyle": "dashed"
+    }
+  ],
+  "style": "blueprint",
+  "groups": [
+    {
+      "id": "arch-experience",
+      "label": "体验与入口",
+      "kind": "boundary",
+      "tone": "default"
+    },
+    {
+      "id": "arch-application",
+      "label": "核心应用",
+      "kind": "boundary",
+      "tone": "default"
+    },
+    {
+      "id": "arch-processing",
+      "label": "处理与异步",
+      "kind": "boundary",
+      "tone": "muted"
+    },
+    {
+      "id": "arch-data",
+      "label": "数据与检索",
+      "kind": "boundary",
+      "tone": "default"
+    }
+  ],
+  "architecture": {
+    "theme": "technical",
+    "view": "detail",
+    "density": "auto"
+  }
+}

@@ -1,4 +1,4 @@
-import { canvasVisualStyleGuide } from './canvasVisualStyles.js'
+import { diagramVisualStyleGuide } from './diagramVisualStyles.js'
 import { isMermaidDiagramType, type DiagramDocument, type DiagramType } from './types.js'
 import type { CanvasWorkbenchMode } from './canvas.js'
 import { architectureDesignSkill, isArchitectureIntent } from './architectureSkill.js'
@@ -39,10 +39,10 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
       '3. 保持 type=codex-diagram-canvas、version=1。elements 只使用 node、note、arrow。',
       '4. node/note 使用 id,type,x,y,width,height,text；可选 tone(default/accent/success/warning/danger/muted)、shape(rounded/square/pill，旧兼容)、shapeRef(basic:rectangle/basic:rounded/basic:ellipse/basic:diamond/basic:triangle/basic:hexagon/basic:cloud/flowchart:process/flowchart:decision/flowchart:terminator/flowchart:data/flowchart:document/flowchart:database/flowchart:subprocess/flowchart:manual-input/flowchart:preparation/flowchart:delay)、fillColor/strokeColor(#RRGGBB)、strokeWidth、opacity(0-1)、cornerRadius、rotation(-180~180 度)；note 需要作为独立文字时可设 textOnly=true，并可配 fontSize(8-96)、fontWeight(400/500/600/700)、textColor(#RRGGBB)。可选 icon(user/web/api/gateway/service/worker/database/cache/queue/search/vector/cloud/file/auth/ai/mcp/scheduler/external)、stencil(spring/react/vue/postgres/mysql/redis/kafka/rabbitmq/docker/kubernetes/qdrant/opensearch/elasticsearch/mongodb/minio/nginx/grpc/oidc/openai/mcp)、iconRef(role:... / simple:... / lucide:... / aws:... / azure:... / gcp:...)、c4Type(person/software-system/container/component)、subtitle、description、tags、locked、groupId、laneId、sourcePaths、emphasis(primary/secondary/muted)。shapeRef 是绘图几何语义；iconRef 只是视觉覆盖，不改变 icon/stencil 的语义。rotation 只在用户明确要求旋转或已有元素已经旋转时使用，不要为了装饰主动旋转架构节点。fill/stroke 等覆盖样式只在用户明确要求视觉样式或已有图需要保持时使用，不要默认给每个节点写死颜色。云厂商图标只有在代码、配置或用户输入已经确认对应云产品时才使用，不能用图标猜技术栈。除非用户明确指定视觉图标或当前图已经存在 iconRef，否则优先让插件按 icon/stencil 自动选图标。scene.groups 可配置 id,label,tone,kind(group/boundary),collapsed,parentId,c4Type(software-system/container),description，以 parentId 表达系统→容器的嵌套边界；scene.lanes 可配置 id,label,axis(horizontal/vertical),start,size,tone。arrow 使用 id,type=arrow,from,to，可选 label、lineStyle(solid/dashed/dotted)、routing(straight/orthogonal)、fromAnchor/toAnchor(auto/top/right/bottom/left)、points、labelPosition({x,y})、emphasis、markerEnd(none/arrow)、strokeColor、strokeWidth、opacity；from/to 必须引用现有 node/note id。手绘 freehand 是用户交互产物，AI 默认不要生成。labelPosition 属于用户手调标签位置，已有值应尽量保留；bundleKey 由插件理线器生成，不要手工编造。',
       '5. 只在视觉语义明确时使用 tone：主路径可 accent，成功/完成可 success，风险可 warning/danger，次要信息可 muted；不要把每个节点都染色。架构/流程图优先用 orthogonal 路由，简单关系可以 straight。',
-      ...canvasVisualStyleGuide(),
+      ...(!architecture ? diagramVisualStyleGuide() : []),
       `6. ${workbenchRule}`,
       '7. 初次新建图使用 diagram.update 写回完整 JSON；不要写 Mermaid 语法。完成后简要说明分析范围和图表路径。',
-      ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise')] : []),
+      ...(architecture ? ['', '内置 Architecture Diagram Skill：', ...architectureDesignSkill('enterprise'), ...diagramVisualStyleGuide()] : []),
     ].filter(Boolean).join('\n')
   }
   const skill = diagramSkill(request.type)

@@ -182,6 +182,7 @@ function browserEntry(externalCases) {
   const quality = path.join(root, 'src/mermaidQuality.ts')
   return `
 import mermaid from 'mermaid'
+import { fitMermaidSvgToContent } from ${JSON.stringify(path.join(root, 'src/mermaidSvg.ts'))}
 import { createTemplate } from ${JSON.stringify(templates)}
 import { mermaidDiagramTypes } from ${JSON.stringify(types)}
 import { mermaidVisualConfig, normalizeMermaidSourceForRender } from ${JSON.stringify(grammar)}
@@ -198,8 +199,10 @@ for (const mode of ['light', 'dark']) {
   for (const { type, name = type, source } of cases) {
     try {
       const renderSource = normalizeMermaidSourceForRender(type, source)
-      mermaid.initialize({ ...mermaidVisualConfig(type, palettes[mode], renderSource), fontFamily: 'Arial, sans-serif' })
-      const { svg } = await mermaid.render('smoke-' + mode + '-' + type + '-' + Math.random().toString(36).slice(2), renderSource)
+      const config = mermaidVisualConfig(type, palettes[mode], renderSource)
+      mermaid.initialize({ ...config, fontFamily: config.fontFamily ?? 'Arial, sans-serif' })
+      const { svg: renderedSvg } = await mermaid.render('smoke-' + mode + '-' + type + '-' + Math.random().toString(36).slice(2), renderSource)
+      const svg = fitMermaidSvgToContent(renderedSvg, config.themeVariables?.background)
       const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
       const root = doc.documentElement
       const viewBox = (root.getAttribute('viewBox') || '').split(/\\s+/).map(Number)
@@ -233,7 +236,7 @@ function inspectRenderedSvg(svg, type) {
       tag: element.tagName,
       text: (element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
     }))
-    .filter((entry) => entry.box && (entry.tag.toLowerCase() === 'foreignobject' || entry.text.length > 0))
+    .filter((entry) => entry.box && entry.box.width > 0 && entry.box.height > 0 && entry.text.length > 0)
   const overflowEntries = bounds ? contentEntries.filter((entry) => !containsBox(bounds, entry.box, 3)) : []
   const contentOverflow = overflowEntries.length
   const nodeSelector = type === 'flowchart' || type === 'state' || type === 'class' ? 'g.node' : ''

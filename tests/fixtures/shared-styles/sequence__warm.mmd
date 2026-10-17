@@ -1,0 +1,17 @@
+%% codex-diagram:style=warm
+sequenceDiagram
+  actor User as 用户
+  participant Web as 业务入口
+  participant API as 审批服务
+  participant DB as 订单数据
+  User->>Web: 提交审批
+  Web->>API: POST /orders
+  API->>DB: 校验幂等状态
+  DB-->>API: 返回当前状态
+  alt 允许审批
+    API->>DB: 持久化审批结果
+    API-->>Web: 审批完成
+  else 状态冲突
+    API-->>Web: 返回冲突原因
+  end
+  Web-->>User: 展示处理结果

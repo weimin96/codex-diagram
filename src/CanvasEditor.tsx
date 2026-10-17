@@ -1,4 +1,4 @@
-import { canvasVisualSkin, canvasStyledBox, canvasVisualStyles, type CanvasVisualStyle } from './canvasVisualStyles.js'
+import { canvasVisualSkin, canvasStyledBox, diagramVisualStyles, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
@@ -1264,7 +1264,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   const scene = parsed.scene
-  const visualSkin = canvasVisualSkin(scene.architecture ? undefined : scene.style, darkTheme)
+  const visualSkin = canvasVisualSkin(scene.style, darkTheme)
   const workbench = scene.workbench ?? (scene.architecture ? 'architecture' : 'freeform')
   const architectureWorkbench = workbench === 'architecture'
   const flowchartWorkbench = workbench === 'flowchart'
@@ -3023,10 +3023,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
           <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}><ToolbarGlyph icon={Hand} /></ToolButton>
-          {!architectureWorkbench ? <select disabled={Boolean(playback?.active)} className="freeform-visual-style" aria-label="画布样式" value={scene.style ?? ''} onChange={(event) => commit({ ...currentScene(), style: event.target.value ? event.target.value as CanvasVisualStyle : undefined })}>
+          <select disabled={Boolean(playback?.active)} className="freeform-visual-style" aria-label="画布样式" value={scene.style ?? ''} onChange={(event) => commit({ ...currentScene(), style: event.target.value ? event.target.value as DiagramVisualStyle : undefined })}>
             <option value="">原始样式</option>
-            {canvasVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-          </select> : null}
+            {diagramVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+          </select>
           {architectureWorkbench ? (
             <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="组件 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}><ToolbarGlyph icon={Shapes} /></ToolButton>
           ) : (
@@ -4043,7 +4043,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {visibleRenderBoxes.map((item) => {
             const playbackPosition = playback?.positionOverrides?.[item.id]
             const originalItem = playbackBoxPosition(item)
-            const skin = canvasVisualSkin(scene.architecture || originalItem.type === 'note' ? undefined : scene.style, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
+            const skin = canvasVisualSkin(originalItem.type === 'note' ? undefined : scene.style, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
             const displayItem = canvasStyledBox(originalItem, skin)
             const displayX = displayItem.x
             const displayY = displayItem.y
@@ -4142,7 +4142,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
                   {playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
                 </text>
-              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : scene.architecture ? darkTheme ? '#f8fafc' : '#243247' : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
                 {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}

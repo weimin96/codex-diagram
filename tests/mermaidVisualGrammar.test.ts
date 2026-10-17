@@ -1,3 +1,6 @@
+import { diagramVisualStyles } from '../src/diagramVisualStyles.js'
+import { setMermaidVisualStyle } from '../src/mermaidVisualGrammar.js'
+import { mermaidDiagramTypes } from '../src/types.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mermaidVisualConfig, mermaidVisualProfile, normalizeMermaidSourceForRender, resolveMermaidVisualDensity, resolveMermaidVisualStyle } from '../src/mermaidVisualGrammar.js'
@@ -148,4 +151,27 @@ test('visual style directives select stable profiles without changing the diagra
   assert.ok((editorial.flowchart?.nodeSpacing ?? 0) > (technical.flowchart?.nodeSpacing ?? 0))
   assert.ok((presentation.flowchart?.nodeSpacing ?? 0) > (editorial.flowchart?.nodeSpacing ?? 0))
   assert.equal(presentation.themeVariables?.fontSize, '15px')
+})
+
+test('共享样式覆盖全部 Mermaid 图种，并保留各自的图形语法', () => {
+  for (const { type } of mermaidDiagramTypes) {
+    const outputs = new Set<string>()
+    for (const style of diagramVisualStyles) {
+      const source = `%% codex-diagram:style=${style.id}\n`
+      assert.equal(resolveMermaidVisualStyle(source), style.id)
+      const config = mermaidVisualConfig(type, palette, source)
+      assert.ok(config.fontFamily)
+      assert.notEqual(config.themeVariables?.primaryBorderColor, palette.strongBorder)
+      outputs.add(JSON.stringify(config))
+    }
+    assert.equal(outputs.size, diagramVisualStyles.length)
+  }
+})
+
+test('切换 Mermaid 样式只替换样式声明，保留 YAML、换行和业务内容', () => {
+  const source = '---\r\ntitle: 审批\r\n---\r\n%% codex-diagram:style=warm\r\nsequenceDiagram\r\nA->>B: 请求\r\n'
+  const changed = setMermaidVisualStyle(source, 'forest')
+  assert.equal(changed, source.replace('style=warm', 'style=forest'))
+  assert.equal(setMermaidVisualStyle(changed, 'forest'), changed)
+  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=unknown\nflowchart LR'), 'technical')
 })

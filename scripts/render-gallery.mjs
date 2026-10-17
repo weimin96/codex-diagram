@@ -109,6 +109,7 @@ function browserEntry(cases) {
   const canvas = path.join(root, 'src/canvas.ts')
   return `
 import mermaid from 'mermaid'
+import { fitMermaidSvgToContent } from ${JSON.stringify(path.join(root, 'src/mermaidSvg.ts'))}
 import { mermaidVisualConfig, normalizeMermaidSourceForRender, resolveMermaidVisualStyle } from ${JSON.stringify(grammar)}
 import { detectDiagramType } from ${JSON.stringify(templates)}
 import { parseCanvasScene, canvasSceneToSvg } from ${JSON.stringify(canvas)}
@@ -131,14 +132,15 @@ for (const mode of ['light','dark']) {
         const scene = parseCanvasScene(testCase.source)
         const p = palettes[mode]
         svg = canvasSceneToSvg(scene, { background:p.background, panel:p.raised, text:p.text, border:p.strongBorder, note:p.surface })
-        style = scene.architecture?.theme
+        style = scene.style ?? scene.architecture?.theme
       } else {
         const type = detectDiagramType(testCase.source)
         if (type === 'unknown') throw new Error('unknown Mermaid type')
         const source = normalizeMermaidSourceForRender(type, testCase.source)
         style = resolveMermaidVisualStyle(source)
-        mermaid.initialize({ ...mermaidVisualConfig(type, palettes[mode], source), fontFamily:'Arial, sans-serif' })
-        svg = (await mermaid.render('gallery-' + mode + '-' + Math.random().toString(36).slice(2), source)).svg
+        const config = mermaidVisualConfig(type, palettes[mode], source)
+        mermaid.initialize({ ...config, fontFamily: config.fontFamily ?? 'Arial, sans-serif' })
+        svg = fitMermaidSvgToContent((await mermaid.render('gallery-' + mode + '-' + Math.random().toString(36).slice(2), source)).svg, config.themeVariables?.background)
         document.body.replaceChildren()
       }
       const raster = await rasterize(svg, palettes[mode].background)

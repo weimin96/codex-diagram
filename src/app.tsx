@@ -1,3 +1,5 @@
+import { fitMermaidSvgToContent } from './mermaidSvg.js'
+import { diagramVisualStyles } from './diagramVisualStyles.js'
 import React, { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import mermaid from 'mermaid'
@@ -16,7 +18,7 @@ import { canvasSceneToSvg, parseCanvasScene, type CanvasWorkbenchMode } from './
 import { normalizeMermaidColor } from './colors.js'
 import { MermaidEditor } from './MermaidEditor.js'
 import { assessMermaidVisualQuality } from './mermaidQuality.js'
-import { mermaidVisualConfig, normalizeMermaidSourceForRender } from './mermaidVisualGrammar.js'
+import { mermaidVisualConfig, normalizeMermaidSourceForRender, resolveMermaidVisualStyle, setMermaidVisualStyle, type MermaidVisualStyle } from './mermaidVisualGrammar.js'
 import { createTemplate, detectDiagramType } from './templates.js'
 import { extractToolResultError, extractToolResultPayload, type ToolResultLike } from './toolResult.js'
 import { diagramTypeGroups, diagramTypes, type DiagramDocument, type DiagramRevision, type DiagramSummary, type DiagramSurface, type DiagramType, type MermaidDiagramType, type WorkspaceSnapshot } from './types.js'
@@ -2100,6 +2102,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                     <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
                   </div>
                 ) : null}
+                {selected.type !== 'canvas' ? <select className="freeform-visual-style" aria-label="图表样式" value={resolveMermaidVisualStyle(source)} onChange={(event) => setSource((current) => setMermaidVisualStyle(current, event.target.value as MermaidVisualStyle))}>
+                  <optgroup label="共享样式">{diagramVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}</optgroup>
+                  <optgroup label="经典排版"><option value="technical">工程文档</option><option value="minimal">极简</option><option value="editorial">叙事</option><option value="presentation">汇报</option></optgroup>
+                </select> : null}
                 <div className="mode-switch" aria-label="视图模式">
                   <ModeButton value="preview" mode={mode} onChange={setMode}>预览</ModeButton>
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
@@ -3418,10 +3424,10 @@ async function renderMermaidSvg(source: string, renderId: string): Promise<strin
   }, renderSource)
   mermaid.initialize({
     ...visualConfig,
-    fontFamily: styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui',
+    fontFamily: visualConfig.fontFamily ?? (styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui'),
   })
   const result = await mermaid.render(renderId, renderSource || 'flowchart LR\n  A[空图表]')
-  return serializeSafeSvg(result.svg)
+  return fitMermaidSvgToContent(serializeSafeSvg(result.svg), visualConfig.themeVariables?.background)
 }
 
 function createSafeSvgElement(markup: string): SVGSVGElement {

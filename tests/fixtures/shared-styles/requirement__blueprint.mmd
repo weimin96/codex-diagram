@@ -1,0 +1,14 @@
+%% codex-diagram:style=blueprint
+requirementDiagram
+
+  requirement core_req {
+    id: 1
+    text: "工程蓝图"
+  }
+
+  element core_element {
+    type: service
+    docref: workspace
+  }
+
+  core_element - satisfies -> core_req

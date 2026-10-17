@@ -1,3 +1,4 @@
+import { diagramStylePalette, isDiagramVisualStyle, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import type { MermaidConfig } from 'mermaid'
 import type { MermaidDiagramType } from './types.js'
 
@@ -17,7 +18,7 @@ export interface MermaidVisualPalette {
 }
 
 export type MermaidVisualDensity = 'comfortable' | 'compact' | 'dense'
-export type MermaidVisualStyle = 'technical' | 'minimal' | 'editorial' | 'presentation'
+export type MermaidVisualStyle = 'technical' | 'minimal' | 'editorial' | 'presentation' | DiagramVisualStyle
 
 interface MermaidTreemapRuntimeConfig {
   useMaxWidth?: boolean
@@ -38,8 +39,17 @@ export type MermaidVisualConfig = MermaidConfig & {
 }
 
 export function resolveMermaidVisualStyle(source: string): MermaidVisualStyle {
-  const match = source.match(/^\s*%%\s*codex-diagram:style=(technical|minimal|editorial|presentation)\s*$/im)
-  return (match?.[1] as MermaidVisualStyle | undefined) ?? 'technical'
+  const match = source.match(/^\s*%%\s*codex-diagram:style=([a-z-]+)\s*$/im)
+  const name = match?.[1]
+  return name && (isDiagramVisualStyle(name) || ['technical', 'minimal', 'editorial', 'presentation'].includes(name)) ? name as MermaidVisualStyle : 'technical'
+}
+
+export function setMermaidVisualStyle(source: string, style: MermaidVisualStyle): string {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n'
+  const clean = source.replace(/^[ \t]*%%[ \t]*codex-diagram:style=[^\r\n]*(?:\r?\n|$)/gm, '')
+  const frontmatter = clean.match(/^[ \t\r\n]*---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? ''
+  const declaration = `%% codex-diagram:style=${style}${newline}`
+  return frontmatter ? `${frontmatter}${frontmatter.endsWith('\n') ? '' : newline}${declaration}${clean.slice(frontmatter.length)}` : `${declaration}${clean}`
 }
 
 export function normalizeMermaidSourceForRender(type: MermaidDiagramType | 'unknown', source: string): string {
@@ -122,7 +132,11 @@ export function resolveMermaidVisualDensity(type: MermaidDiagramType | 'unknown'
 
 export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palette: MermaidVisualPalette, source = ''): MermaidVisualConfig {
   const density = resolveMermaidVisualDensity(type, source)
-  const style = resolveMermaidVisualStyle(source)
+  const requestedStyle = resolveMermaidVisualStyle(source)
+  const sharedStyle = isDiagramVisualStyle(requestedStyle) ? requestedStyle : undefined
+  const sharedPalette = sharedStyle ? diagramStylePalette(sharedStyle, palette.background) : undefined
+  if (sharedPalette) palette = sharedPalette
+  const style = sharedStyle ? sharedStyle === 'graphite' || sharedStyle === 'blueprint' ? 'minimal' : sharedStyle === 'warm' || sharedStyle === 'rose' ? 'editorial' : sharedStyle === 'coral' || sharedStyle === 'ink' ? 'presentation' : 'technical' : requestedStyle
   const requestedSpacing = style === 'minimal' ? 0.88 : style === 'editorial' ? 1.14 : style === 'presentation' ? 1.24 : 1
   const spacing = density === 'dense' ? Math.min(requestedSpacing, 1.08) : requestedSpacing
   const scaled = (value: number) => Math.round(value * spacing)
@@ -136,14 +150,15 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
   const entityPadding = scaled(density === 'comfortable' ? 12 : density === 'compact' ? 10 : 8)
   const fontSize = style === 'minimal' ? '12px' : style === 'editorial' ? '14px' : style === 'presentation' ? '15px' : '13px'
   const fontWeight = style === 'presentation' ? '600' : style === 'editorial' ? '550' : '500'
-  const radius = style === 'minimal' ? 5 : style === 'editorial' ? 10 : style === 'presentation' ? 12 : 8
-  const strokeWidth = style === 'presentation' ? '1.5px' : style === 'editorial' ? '1.25px' : '1px'
+  const radius = sharedPalette?.radius ?? (style === 'minimal' ? 5 : style === 'editorial' ? 10 : style === 'presentation' ? 12 : 8)
+  const strokeWidth = sharedPalette ? `${sharedPalette.strokeWidth}px` : style === 'presentation' ? '1.5px' : style === 'editorial' ? '1.25px' : '1px'
   const themeVariables = {
     fontSize,
     fontWeight,
     radius,
     strokeWidth,
     dropShadow: 'none',
+    ...(sharedPalette ? { actor0: palette.accent, actor1: palette.success, actor2: palette.warning, actor3: palette.danger } : {}),
     background: palette.background,
     primaryColor: palette.raised,
     primaryTextColor: palette.text,
@@ -251,7 +266,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
     pie6: palette.strongBorder,
     pieStrokeColor: palette.background,
     pieOuterStrokeColor: palette.border,
-    pieSectionTextColor: palette.text,
+    pieSectionTextColor: sharedPalette ? sharedPalette.dark ? '#182333' : '#ffffff' : palette.text,
     pieLegendTextColor: palette.text,
     requirementBackground: palette.raised,
     requirementBorderColor: palette.strongBorder,
@@ -288,6 +303,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
 
   return {
     startOnLoad: false,
+    ...(sharedPalette ? { fontFamily: sharedPalette.font } : {}),
     securityLevel: 'strict',
     theme: 'base',
     look: (type === 'flowchart' || type === 'state' || type === 'class') && style !== 'minimal' && style !== 'editorial' ? 'neo' : 'classic',
@@ -421,7 +437,7 @@ export function mermaidVisualConfig(type: MermaidDiagramType | 'unknown', palett
       titleFontSize: 18,
       titlePadding: 12,
       showDataLabel: density === 'comfortable',
-      showDataLabelOutsideBar: false,
+      showDataLabelOutsideBar: Boolean(sharedPalette),
       showTitle: true,
       showLegend: true,
       legendFontSize: 12,
