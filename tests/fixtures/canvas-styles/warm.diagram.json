@@ -1,0 +1,98 @@
+{
+  "type": "codex-diagram-canvas",
+  "version": 1,
+  "title": "中文关系标签",
+  "width": 1100,
+  "height": 600,
+  "elements": [
+    {
+      "id": "entry",
+      "type": "node",
+      "x": 40,
+      "y": 250,
+      "width": 180,
+      "height": 80,
+      "text": "业务入口",
+      "tone": "accent",
+      "emphasis": "primary"
+    },
+    {
+      "id": "api",
+      "type": "node",
+      "x": 850,
+      "y": 50,
+      "width": 180,
+      "height": 80,
+      "text": "审批服务"
+    },
+    {
+      "id": "db",
+      "type": "node",
+      "x": 850,
+      "y": 250,
+      "width": 180,
+      "height": 80,
+      "text": "订单数据库",
+      "tone": "success"
+    },
+    {
+      "id": "events",
+      "type": "node",
+      "x": 850,
+      "y": 450,
+      "width": 180,
+      "height": 80,
+      "text": "事件队列",
+      "tone": "warning"
+    },
+    {
+      "id": "submit",
+      "type": "arrow",
+      "from": "entry",
+      "to": "api",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "routing": "orthogonal",
+      "points": [
+        {
+          "x": 370,
+          "y": 290
+        },
+        {
+          "x": 370,
+          "y": 90
+        }
+      ],
+      "label": "提交审批请求并校验业务权限与幂等状态"
+    },
+    {
+      "id": "persist",
+      "type": "arrow",
+      "from": "entry",
+      "to": "db",
+      "label": "事务提交后持久化订单及关联审批记录",
+      "routing": "straight"
+    },
+    {
+      "id": "publish",
+      "type": "arrow",
+      "from": "entry",
+      "to": "events",
+      "fromAnchor": "right",
+      "toAnchor": "left",
+      "routing": "orthogonal",
+      "points": [
+        {
+          "x": 650,
+          "y": 290
+        },
+        {
+          "x": 650,
+          "y": 490
+        }
+      ],
+      "label": "发布 OrderApproved 事件供异步订阅消费"
+    }
+  ],
+  "style": "warm"
+}

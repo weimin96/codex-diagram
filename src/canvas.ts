@@ -1,3 +1,4 @@
+import { canvasVisualSkin, canvasStyledBox, isCanvasVisualStyle, type CanvasVisualStyle } from './canvasVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import {
   CANVAS_ROLE_ICON_IDS,
@@ -65,6 +66,7 @@ export interface CanvasScene {
   height: number
   elements: CanvasElement[]
   workbench?: CanvasWorkbenchMode
+  style?: CanvasVisualStyle
   groups?: CanvasGroup[]
   lanes?: CanvasLane[]
   architecture?: {
@@ -280,6 +282,7 @@ export function parseCanvasScene(source: string): CanvasScene {
   if (scene.type !== 'codex-diagram-canvas' || scene.version !== 1 || !Array.isArray(scene.elements)) {
     throw new Error('不是受支持的 Codex Diagram Canvas 文档。')
   }
+  if (scene.style !== undefined && !isCanvasVisualStyle(scene.style)) throw new Error('不支持的画布样式，请使用 ocean、warm、ink 或 pastel。')
   const architecture = normalizeArchitectureAppearance(scene.architecture)
   const workbench = normalizeCanvasWorkbench(scene.workbench, Boolean(architecture))
   return {
@@ -290,6 +293,7 @@ export function parseCanvasScene(source: string): CanvasScene {
     height: positive(scene.height, 1000),
     elements: scene.elements.filter(isCanvasElement).map(normalizeCanvasElement),
     workbench,
+    ...(isCanvasVisualStyle(scene.style) ? { style: scene.style } : {}),
     ...(Array.isArray(scene.groups) ? { groups: normalizeCanvasGroups(scene.groups) } : {}),
     ...(Array.isArray(scene.lanes) ? { lanes: normalizeCanvasLanes(scene.lanes, positive(scene.width, 1600), positive(scene.height, 1000)) } : {}),
     ...(architecture ? { architecture } : {}),
@@ -314,9 +318,10 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
   const projection = canvasArchitectureProjection(scene)
   scene = projection.scene
   const baseBackground = colors?.background || '#ffffff'
-  const background = architectureMode && architectureTheme === 'technical'
+  const visualSkin = canvasVisualSkin(architectureMode ? undefined : scene.style, hexLuminance(baseBackground) < 0.18)
+  const background = visualSkin?.background ?? (architectureMode && architectureTheme === 'technical'
     ? hexLuminance(baseBackground) < 0.18 ? '#111827' : '#f5f8fc'
-    : baseBackground
+    : baseBackground)
   const panel = colors?.panel || '#f8f8f8'
   const text = colors?.text || '#171717'
   const border = colors?.border || '#8a8a8a'
@@ -363,7 +368,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
         ? arrow.emphasis === 'muted' ? darkArchitecture ? '0.24' : '0.20' : arrow.emphasis === 'secondary' ? darkArchitecture ? '0.56' : '0.48' : darkArchitecture ? '0.84' : '0.78'
         : arrow.emphasis === 'muted' ? '0.34' : arrow.emphasis === 'secondary' ? '0.72' : '0.94'
       : arrow.emphasis === 'muted' ? '0.48' : arrow.emphasis === 'secondary' ? '0.78' : '1')
-    const stroke = arrow.strokeColor ?? (architectureMode ? architectureBorder : border)
+    const stroke = arrow.strokeColor ?? visualSkin?.edge ?? (architectureMode ? architectureBorder : border)
     const visibleLabel = architectureMode && arrow.label && !canvasArchitectureRelationLabelVisible(arrow) ? undefined : arrow.label
     const label = visibleLabel ? labelLayouts.get(arrow.id) : undefined
     const labelText = label ? `<text x="${label.x}" y="${label.y + 4 - (label.lines.length - 1) * 8}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="${escapeXml(text)}"${architectureMode ? ` stroke="${escapeXml(background)}" stroke-width="4" stroke-linejoin="round" paint-order="stroke"` : ''}>${label.lines.map((line, index) => `<tspan x="${label.x}" dy="${index ? 16 : 0}">${escapeXml(line)}</tspan>`).join('')}</text>` : ''
@@ -384,13 +389,17 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const suffix = connection.count > 1 ? ` ×${connection.count}` : ''
     return `<g><path d="${geometry}" fill="none" stroke="${escapeXml(architectureMode ? architectureBorder : border)}" stroke-width="${architectureMode ? 2.4 : 2.2}"${dash} marker-end="url(#arrow)"/>${label || suffix ? `<text x="${(start.x + end.x) / 2}" y="${(start.y + end.y) / 2 - 8}" text-anchor="middle" font-size="13" fill="${escapeXml(text)}">${escapeXml(`${label}${suffix}`)}</text>` : ''}</g>`
   }).join('')
-  const shapes = [...nodes.values()].map((item) => {
+  const shapes = [...nodes.values()].map((rawItem) => {
+    const skin = canvasVisualSkin(architectureMode || rawItem.type === 'note' ? undefined : scene.style, hexLuminance(baseBackground) < 0.18, rawItem.tone, rawItem.emphasis === 'primary')
+    const item = canvasStyledBox(rawItem, skin)
     const wrapRotation = (markup: string) => item.rotation
       ? `<g transform="rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})">${markup}</g>`
       : markup
-    const palette = architectureMode
-      ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
-      : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
+    const palette = skin && item.type === 'node'
+      ? { fill: skin.fill, text: rawItem.fillColor ? text : skin.text, stroke: skin.stroke }
+      : architectureMode
+        ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
+        : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
     if (item.type === 'note' && item.textOnly) {
       const fontSize = item.fontSize ?? 20
       const fontWeight = item.fontWeight ?? 500
@@ -429,7 +438,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const strokeColor = item.strokeColor ?? palette.stroke
     const strokeWidth = item.strokeWidth ?? (item.emphasis === 'primary' ? 2.4 : item.emphasis === 'muted' ? 1.1 : 1.5)
     const opacity = item.opacity ?? (item.emphasis === 'muted' ? '0.72' : '1')
-    const accent = item.emphasis === 'primary' && !item.shapeRef ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
+    const accent = !skin && item.emphasis === 'primary' && !item.shapeRef ? `<rect x="${item.x}" y="${item.y}" width="5" height="${item.height}" rx="${Math.min(5, shapeRadius(item.shape, item.height))}" fill="${escapeXml(palette.stroke)}"/>` : ''
     const cardBand = architectureCard ? `<rect x="${item.x + 12}" y="${item.y + item.height - 4}" width="${Math.max(24, item.width - 24)}" height="2" rx="1" fill="${escapeXml(architectureCardBandColor(cardTemplate.kind, palette.stroke, border))}" fill-opacity="0.72"/>` : ''
     const dash = cardTemplate.kind === 'external' || cardTemplate.kind === 'messaging' ? ' stroke-dasharray="7 5"' : ''
     const shapeMarkup = item.shapeRef
@@ -438,7 +447,7 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
           return `<g transform="translate(${item.x} ${item.y})"><path d="${geometry.bodyPath}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${escapeXml(strokeColor)}" stroke-width="${Math.max(1, strokeWidth * 0.86)}"/>`).join('')}</g>`
         })()
       : `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="${item.cornerRadius ?? shapeRadius(item.shape, item.height)}" fill="${escapeXml(fillColor)}" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}"${architectureCard ? dash : ''}/>`
-    return wrapRotation(`<g opacity="${opacity}">${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`)
+    return wrapRotation(`<g opacity="${opacity}"${skin ? ` style="filter:${skin.shadow};font-family:${skin.font}"` : ''}>${shapeMarkup}${accent}${cardBand}${icon}${stencil}${c4}${texts}${subtitle}</g>`)
   }).join('')
   const groups = groupFrames.filter((group) => !isInsideCollapsedAncestor(group.id, scene.groups ?? [])).map((group) => {
     const palette = architectureMode

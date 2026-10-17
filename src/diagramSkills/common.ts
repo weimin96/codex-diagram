@@ -7,7 +7,7 @@ export const commonMermaidVisualRules = [
   '同类元素命名和粒度保持一致；不要在同一张图里混用系统级、类级和方法级节点。',
   '当内容超过单屏可读密度时优先抽象、分区或拆图，不靠缩小字体硬塞。',
   '默认不要在 Mermaid 源码里写固定颜色的 style/classDef 或 %%{init}%% 主题覆盖；明暗主题和视觉 token 由 Diagram Visual Grammar 统一管理。只有用户明确要求特殊语义高亮时才例外。',
-  '需要明显风格时只使用一条首部注释 `%% codex-diagram:style=<profile>`：technical 适合工程文档，minimal 适合小而直接的结构，editorial 适合叙事/知识表达，presentation 适合评审与汇报。未明确需要风格时省略，默认 technical；不要再用 style/classDef 重造主题。',
+  '需要明显风格时只使用一条首部注释 `%% codex-diagram:style=<profile>`：technical 适合工程文档，minimal 适合小而直接的结构，editorial 适合叙事/知识表达，presentation 适合评审与汇报。新建图时根据用途主动选择一套 Profile；修改已有图时保留原 Profile；不要再用 style/classDef 重造主题。',
 ]
 
 export const commonMermaidEvidenceRules = [

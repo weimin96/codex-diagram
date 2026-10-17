@@ -1,3 +1,4 @@
+import { canvasVisualSkin, canvasStyledBox, canvasVisualStyles, type CanvasVisualStyle } from './canvasVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
@@ -267,6 +268,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
   }, [source])
   const [tool, setTool] = useState<CanvasTool>('select')
+  const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === 'dark')
+  useEffect(() => {
+    const update = () => setDarkTheme(document.documentElement.dataset.theme === 'dark')
+    window.addEventListener('diagram-theme-change', update)
+    return () => window.removeEventListener('diagram-theme-change', update)
+  }, [])
   const [architectureTheme, setArchitectureTheme] = useState<ArchitectureTheme>(parsed.scene?.architecture?.theme ?? 'enterprise')
   const [architectureView, setArchitectureView] = useState<CanvasArchitectureView>(parsed.scene?.architecture?.view ?? 'detail')
   const [architectureDensity, setArchitectureDensity] = useState<CanvasArchitectureDensity>(parsed.scene?.architecture?.density ?? 'auto')
@@ -1257,6 +1264,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   const scene = parsed.scene
+  const visualSkin = canvasVisualSkin(scene.architecture ? undefined : scene.style, darkTheme)
   const workbench = scene.workbench ?? (scene.architecture ? 'architecture' : 'freeform')
   const architectureWorkbench = workbench === 'architecture'
   const flowchartWorkbench = workbench === 'flowchart'
@@ -3015,6 +3023,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
           <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
           <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}><ToolbarGlyph icon={Hand} /></ToolButton>
+          {!architectureWorkbench ? <select disabled={Boolean(playback?.active)} className="freeform-visual-style" aria-label="画布样式" value={scene.style ?? ''} onChange={(event) => commit({ ...currentScene(), style: event.target.value ? event.target.value as CanvasVisualStyle : undefined })}>
+            <option value="">原始样式</option>
+            {canvasVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+          </select> : null}
           {architectureWorkbench ? (
             <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="组件 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}><ToolbarGlyph icon={Shapes} /></ToolButton>
           ) : (
@@ -3734,7 +3746,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <path d="M0,0 L0,8 L10,4 z" fill="context-stroke" />
             </marker>
           </defs>
-          <rect width={scene.width} height={scene.height} className="freeform-background" pointerEvents="none" />
+          <rect width={scene.width} height={scene.height} className="freeform-background" style={visualSkin ? { fill: visualSkin.background } : undefined} pointerEvents="none" />
           <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
           {draggedArchitectureTemplate && architectureTemplateDrag?.point ? (() => {
             const width = draggedArchitectureTemplate.width ?? 188
@@ -3935,7 +3947,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   d={path}
                   markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'}
                   pathLength="1"
-                  style={{ ...(displayArrow.strokeColor ? { stroke: displayArrow.strokeColor } : {}), ...(displayArrow.strokeWidth ? { strokeWidth: displayArrow.strokeWidth } : {}) }}
+                  style={{ ...(displayArrow.strokeColor || visualSkin ? { stroke: displayArrow.strokeColor ?? visualSkin?.edge } : {}), ...(displayArrow.strokeWidth ? { strokeWidth: displayArrow.strokeWidth } : {}) }}
                 />
                 {displayArrow.label && labelLayout ? (
                   <g
@@ -3947,7 +3959,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     onPointerCancel={selectedIds.includes(arrow.id) ? cancelGesture : undefined}
                     onDoubleClick={selectedIds.includes(arrow.id) ? (event) => { event.stopPropagation(); updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item) } : undefined}
                   >
-                    <rect x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={8} />
+                    <rect style={visualSkin ? { fill: visualSkin.background } : undefined} x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={8} />
                     <text x={labelLayout.x} y={labelLayout.y + 4 - (labelLayout.lines.length - 1) * 8} textAnchor="middle">{labelLayout.lines.map((line, index) => <tspan key={index} x={labelLayout.x} dy={index ? 16 : 0}>{line}</tspan>)}</text>
                   </g>
                 ) : null}
@@ -4030,7 +4042,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           ))}
           {visibleRenderBoxes.map((item) => {
             const playbackPosition = playback?.positionOverrides?.[item.id]
-            const displayItem = playbackBoxPosition(item)
+            const originalItem = playbackBoxPosition(item)
+            const skin = canvasVisualSkin(scene.architecture || originalItem.type === 'note' ? undefined : scene.style, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
+            const displayItem = canvasStyledBox(originalItem, skin)
             const displayX = displayItem.x
             const displayY = displayItem.y
             const displayText = playback?.typing?.id === item.id ? playback.typing.text : displayItem.text
@@ -4061,7 +4075,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             <g
               key={item.id}
               className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${imagePath ? ' is-image' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
-              style={canvasBoxVisualStyle(displayItem)}
+              style={{ ...canvasBoxVisualStyle(displayItem), ...(skin && displayItem.type === 'node' ? { filter: skin.shadow, ...(selectedIds.includes(item.id) ? { '--canvas-box-stroke': 'var(--accent)' } : {}) } : {}) }}
               transform={`translate(${displayX} ${displayY})${displayItem.rotation ? ` rotate(${displayItem.rotation} ${displayItem.width / 2} ${displayItem.height / 2})` : ''}`}
               onContextMenu={(event) => openContextMenu(event, item.id)}
               onPointerDown={(event) => startMove(event, item)}
@@ -4089,7 +4103,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   : <text className="freeform-image-placeholder" x={displayItem.width / 2} y={displayItem.height / 2} textAnchor="middle" dominantBaseline="middle">图片加载中</text>}
                 <rect className="freeform-image-outline" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
               </> : displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14)} />}
-              {!scene.architecture && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
+              {!scene.architecture && !visualSkin && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
               {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
               {architectureMark && iconRefMarkup && showRoleIcon ? (
                 <g className="freeform-icon-ref" transform={`translate(${architectureMarkX} ${architectureMarkY}) scale(${architectureMarkSize / 24})`} dangerouslySetInnerHTML={{ __html: iconRefMarkup }} />
@@ -4128,7 +4142,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
                   {playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
                 </text>
-              ) : <text className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
                 {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
               </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
