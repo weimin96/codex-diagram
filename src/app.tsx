@@ -450,9 +450,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const lastPlaybackActivity = useRef<string | undefined>(undefined)
   const pendingPlaybackActivity = useRef<DiagramThreadStateResult['activity'] | undefined>(undefined)
   const selectRequestSeq = useRef(0)
+  const saveInFlight = useRef(false)
   const patchHistoryRequestSeq = useRef(0)
   const threadStateInitialized = useRef(false)
   const backgroundFailures = useRef({ thread: 0, revision: 0 })
+  useEffect(() => () => { selectRequestSeq.current += 1 }, [])
   const dirty = Boolean(selected && source !== selected.source)
   const selectedTypeLabel = useMemo(() => selected ? diagramDocumentLabel(selected) : '', [selected])
   const visibleDiagrams = useMemo(() => {
@@ -960,11 +962,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   async function saveDiagram() {
-    if (!selected || !dirty || saving) return
+    if (!selected || !dirty || saving || saveInFlight.current) return
     if (externalChange) {
       setError('文件已在外部修改，请先重新载入最新版本。')
       return
     }
+    const requestSeq = selectRequestSeq.current
+    saveInFlight.current = true
     setSaving(true)
     setError(null)
     try {
@@ -975,8 +979,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         expectedModifiedAt: selected.modifiedAt,
         animate: false,
       })
+      if (requestSeq !== selectRequestSeq.current) return
       setSelected(result.diagram)
-      setSource(result.diagram.source)
+      setSource((current) => current === source ? result.diagram.source : current)
       setExternalChange(false)
       setChangeReview(null)
       setChangeReviewOpen(false)
@@ -985,8 +990,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
       })
     } catch (cause) {
-      setError(errorMessage(cause))
+      if (requestSeq === selectRequestSeq.current) setError(errorMessage(cause))
     } finally {
+      saveInFlight.current = false
       setSaving(false)
     }
   }

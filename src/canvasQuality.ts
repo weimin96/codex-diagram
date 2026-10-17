@@ -12,6 +12,7 @@ export type CanvasQualityIssueCode =
   | 'node-overlap'
   | 'edge-through-node'
   | 'edge-crossing'
+  | 'edge-overlap'
   | 'long-label'
   | 'flat-architecture'
 
@@ -33,6 +34,7 @@ export interface CanvasVisualQualityAssessment {
     nodeOverlaps: number
     edgeNodeIntersections: number
     edgeCrossings: number
+    edgeOverlaps: number
     longLabels: number
   }
 }
@@ -81,15 +83,24 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
   }
 
   let edgeCrossings = 0
+  let edgeOverlaps = 0
   for (let leftIndex = 0; leftIndex < arrows.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < arrows.length; rightIndex += 1) {
       const left = arrows[leftIndex]
       const right = arrows[rightIndex]
-      if (shareEndpoint(left, right)) continue
-      if (left.bundleKey && left.bundleKey === right.bundleKey) continue
       const leftRoute = routes.get(left.id)
       const rightRoute = routes.get(right.id)
-      if (!leftRoute || !rightRoute || !routesCross(leftRoute, rightRoute)) continue
+      if (!leftRoute || !rightRoute) continue
+      if (!(left.bundleKey && left.bundleKey === right.bundleKey) && routesOverlap(leftRoute, rightRoute)) {
+        edgeOverlaps += 1
+        issues.push({
+          code: 'edge-overlap',
+          severity: 'warning',
+          message: `${left.label || left.id} 与 ${right.label || right.id} 的独立连线重叠`,
+          elementIds: [left.id, right.id],
+        })
+      }
+      if (!routesCross(leftRoute, rightRoute)) continue
       edgeCrossings += 1
       issues.push({
         code: 'edge-crossing',
@@ -142,6 +153,7 @@ export function assessCanvasVisualQuality(scene: CanvasScene): CanvasVisualQuali
       nodeOverlaps,
       edgeNodeIntersections,
       edgeCrossings,
+      edgeOverlaps,
       longLabels,
     },
   }
@@ -210,8 +222,25 @@ function strictSegmentsCross(a: CanvasPoint, b: CanvasPoint, c: CanvasPoint, d: 
     && ((cdA > 0 && cdB < 0) || (cdA < 0 && cdB > 0))
 }
 
-function shareEndpoint(left: CanvasArrow, right: CanvasArrow): boolean {
-  return left.from === right.from || left.from === right.to || left.to === right.from || left.to === right.to
+function routesOverlap(left: CanvasPoint[], right: CanvasPoint[]): boolean {
+  for (let i = 0; i < left.length - 1; i += 1) {
+    const a = left[i]
+    const b = left[i + 1]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const length = Math.hypot(dx, dy)
+    if (length === 0) continue
+    for (let j = 0; j < right.length - 1; j += 1) {
+      const c = right[j]
+      const d = right[j + 1]
+      if (Math.abs(dx * (c.y - a.y) - dy * (c.x - a.x)) / length > 0.01
+        || Math.abs(dx * (d.y - a.y) - dy * (d.x - a.x)) / length > 0.01) continue
+      const start = ((c.x - a.x) * dx + (c.y - a.y) * dy) / length
+      const end = ((d.x - a.x) * dx + (d.y - a.y) * dy) / length
+      if (Math.min(length, Math.max(start, end)) - Math.max(0, Math.min(start, end)) > 2) return true
+    }
+  }
+  return false
 }
 
 function dedupeIssues(issues: CanvasQualityIssue[]): CanvasQualityIssue[] {

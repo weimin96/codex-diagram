@@ -24,6 +24,11 @@ function flowchartNodeCount(lines: string[]): number {
   const nodePattern = /\b([A-Za-z_][\w-]*)\s*(?=\[|\(|\{|>)/g
   for (const line of lines) {
     for (const match of line.matchAll(nodePattern)) ids.add(match[1])
+    if (/^(?:subgraph|style|classDef|class|click|linkStyle)\b/.test(line)) continue
+    const edges = line.replace(/"[^"\n]*"/g, '""')
+      .replace(/\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|\|[^|]*\|/g, '')
+    for (const match of edges.matchAll(/\b([\p{L}_][\p{L}\p{N}_-]*)\s*(?=-->|---|==>|-\.->|&)/gu)) ids.add(match[1])
+    for (const match of edges.matchAll(/(?:-->|---|==>|-\.->|&)\s*([\p{L}_][\p{L}\p{N}_-]*)/gu)) ids.add(match[1])
   }
   return ids.size
 }

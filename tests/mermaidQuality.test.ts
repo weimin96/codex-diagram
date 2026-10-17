@@ -2,6 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { assessMermaidVisualQuality } from '../src/mermaidQuality.js'
 
+test('隐式声明的流程节点也参与拆图阈值判断', () => {
+  const source = ['flowchart LR', ...Array.from({ length: 25 }, (_, index) => `N${index} --> N${index + 1}`)].join('\n')
+  const quality = assessMermaidVisualQuality('flowchart', source)
+  assert.equal(quality.metrics.nodes, 26)
+  assert.equal(quality.splitRecommended, true)
+})
+
 test('recommends splitting branch-heavy flowcharts instead of hiding complexity with tiny styling', () => {
   const source = ['flowchart TB', ...Array.from({ length: 24 }, (_, index) => `N${index}[步骤 ${index}] --> N${index + 1}[步骤 ${index + 1}]`), ...Array.from({ length: 6 }, (_, index) => `D${index}{判断 ${index}?} --> N${index}`)].join('\n')
   const quality = assessMermaidVisualQuality('flowchart', source)

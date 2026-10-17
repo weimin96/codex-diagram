@@ -4,6 +4,24 @@ import { applyArchitectureTheme, beautifyArchitectureScene, inferArchitectureCom
 import { assessCanvasVisualQuality } from '../src/canvasQuality.js'
 import { anchorPoint, canvasArrowRoutePoints, canvasBundleTrunks, canvasGroupFrames, type CanvasScene } from '../src/canvas.js'
 
+test('自动布局避让锁定节点，并保留锁定节点的位置和尺寸', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas', version: 1, title: '固定节点避让', width: 1400, height: 800,
+    elements: [
+      { id: 'client', type: 'node', text: 'Web Client', x: 100, y: 100, width: 180, height: 90, icon: 'web', locked: true },
+      { id: 'api', type: 'node', text: 'API Service', x: 500, y: 100, width: 180, height: 90, icon: 'api' },
+      { id: 'db', type: 'node', text: 'PostgreSQL', x: 900, y: 100, width: 180, height: 90, icon: 'database' },
+      { id: 'client-api', type: 'arrow', from: 'client', to: 'api' },
+      { id: 'api-db', type: 'arrow', from: 'api', to: 'db' },
+    ],
+  }
+  const result = beautifyArchitectureScene(scene, { theme: 'technical' }).scene
+  const fixed = result.elements.find((item) => item.id === 'client')!
+  assert.ok(fixed.type !== 'arrow')
+  assert.deepEqual([fixed.x, fixed.y, fixed.width, fixed.height], [100, 100, 180, 90])
+  assert.equal(assessCanvasVisualQuality(result).metrics.nodeOverlaps, 0)
+})
+
 function sampleScene(): CanvasScene {
   return {
     type: 'codex-diagram-canvas',

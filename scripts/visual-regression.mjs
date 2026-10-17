@@ -18,8 +18,7 @@ if (update && probe) throw new Error('VISUAL_REGRESSION_PROBE cannot be used whi
 try {
   const chrome = await findChrome()
   if (!chrome) {
-    console.log('Codex Diagram visual regression skipped: Chrome/Chromium not found.')
-    process.exit(0)
+    throw new Error('视觉回归未执行：未找到 Chrome/Chromium。')
   }
   const cases = await loadCases(fixtureDir)
   await run(chrome, cases)
@@ -64,6 +63,9 @@ async function run(chrome, cases) {
     if (!match) throw new Error('Visual regression browser did not return a result payload.')
     const result = JSON.parse(decodeHtml(match[1]))
     const failed = result.filter((item) => !item.ok)
+    if (failed.length) {
+      throw new Error(`Visual regression failures:\n${failed.map((item) => `${item.mode}/${item.name}: ${item.error}`).join('\n')}`)
+    }
 
     if (update) {
       await rm(baselineDir, { recursive: true, force: true })
@@ -93,9 +95,6 @@ async function run(chrome, cases) {
         throw new Error(`Visual regressions detected:\n${regressions.map((item) => `${item.mode}/${item.name}: pixels=${percent(item.diff.significantRatio)}, mean=${percent(item.diff.meanDelta)}, macro=${percent(item.diff.macroRatio)}`).join('\n')}`)
       }
       console.log(`Codex Diagram pixel visual regression passed: ${result.length} golden renders.`)
-    }
-    if (failed.length) {
-      throw new Error(`Visual regression failures:\n${failed.map((item) => `${item.mode}/${item.name}: ${item.error}`).join('\n')}`)
     }
   } finally {
     server.kill('SIGTERM')
@@ -130,6 +129,7 @@ async function loadCases(dir) {
     const [type, suffix] = stem.split('__', 2)
     cases.push({ type, name: suffix ? `${type}/${suffix}` : type, source: await readFile(path.join(dir, entry.name), 'utf8') })
   }
+  if (!cases.length) throw new Error(`No .mmd/.mermaid visual cases found in ${dir}`)
   return cases.sort((a, b) => a.name.localeCompare(b.name))
 }
 

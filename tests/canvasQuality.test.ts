@@ -53,7 +53,7 @@ test('Canvas quality gate identifies crossing independent relationships', () => 
   assert.ok(quality.issues.some((issue) => issue.code === 'edge-crossing'))
 })
 
-test('Canvas quality gate ignores intentional crossings inside one routed bundle', () => {
+test('同一 bundle 的非共线路段交叉仍然需要报告', () => {
   const scene: CanvasScene = {
     type: 'codex-diagram-canvas',
     version: 1,
@@ -72,8 +72,26 @@ test('Canvas quality gate ignores intentional crossings inside one routed bundle
   }
 
   const quality = assessCanvasVisualQuality(scene)
-  assert.equal(quality.metrics.edgeCrossings, 0)
-  assert.equal(quality.issues.some((issue) => issue.code === 'edge-crossing'), false)
+  assert.equal(quality.metrics.edgeCrossings, 1)
+  assert.equal(quality.issues.some((issue) => issue.code === 'edge-crossing'), true)
+})
+
+test('质量检查区分独立连线重叠与共享总线', () => {
+  const scene: CanvasScene = {
+    type: 'codex-diagram-canvas', version: 1, title: '重叠线路', width: 600, height: 300,
+    elements: [
+      { id: 'a', type: 'node', x: 0, y: 0, width: 40, height: 40, text: 'A' },
+      { id: 'b', type: 'node', x: 400, y: 0, width: 40, height: 40, text: 'B' },
+      { id: 'c', type: 'node', x: 0, y: 200, width: 40, height: 40, text: 'C' },
+      { id: 'd', type: 'node', x: 400, y: 200, width: 40, height: 40, text: 'D' },
+      { id: 'ab', type: 'arrow', from: 'a', to: 'b', fromAnchor: 'bottom', toAnchor: 'bottom', routing: 'orthogonal', points: [{ x: 20, y: 100 }, { x: 420, y: 100 }] },
+      { id: 'cd', type: 'arrow', from: 'c', to: 'd', fromAnchor: 'top', toAnchor: 'top', routing: 'orthogonal', points: [{ x: 20, y: 100 }, { x: 420, y: 100 }] },
+    ],
+  }
+  assert.equal(assessCanvasVisualQuality(scene).metrics.edgeOverlaps, 1)
+  assert.equal(assessCanvasVisualQuality(scene).needsRevision, true)
+  const bundled = { ...scene, elements: scene.elements.map((item) => item.type === 'arrow' ? { ...item, bundleKey: 'group:shared' } : item) }
+  assert.equal(assessCanvasVisualQuality(bundled).metrics.edgeOverlaps, 0)
 })
 
 test('Canvas quality gate passes a simple clean diagram', () => {

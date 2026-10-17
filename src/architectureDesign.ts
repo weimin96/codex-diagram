@@ -1574,22 +1574,34 @@ function applyArchitectureLayoutPositions(
   const locked = boxes.filter((item) => item.locked)
   const lockedRight = Math.max(0, ...locked.map((item) => item.x + item.width + metrics.canvasMargin))
   const lockedBottom = Math.max(0, ...locked.map((item) => item.y + item.height + metrics.canvasMargin))
+  const occupied = locked.map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height }))
+  const elements = scene.elements.map((item) => {
+    if (item.type === 'arrow' || item.locked) return item
+    const position = positionById.get(item.id)
+    if (!position) return item
+    const placed = {
+      ...item,
+      x: position.x,
+      y: position.y,
+      width: Math.max(metrics.nodeMinWidth, Math.min(metrics.nodeMaxWidth, item.width)),
+      height: Math.max(metrics.nodeMinHeight, Math.min(metrics.nodeMaxHeight, item.height)),
+    }
+    let collisions: typeof occupied
+    do {
+      collisions = occupied.filter((box) => placed.x < box.x + box.width + 24
+        && placed.x + placed.width + 24 > box.x
+        && placed.y < box.y + box.height + 24
+        && placed.y + placed.height + 24 > box.y)
+      if (collisions.length) placed.y = Math.max(...collisions.map((box) => box.y + box.height + 24))
+    } while (collisions.length)
+    occupied.push(placed)
+    return placed
+  })
   return {
     ...scene,
-    width: Math.max(960, unlockedWidth, lockedRight),
-    height: Math.max(620, unlockedHeight, lockedBottom),
-    elements: scene.elements.map((item) => {
-      if (item.type === 'arrow' || item.locked) return item
-      const position = positionById.get(item.id)
-      if (!position) return item
-      return {
-        ...item,
-        x: position.x,
-        y: position.y,
-        width: Math.max(metrics.nodeMinWidth, Math.min(metrics.nodeMaxWidth, item.width)),
-        height: Math.max(metrics.nodeMinHeight, Math.min(metrics.nodeMaxHeight, item.height)),
-      }
-    }),
+    width: Math.max(960, unlockedWidth, lockedRight, ...occupied.map((item) => item.x + item.width + metrics.canvasMargin)),
+    height: Math.max(620, unlockedHeight, lockedBottom, ...occupied.map((item) => item.y + item.height + metrics.canvasMargin)),
+    elements,
   }
 }
 

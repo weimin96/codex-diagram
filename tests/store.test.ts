@@ -1,10 +1,70 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { parseCanvasScene } from '../src/canvas.js'
 import { DiagramStore } from '../src/store.js'
+
+test('同一版本的并发保存只能有一个成功，且保留完整文件', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-concurrent-'))
+  try {
+    const store = await DiagramStore.open(root)
+    const otherStore = await DiagramStore.open(root)
+    const created = await store.create('flowchart', '并发编辑')
+    const sources = ['flowchart LR\n A-->B\n', 'flowchart LR\n C-->D\n']
+    const results = await Promise.allSettled(sources.map((source, index) =>
+      (index ? otherStore : store).update(created.path, source, created.modifiedAt)))
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+    const winner = results.findIndex((result) => result.status === 'fulfilled')
+    assert.equal((await store.get(created.path)).source, sources[winner])
+    assert.notEqual((await store.revision(created.path)).modifiedAt, created.modifiedAt)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('读取并发替换中的图表时，源码和版本来自同一个文件', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-snapshot-'))
+  try {
+    const store = await DiagramStore.open(root)
+    let before = await store.create('flowchart', '一致快照')
+    for (let revision = 0; revision < 12; revision += 1) {
+      const [snapshot, updated] = await Promise.all([
+        store.get(before.path),
+        store.update(before.path, `flowchart LR\n A-->N${revision}\n`, before.modifiedAt),
+      ])
+      assert.equal(snapshot.source, snapshot.modifiedAt === before.modifiedAt ? before.source : updated.source)
+      assert.ok(snapshot.modifiedAt === before.modifiedAt || snapshot.modifiedAt === updated.modifiedAt)
+      before = updated
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('创建、导出和图片导入拒绝指向工作区外的父目录，且不创建外部子目录', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-boundary-'))
+  try {
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    await mkdir(workspace)
+    await mkdir(outside)
+    const store = await DiagramStore.open(workspace)
+    const diagram = await store.create('canvas', '图片画布')
+    await symlink(outside, path.join(workspace, 'docs', 'diagrams', 'assets'))
+    await symlink(outside, path.join(workspace, 'docs', 'diagrams', 'exports'))
+    await assert.rejects(() => store.importCanvasImage(diagram.path, '图片.png', 'image/png', new Uint8Array([1])), /当前工作空间内/)
+    await assert.rejects(() => store.exportAsset('架构.svg', '<svg/>'), /当前工作空间内/)
+    await rm(path.join(workspace, 'docs'), { recursive: true })
+    await symlink(outside, path.join(workspace, 'docs'))
+    await assert.rejects(() => store.create('flowchart', '越界'), /当前工作空间内/)
+    await assert.rejects(() => readFile(path.join(outside, 'diagrams', '越界.mmd')), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(outside), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('creates, lists and updates a Mermaid diagram inside the workspace', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-'))

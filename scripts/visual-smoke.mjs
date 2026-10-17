@@ -13,7 +13,7 @@ const qualityBenchmark = process.argv.includes('--quality-benchmark')
 try {
   const chrome = await findChrome()
   if (!chrome) {
-    console.log('Codex Diagram visual smoke skipped: Chrome/Chromium not found.')
+    throw new Error('视觉检查未执行：未找到 Chrome/Chromium。')
   } else {
     const externalCases = sourceDir ? await loadExternalCases(sourceDir) : undefined
     await runVisualSmoke(chrome, externalCases, qualityBenchmark)
