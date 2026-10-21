@@ -84,7 +84,17 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 
 工作流 `.github/workflows/publish-deepseek.yml` 支持手动指定版本，或推送 `deepseek-v<版本>` 标签。版本必须与根目录 `package.json` 一致。工作流执行类型检查、构建、产物检查和宿主集成测试，再生成 tarball，在隔离目录解包并运行服务验证，最后发布同一个 tarball。Actions 也会保存该 tarball 作为运行产物。
 
-首次发布前，在仓库 Actions Secrets 中添加 `NPM_TOKEN`，其 npm 账号需要有权发布 `@weimin96` 范围包，并允许 CI 发布。密钥仅传给发布步骤，不写入源码、产物或日志。当前源码仓库为私有，不启用要求公开仓库的 npm provenance，也不修改仓库可见性。
+发布使用 npm Trusted Publishing（OIDC），不配置 `NPM_TOKEN`。工作流使用 GitHub-hosted runner、Node.js 24、npm 11.21.0，并声明 `id-token: write`。
+
+在 npm 包设置的 Trusted Publisher 中选择 GitHub Actions，填写：
+
+- Organization or user：`weimin96`
+- Repository：`codex-diagram`
+- Workflow filename：`publish-deepseek.yml`
+- Environment：留空（工作流未使用 GitHub Environment）
+- Allowed actions：允许直接 `npm publish`
+
+npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号认证完成首次建包，再配置可信发布者；不能仅凭 GitHub 仓库身份首次占用 npm 包名。首次认证可以使用交互式 `npm login`，不必创建长期 CI token。当前源码仓库为私有，工作流显式关闭 npm provenance，不修改仓库可见性。
 
 本地验包：
 

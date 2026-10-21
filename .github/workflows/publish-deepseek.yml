@@ -22,6 +22,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -44,7 +47,7 @@ jobs:
           NODE
       - name: 安装依赖
         run: |
-          npm install --global pnpm@11.22.0
+          npm install --global npm@11.21.0 pnpm@11.22.0
           pnpm install --frozen-lockfile
       - name: 验证并构建
         run: |
@@ -65,12 +68,5 @@ jobs:
           name: diagram-deepseek-${{ github.run_number }}
           path: release/*.tgz
           if-no-files-found: error
-      - name: 发布到 npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo '::error::缺少仓库 Actions Secret NPM_TOKEN，无法发布到 npm。'
-            exit 1
-          fi
-          npm publish release/*.tgz --access public --registry=https://registry.npmjs.org/
+      - name: 通过 OIDC 发布到 npm
+        run: npm publish ./release/*.tgz --access public --provenance=false --registry=https://registry.npmjs.org/
