@@ -34,10 +34,10 @@ pnpm check:hosts
 可在 DeepSeek 插件管理中安装本地 `package/`。若使用 Desktop 自带 CLI，先完整退出 DeepSeek，再执行：
 
 ```sh
-"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" plugin --profile desktop add "file:/绝对路径/codex-diagram/package"
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" plugin --profile desktop add "file:/绝对路径/diagram-plugin/package"
 ```
 
-随后重新打开 Desktop。不要再为同一个 Diagram 配置通用 MCP 客户端，避免重复工具或模型与面板连接不同实例。同版本的 `file:` 依赖可能继续使用已安装副本。开发中重新构建后，需要在退出 Desktop 后先 `plugin --profile desktop remove @weimin96/diagram-deepseek`，再执行上述添加命令，并检查插件已进入 `dsh.profile.bundles`。
+随后重新打开 Desktop。不要再为同一个 Diagram 配置通用 MCP 客户端，避免重复工具或模型与面板连接不同实例。同版本的 `file:` 依赖可能继续使用已安装副本。开发中重新构建后，需要在退出 Desktop 后先 `plugin --profile desktop remove @weimin96/diagram-plugin`，再执行上述添加命令，并检查插件已进入 `dsh.profile.bundles`。
 
 ## 验证
 
@@ -80,7 +80,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 
 ## npm 与 GitHub Actions 发布
 
-正式包名为 `@weimin96/diagram-deepseek`。构建包中的 npm 名称、客户端模块标识、标签页类型和 bundle 注册保持一致。
+正式包名为 `@weimin96/diagram-plugin`。构建包中的 npm 名称、客户端模块标识、标签页类型和 bundle 注册保持一致。
 
 工作流 `.github/workflows/publish-deepseek.yml` 支持手动指定版本，或推送 `deepseek-v<版本>` 标签。版本必须与根目录 `package.json` 一致。工作流执行类型检查、构建、产物检查和宿主集成测试，再生成 tarball，在隔离目录解包并运行服务验证，最后发布同一个 tarball。Actions 也会保存该 tarball 作为运行产物。
 
@@ -89,14 +89,16 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 在 npm 包设置的 Trusted Publisher 中选择 GitHub Actions，填写：
 
 - Organization or user：`weimin96`
-- Repository：`codex-diagram`
+- Repository：`diagram-plugin`
 - Workflow filename：`publish-deepseek.yml`
 - Environment：留空（工作流未使用 GitHub Environment）
 - Allowed actions：允许直接 `npm publish`
 
 npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号认证完成首次建包，再配置可信发布者；不能仅凭 GitHub 仓库身份首次占用 npm 包名。首次认证可以使用交互式 `npm login`，不必创建长期 CI token。当前源码仓库为私有，工作流显式关闭 npm provenance，不修改仓库可见性。
 
-2026-10-21 已完成首次建包：通过交互式 2FA 发布 `0.0.0` 占位版本（仅含 `package.json`、`README.md`、`LICENSE`，不含运行时代码），`latest` 指向 `0.0.0`；随后用 `npm trust github` 绑定仓库 `weimin96/codex-diagram`、工作流文件 `publish-deepseek.yml`、不绑定 Environment，权限为 `publish`。正式版本由工作流发布，本地不再需要长期 npm token。
+旧包 `@weimin96/diagram-deepseek` 已完成首次建包并绑定过 Trusted Publisher，现按“保留旧包、另发新包”的策略处理：旧包不再更新，也不再配置新的 trust。
+
+新包 `@weimin96/diagram-plugin` 需要在 npm 上重新走一次首次建包（交互式 2FA 发布占位版本），再执行 `npm trust github` 绑定仓库 `weimin96/diagram-plugin`、工作流文件 `publish-deepseek.yml`、不绑定 Environment，权限为 `publish`。完成后正式版本由工作流发布，本地不再需要长期 npm token。
 
 本地验包：
 
@@ -104,16 +106,18 @@ npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号�
 pnpm build
 mkdir -p release
 npm pack ./package --ignore-scripts --pack-destination release
-node scripts/check-deepseek-package.mjs release/weimin96-diagram-deepseek-0.19.0.tgz
+node scripts/check-deepseek-package.mjs release/weimin96-diagram-plugin-0.19.0.tgz
 ```
 
 发布后，用户可在 Desktop 插件管理中输入包名，或完整退出应用后执行：
 
 ```sh
-dsh plugin --profile desktop add @weimin96/diagram-deepseek@0.19.0
+dsh plugin --profile desktop add @weimin96/diagram-plugin@0.19.0
 ```
 
-本地旧名称 `@local/diagram-deepseek` 与正式名称是不同包。已安装旧测试包的用户，应先移除旧插件，再安装正式包，避免重复注册 Diagram 标签页和工具。
+改名前的 `@weimin96/diagram-deepseek`、更早的测试名 `@local/diagram-deepseek` 与正式名称都是不同包。已装旧包的用户应先移除旧插件，再安装新包，否则会重复注册 Diagram 标签页和工具。
+
+Canvas 文档类型与 Mermaid 样式指令保留了向后兼容：读取时同时接受 `codex-diagram-canvas` 与 `%% codex-diagram:style=`，写入时统一使用新前缀，旧图可直接打开，首次保存后自动迁移。状态目录从 `~/.codex-diagram` 回退读取，新数据写入 `~/.diagram-plugin`。
 
 ## 插件市场发现
 

@@ -1,9 +1,9 @@
 {
-  "name": "codex-diagram",
+  "name": "diagram-plugin",
   "version": "0.19.0",
   "private": true,
   "type": "module",
-  "description": "Visual diagram workspace for Codex with Mermaid editing and MCP tools.",
+  "description": "Visual diagram workspace with Mermaid editing, Canvas documents and MCP tools for Codex and DeepSeek Harness.",
   "license": "MIT",
   "packageManager": "pnpm@11.22.0",
   "scripts": {

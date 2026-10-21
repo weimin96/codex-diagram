@@ -76,8 +76,8 @@ export function diagramVisualStyleGuide(format: 'canvas' | 'mermaid' = 'canvas')
   return [
     format === 'canvas'
       ? '新建 Canvas（含架构与流程画布）时，AI 根据用途主动选择一套 scene.style；只保存样式名，不向节点批量写入颜色。用户指定的风格优先。'
-      : '全部 Mermaid 图种均可使用共享样式；AI 根据图种和用途选择，在首部写一行 %% codex-diagram:style=<id>，不改变图种与业务内容。',
-    ...diagramVisualStyles.map((style) => `${format === 'canvas' ? `scene.style="${style.id}"` : `%% codex-diagram:style=${style.id}`}（${style.label}）：${style.usage}。`),
+      : '全部 Mermaid 图种均可使用共享样式；AI 根据图种和用途选择，在首部写一行 %% diagram-plugin:style=<id>，不改变图种与业务内容。',
+    ...diagramVisualStyles.map((style) => `${format === 'canvas' ? `scene.style="${style.id}"` : `%% diagram-plugin:style=${style.id}`}（${style.label}）：${style.usage}。`),
     '同一张图只选一套样式，不按节点序号随机染色；保留真实语义和主次，不改变坐标、关系与业务文本。修改已有图时保留原样式，只有用户要求换风格才切换。',
     format === 'canvas' ? '架构画布的 architecture.theme 继续控制图元与边界形态，scene.style 控制共享色彩语言。' : 'technical/minimal/editorial/presentation 四个旧 Profile 仍然有效；不要与共享样式叠加多条声明。',
   ]

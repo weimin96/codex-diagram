@@ -31,7 +31,7 @@ try {
   execFileSync('tar', ['-xzf', archive, '-C', root])
   const packageRoot = path.join(root, 'package')
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
-  assert.equal(manifest.name, '@weimin96/diagram-deepseek')
+  assert.equal(manifest.name, '@weimin96/diagram-plugin')
   assert.equal(manifest.version, rootManifest.version)
   assert.equal(manifest.license, rootManifest.license)
   assert.equal(manifest.publishConfig.access, 'public')
@@ -40,7 +40,7 @@ try {
   assert.ok(patch.includes(`name: '${manifest.name}'`))
   const clientSource = await readFile(path.join(packageRoot, manifest.exports['./client']), 'utf8')
   assert.ok(clientSource.includes(`id:"${manifest.name}"`))
-  assert.ok(!clientSource.includes('@local/diagram-deepseek'))
+  assert.ok(!clientSource.includes('@local/diagram-plugin'))
 
   // 插件市场按 npm 关键词 dsh-plugin 自动扫描，并按 engines.dsh 判定兼容性。
   assert.ok(manifest.keywords?.includes('dsh-plugin'), '发布包缺少 dsh-plugin 关键词，插件市场将无法自动发现。')
@@ -61,7 +61,7 @@ try {
     command: process.execPath,
     args: [path.join(packageRoot, 'dist/server.mjs')],
     cwd: os.tmpdir(),
-    env: { ...process.env, CODEX_DIAGRAM_HOST: 'deepseek' },
+    env: { ...process.env, DIAGRAM_PLUGIN_HOST: 'deepseek' },
     stderr: 'inherit',
   }))
   const tools = (await client.listTools()).tools

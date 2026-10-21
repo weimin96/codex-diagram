@@ -5,8 +5,8 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const marketplace = 'codex-diagram-local'
-const plugin = `codex-diagram@${marketplace}`
+const marketplace = 'diagram-plugin-local'
+const plugin = `diagram-plugin@${marketplace}`
 
 const marketplaces = await codex(['plugin', 'marketplace', 'list'])
 if (!marketplaces.includes(marketplace)) await codex(['plugin', 'marketplace', 'add', root])

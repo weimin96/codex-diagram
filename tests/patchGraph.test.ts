@@ -60,7 +60,7 @@ test('rejects conflicting patch composition instead of using last-write-wins', (
 
 test('composed independent subgraphs build one valid candidate from the shared base', () => {
   const base: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: 'Compose', width: 1600, height: 900,
+    type: 'diagram-plugin-canvas', version: 1, title: 'Compose', width: 1600, height: 900,
     elements: [
       { id: 'api', type: 'node', x: 100, y: 100, width: 180, height: 80, text: 'API' },
       { id: 'db', type: 'node', x: 700, y: 100, width: 180, height: 80, text: 'DB' },

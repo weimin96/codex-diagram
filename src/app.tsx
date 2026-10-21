@@ -58,7 +58,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
-declare const __CODEX_DIAGRAM_VERSION__: string
+declare const __DIAGRAM_PLUGIN_VERSION__: string
 
 interface ServerToolResult extends ToolResultLike {}
 
@@ -280,7 +280,7 @@ type ViewMode = 'preview' | 'source' | 'split'
 const rootElement = document.getElementById('root')!
 const host = rootElement.dataset.diagramHost === 'deepseek'
   ? createDeepSeekHost()
-  : createCodexHost(__CODEX_DIAGRAM_VERSION__)
+  : createCodexHost(__DIAGRAM_PLUGIN_VERSION__)
 const hostSurface: DiagramSurface = rootElement.dataset.diagramSurface === 'thread' ? 'thread' : 'workspace'
 let initialWorkspace: WorkspaceSnapshot | null = null
 

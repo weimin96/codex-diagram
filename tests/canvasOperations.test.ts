@@ -6,7 +6,7 @@ import { alignCanvasSelection, canvasRotationFromPointer, computeCanvasSmartSnap
 
 function scene(): CanvasScene {
   return {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'test',
     width: 1200,

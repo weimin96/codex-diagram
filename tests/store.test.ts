@@ -7,7 +7,7 @@ import { parseCanvasScene } from '../src/canvas.js'
 import { DiagramStore } from '../src/store.js'
 
 test('同一版本的并发保存只能有一个成功，且保留完整文件', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-concurrent-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-concurrent-'))
   try {
     const store = await DiagramStore.open(root)
     const otherStore = await DiagramStore.open(root)
@@ -25,7 +25,7 @@ test('同一版本的并发保存只能有一个成功，且保留完整文件',
 })
 
 test('读取并发替换中的图表时，源码和版本来自同一个文件', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-snapshot-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-snapshot-'))
   try {
     const store = await DiagramStore.open(root)
     let before = await store.create('flowchart', '一致快照')
@@ -44,7 +44,7 @@ test('读取并发替换中的图表时，源码和版本来自同一个文件',
 })
 
 test('创建、导出和图片导入拒绝指向工作区外的父目录，且不创建外部子目录', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-boundary-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-boundary-'))
   try {
     const workspace = path.join(root, 'workspace')
     const outside = path.join(root, 'outside')
@@ -67,7 +67,7 @@ test('创建、导出和图片导入拒绝指向工作区外的父目录，且�
 })
 
 test('creates, lists and updates a Mermaid diagram inside the workspace', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-'))
   try {
     const store = await DiagramStore.open(root)
     const created = await store.create('flowchart', 'API Flow')
@@ -91,7 +91,7 @@ test('creates, lists and updates a Mermaid diagram inside the workspace', async 
 })
 
 test('rejects traversal and ignores diagrams in excluded directories', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-'))
   try {
     await mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true })
     await writeFile(path.join(root, 'node_modules', 'pkg', 'hidden.mmd'), 'flowchart LR\n  A-->B\n')
@@ -104,7 +104,7 @@ test('rejects traversal and ignores diagrams in excluded directories', async () 
 })
 
 test('rejects an update when the diagram changed after it was read', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-'))
   try {
     const store = await DiagramStore.open(root)
     const created = await store.create('flowchart', 'Concurrent Edit')
@@ -121,7 +121,7 @@ test('rejects an update when the diagram changed after it was read', async () =>
 })
 
 test('indexes source files without generated or dependency directories', async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-sources-'))
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-sources-'))
   try {
     await mkdir(path.join(workspace, 'src', 'auth'), { recursive: true })
     await mkdir(path.join(workspace, 'node_modules', 'pkg'), { recursive: true })
@@ -140,7 +140,7 @@ test('indexes source files without generated or dependency directories', async (
 })
 
 test('renames, duplicates and deletes diagrams without losing source', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-actions-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-actions-'))
   try {
     const store = await DiagramStore.open(root)
     const created = await store.create('flowchart', 'Checkout Flow')
@@ -165,7 +165,7 @@ test('renames, duplicates and deletes diagrams without losing source', async () 
 })
 
 test('exports SVG and PNG assets without overwriting previous exports', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-export-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-export-'))
   try {
     const store = await DiagramStore.open(root)
     const firstSvg = await store.exportAsset('System Overview.svg', '<svg />')
@@ -184,7 +184,7 @@ test('exports SVG and PNG assets without overwriting previous exports', async ()
 })
 
 test('persists Canvas image assets inside the diagram asset directory and reads them back safely', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-image-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-image-'))
   try {
     const store = await DiagramStore.open(root)
     const diagram = await store.create('canvas', 'Image Board', 'freeform')
@@ -203,7 +203,7 @@ test('persists Canvas image assets inside the diagram asset directory and reads 
 })
 
 test('creates and manages freeform Canvas diagrams beside Mermaid files', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-canvas-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-canvas-'))
   try {
     const store = await DiagramStore.open(root)
     const canvas = await store.create('canvas', 'Service Landscape')

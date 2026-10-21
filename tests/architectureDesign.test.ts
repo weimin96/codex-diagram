@@ -6,7 +6,7 @@ import { anchorPoint, canvasArrowRoutePoints, canvasBundleTrunks, canvasGroupFra
 
 test('自动布局避让锁定节点，并保留锁定节点的位置和尺寸', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: '固定节点避让', width: 1400, height: 800,
+    type: 'diagram-plugin-canvas', version: 1, title: '固定节点避让', width: 1400, height: 800,
     elements: [
       { id: 'client', type: 'node', text: 'Web Client', x: 100, y: 100, width: 180, height: 90, icon: 'web', locked: true },
       { id: 'api', type: 'node', text: 'API Service', x: 500, y: 100, width: 180, height: 90, icon: 'api' },
@@ -24,7 +24,7 @@ test('自动布局避让锁定节点，并保留锁定节点的位置和尺寸',
 
 function sampleScene(): CanvasScene {
   return {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Architecture',
     width: 1200,
@@ -69,7 +69,7 @@ test('infers architecture composition from topology and semantic roles', () => {
   })
   const arrow = (id: string, from: string, to: string) => ({ id, type: 'arrow' as const, from, to })
   const scene = (title: string, elements: CanvasScene['elements']): CanvasScene => ({
-    type: 'codex-diagram-canvas', version: 1, title, width: 1400, height: 900, elements,
+    type: 'diagram-plugin-canvas', version: 1, title, width: 1400, height: 900, elements,
   })
 
   const hub = scene('hub', [
@@ -182,7 +182,7 @@ test('marks a connected entry-to-data backbone as the primary architecture path'
 
 test('bundles fan-out relationships through a shared source trunk when the corridor is clear', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Bundle',
     width: 1400,
@@ -210,7 +210,7 @@ test('bundles fan-out relationships through a shared source trunk when the corri
 
 test('keeps short intra-boundary relationships direct while preserving event-bus fanout bundling', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: 'Local bundle policy', width: 1100, height: 620,
+    type: 'diagram-plugin-canvas', version: 1, title: 'Local bundle policy', width: 1100, height: 620,
     groups: [{ id: 'runtime', label: 'Runtime', kind: 'boundary' }],
     elements: [
       { id: 'api', type: 'node', x: 120, y: 120, width: 170, height: 72, text: 'API', icon: 'api', groupId: 'runtime' },
@@ -236,7 +236,7 @@ test('keeps short intra-boundary relationships direct while preserving event-bus
 
 test('routes downward fan-out into one architecture group through a shared data bus', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Shared data bus',
     width: 1200,
@@ -265,7 +265,7 @@ test('routes downward fan-out into one architecture group through a shared data 
 
 test('does not route a shared downward fanout through sibling targets in a multi-row group', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Stacked target group',
     width: 1200,
@@ -293,7 +293,7 @@ test('does not route a shared downward fanout through sibling targets in a multi
 
 test('shared data bus can exit a dense service cluster without falling back to crossing straight lines', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Dense data fanout',
     width: 1400,
@@ -343,14 +343,14 @@ test('routes common architecture topology families without crossing nodes', () =
   })
   const scenes: CanvasScene[] = [
     {
-      type: 'codex-diagram-canvas', version: 1, title: 'Layered backbone', width: 1200, height: 700,
+      type: 'diagram-plugin-canvas', version: 1, title: 'Layered backbone', width: 1200, height: 700,
       elements: [
         node('entry', 80, 120, 'gateway'), node('api', 340, 120, 'api'), node('service', 600, 120), node('data', 900, 120, 'database'),
         arrow('e1', 'entry', 'api', 'primary'), arrow('e2', 'api', 'service', 'primary'), arrow('e3', 'service', 'data', 'primary'),
       ],
     },
     {
-      type: 'codex-diagram-canvas', version: 1, title: 'Convergence', width: 1200, height: 760,
+      type: 'diagram-plugin-canvas', version: 1, title: 'Convergence', width: 1200, height: 760,
       elements: [
         node('source-a', 80, 100, 'external'), node('source-b', 80, 300, 'external'), node('source-c', 80, 500, 'external'),
         node('processor', 500, 300), node('store', 900, 300, 'database'),
@@ -358,14 +358,14 @@ test('routes common architecture topology families without crossing nodes', () =
       ],
     },
     {
-      type: 'codex-diagram-canvas', version: 1, title: 'Hub and spoke', width: 1300, height: 800,
+      type: 'diagram-plugin-canvas', version: 1, title: 'Hub and spoke', width: 1300, height: 800,
       elements: [
         node('hub', 560, 330, 'ai'), node('web', 120, 120, 'web'), node('tools', 1000, 120, 'mcp'), node('events', 120, 580, 'queue'), node('store', 1000, 580, 'database'),
         arrow('h1', 'web', 'hub'), arrow('h2', 'hub', 'tools'), arrow('h3', 'hub', 'events'), arrow('h4', 'hub', 'store'),
       ],
     },
     {
-      type: 'codex-diagram-canvas', version: 1, title: 'Async pipeline', width: 1400, height: 760,
+      type: 'diagram-plugin-canvas', version: 1, title: 'Async pipeline', width: 1400, height: 760,
       elements: [
         node('api', 80, 160, 'api'), node('queue', 400, 160, 'queue'), node('worker-a', 720, 80, 'worker'), node('worker-b', 720, 300, 'worker'),
         node('database', 1060, 80, 'database'), node('index', 1060, 300, 'search'),
@@ -384,7 +384,7 @@ test('routes common architecture topology families without crossing nodes', () =
 
 test('dense cross-boundary relationships share a corridor and avoid unrelated boundaries', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Dense cross-boundary routing',
     width: 1500,
@@ -432,7 +432,7 @@ test('dense cross-boundary relationships share a corridor and avoid unrelated bo
 
 test('uses tight local architecture boundaries by default while keeping external providers separate', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Knowledge Platform',
     width: 1200,
@@ -474,7 +474,7 @@ test('preserves an explicit software-system boundary around generated local arch
 
 test('routes architecture relationships around blocking nodes', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Obstacle routing',
     width: 1200,
@@ -503,7 +503,7 @@ test('routes architecture relationships around blocking nodes', () => {
 
 test('routes through two corridors when an intermediate node and stacked target column block simple doglegs', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Stacked target routing',
     width: 1900,
@@ -548,7 +548,7 @@ test('routes through two corridors when an intermediate node and stacked target 
 
 test('incremental routing preserves unrelated relationship geometry', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Incremental routing',
     width: 1600,
@@ -576,7 +576,7 @@ test('incremental routing preserves unrelated relationship geometry', () => {
 
 test('routes only explicitly requested relationship ids', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Arrow subset',
     width: 1200,
@@ -600,7 +600,7 @@ test('routes only explicitly requested relationship ids', () => {
 
 test('incremental routing reroutes a relationship that a moved node now blocks', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Incremental obstacle',
     width: 1400,
@@ -624,7 +624,7 @@ test('incremental routing reroutes a relationship that a moved node now blocks',
 
 test('incremental routing detects a moved obstacle crossing an existing straight relationship', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Straight obstacle',
     width: 1200,
@@ -648,7 +648,7 @@ test('incremental routing detects a moved obstacle crossing an existing straight
 
 test('recognizes architecture-specific roles beyond generic service and database', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Knowledge platform',
     width: 1400,
@@ -709,7 +709,7 @@ test('theme-only appearance updates preserve authored geometry', () => {
 
 test('auto density compacts large architecture layouts without changing canvas protocol', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Large architecture',
     width: 1600,

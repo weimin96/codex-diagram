@@ -38,17 +38,22 @@ export type MermaidVisualConfig = MermaidConfig & {
   treemap?: MermaidTreemapRuntimeConfig
 }
 
+/** 当前样式指令前缀。 */
+const STYLE_DIRECTIVE = 'diagram-plugin'
+/** 改名前的样式指令前缀；旧图仍按同一套样式渲染。 */
+const LEGACY_STYLE_DIRECTIVE = 'codex-diagram'
+
 export function resolveMermaidVisualStyle(source: string): MermaidVisualStyle {
-  const match = source.match(/^\s*%%\s*codex-diagram:style=([a-z-]+)\s*$/im)
+  const match = source.match(/^\s*%%\s*(?:diagram-plugin|codex-diagram):style=([a-z-]+)\s*$/im)
   const name = match?.[1]
   return name && (isDiagramVisualStyle(name) || ['technical', 'minimal', 'editorial', 'presentation'].includes(name)) ? name as MermaidVisualStyle : 'technical'
 }
 
 export function setMermaidVisualStyle(source: string, style: MermaidVisualStyle): string {
   const newline = source.includes('\r\n') ? '\r\n' : '\n'
-  const clean = source.replace(/^[ \t]*%%[ \t]*codex-diagram:style=[^\r\n]*(?:\r?\n|$)/gm, '')
+  const clean = source.replace(/^[ \t]*%%[ \t]*(?:diagram-plugin|codex-diagram):style=[^\r\n]*(?:\r?\n|$)/gm, '')
   const frontmatter = clean.match(/^[ \t\r\n]*---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? ''
-  const declaration = `%% codex-diagram:style=${style}${newline}`
+  const declaration = `%% ${STYLE_DIRECTIVE}:style=${style}${newline}`
   return frontmatter ? `${frontmatter}${frontmatter.endsWith('\n') ? '' : newline}${declaration}${clean.slice(frontmatter.length)}` : `${declaration}${clean}`
 }
 

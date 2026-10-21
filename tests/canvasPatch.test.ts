@@ -6,7 +6,7 @@ import { parseCanvasScene, serializeCanvasScene } from '../src/canvas.js'
 
 function scene(): CanvasScene {
   return {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Patch test',
     width: 1800,
@@ -331,7 +331,7 @@ test('selecting only an arrow does not promote its endpoint nodes into editable 
 
 test('subgraph context bounds high fan-out neighborhoods', () => {
   const source: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Fanout',
     width: 12000,
@@ -353,7 +353,7 @@ test('subgraph context bounds high fan-out neighborhoods', () => {
 
 test('subgraph context also bounds dense relationship sets', () => {
   const source: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Dense',
     width: 6000,
@@ -376,7 +376,7 @@ test('subgraph context also bounds dense relationship sets', () => {
 
 test('5000-node canvases keep subgraph context bounded and patch only the requested element', () => {
   const source: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Huge',
     width: 200000,
@@ -405,7 +405,7 @@ test('5000-node canvases keep subgraph context bounded and patch only the reques
 
 test('incremental patch refuses to degrade into a hidden whole-graph reroute', () => {
   const source: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Large fanout',
     width: 20000,

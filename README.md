@@ -1,8 +1,8 @@
-# Codex Diagram
+# Diagram Plugin
 
 新增宿主适配层，支持构建 DeepSeek Harness Desktop `0.2.1-rc.2` 插件，复用现有图表服务和编辑器。接入边界、安装与验收见 [宿主适配说明](docs/host-adapters.md)。
 
-Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、命名容器、自动布局、技术角色节点、源码双向定位、样式 Inspector 与 MiniMap。Diagram 不再把当前图常驻注入聊天 Model Context；Codex 通过 MCP 按需读取图表，选区修改由右侧操作显式携带 element ids。
+面向 Codex 与 DeepSeek Harness 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和助手对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、命名容器、自动布局、技术角色节点、源码双向定位、样式 Inspector 与 MiniMap。Diagram 不再把当前图常驻注入聊天 Model Context；Codex 通过 MCP 按需读取图表，选区修改由右侧操作显式携带 element ids。
 
 v0.16 起 Mermaid 不再走单一通用生成 Prompt；v0.17 进一步扩展到 19 种正式 Mermaid 类型。Flowchart / Sequence / Mindmap / Class / ER / State / Gantt / Timeline / GitGraph / Journey / Quadrant / Kanban / Requirement / Sankey / XY Chart / Pie / Radar / Treemap / Ishikawa 全部进入 Diagram Skill Registry。每种类型都有独立的构图、密度、视觉、反模式、生成与修改规则；数据图额外禁止无依据编造数值。预览与 SVG/PNG 导出同时使用按图类型的 Visual Grammar，并根据源码规模自动切换 comfortable / compact / dense 间距，不修改 Mermaid 源文件。类型选择器按核心结构、分析规划、数据可视化和专业分析分组，避免类型扩展后形成长平铺菜单。
 
@@ -10,11 +10,11 @@ v0.18 增加 Visual Quality Gate 与可重复压力基准。`pnpm visual:benchma
 
 v0.19 增加固定画布的 Pixel Visual Regression。`pnpm visual:regression` 会把同一批复杂样例以 1400×1000、固定 48px 边距和 light/dark 两套主题渲染成 golden view，再同时比较显著像素变化、平均色差与 20px macro-cell 结构差异。少量抗锯齿抖动不会直接失败，但整体间距、配色、节点形态或布局明显变化会阻断回归。基线存放在 `tests/fixtures/visual-baseline/`；只有显式运行 `pnpm visual:regression:update` 才会重建。失败时会把 baseline/current/diff 三张诊断图写到 `test-results/visual-regression/`。`pnpm visual:verify` 会串行执行模板浏览器 smoke、复杂几何 benchmark 与像素 golden regression。
 
-Mermaid 支持每张图声明轻量视觉 Profile：在源码首部加入 `%% codex-diagram:style=technical|minimal|editorial|presentation`。默认 `technical` 保持工程文档密度；`minimal` 更克制紧凑；`editorial` 增强叙事留白和层级；`presentation` 为评审/汇报提高字号与间距。Profile 只改变 Visual Grammar，不把颜色或布局细节硬编码进业务 Mermaid。需要实际看效果时，可运行 `node scripts/render-gallery.mjs --source-dir <目录> --output-dir test-results/visual-gallery`，脚本会在真实 Chrome 中把 Mermaid 与 `.diagram.json` Canvas 同时渲染为 light/dark PNG，并生成可浏览的 `index.html`。
+Mermaid 支持每张图声明轻量视觉 Profile：在源码首部加入 `%% diagram-plugin:style=technical|minimal|editorial|presentation`。默认 `technical` 保持工程文档密度；`minimal` 更克制紧凑；`editorial` 增强叙事留白和层级；`presentation` 为评审/汇报提高字号与间距。Profile 只改变 Visual Grammar，不把颜色或布局细节硬编码进业务 Mermaid。需要实际看效果时，可运行 `node scripts/render-gallery.mjs --source-dir <目录> --output-dir test-results/visual-gallery`，脚本会在真实 Chrome 中把 Mermaid 与 `.diagram.json` Canvas 同时渲染为 light/dark PNG，并生成可浏览的 `index.html`。
 
 Canvas 关系标签在浏览器中按实际字形宽度测量，最多显示两行，超长部分省略但完整文本保留在源文件及悬停标题中。预览与 SVG/PNG 导出共用换行规则，自动标签先避让人工指定的位置，再沿线路寻找空位；质量检查会报告标签重叠、遮挡节点和超出画布。服务端无浏览器字体时使用全角/半角宽度估算。固定中英文样例可运行 `node scripts/render-gallery.mjs --source-dir tests/fixtures/canvas-labels --output-dir test-results/canvas-labels` 查看。
 
-共享视觉样式现覆盖通用 Canvas、流程画布、架构 Canvas，以及全部 19 种 Mermaid 图表。12 套样式为 `ocean`（蓝色产品）、`warm`（暖色叙事）、`ink`（高对比评审）、`pastel`（柔彩语义）、`forest`（森绿数据）、`blueprint`（工程蓝图）、`rose`（玫瑰叙事）、`violet`（紫罗兰方案）、`amber`（琥珀运营）、`graphite`（石墨极简）、`nord`（北欧冷静）、`coral`（珊瑚演示）。Canvas 使用顶层 `style` 字段，架构图保留 `architecture.theme` 的图元/边界形态；Mermaid 在首部使用 `%% codex-diagram:style=<id>`，原来的 technical/minimal/editorial/presentation 四种 Profile 继续兼容。编辑器可直接切换，AI 可从 `diagram.designGuide` 读取适用场景并选择；改旧图时保留用户原样式。样式不改变业务内容和图种，不向节点批量写入颜色。`pnpm visual:styles` 会在真实浏览器中执行 12 套样式 × 19 种 Mermaid 图表 × 明暗主题共 456 次渲染，并检查文字边界、节点重叠和尺寸。
+共享视觉样式现覆盖通用 Canvas、流程画布、架构 Canvas，以及全部 19 种 Mermaid 图表。12 套样式为 `ocean`（蓝色产品）、`warm`（暖色叙事）、`ink`（高对比评审）、`pastel`（柔彩语义）、`forest`（森绿数据）、`blueprint`（工程蓝图）、`rose`（玫瑰叙事）、`violet`（紫罗兰方案）、`amber`（琥珀运营）、`graphite`（石墨极简）、`nord`（北欧冷静）、`coral`（珊瑚演示）。Canvas 使用顶层 `style` 字段，架构图保留 `architecture.theme` 的图元/边界形态；Mermaid 在首部使用 `%% diagram-plugin:style=<id>`，原来的 technical/minimal/editorial/presentation 四种 Profile 继续兼容。编辑器可直接切换，AI 可从 `diagram.designGuide` 读取适用场景并选择；改旧图时保留用户原样式。样式不改变业务内容和图种，不向节点批量写入颜色。`pnpm visual:styles` 会在真实浏览器中执行 12 套样式 × 19 种 Mermaid 图表 × 明暗主题共 456 次渲染，并检查文字边界、节点重叠和尺寸。
 
 
 当前 Diagram Skill 进一步采用渐进式设计合同：每一种 Mermaid 类型显式声明适用的构图原型（例如线性主链、决策树、泳道、汇聚、层级树、定量流向等），并把“视觉论证 / 证据来源 / 密度 / 反模式 / 质量回检”分开。模型不应默认生成等权卡片墙；架构 Canvas 额外支持 backbone、fan-out、convergence、hub-spoke、layered/swimlane 等拓扑选择。直接通过 MCP 对话生成复杂图时，可先调用 `diagram.designGuide` 只读取当前类型的规则，避免把 19 种 Skill 一次性塞入上下文。完成生成或大改后调用 `diagram.inspectQuality` 做一次有界质量回检：Canvas 检查节点重叠、连线穿节点、关系交叉、层级过平和超长标签；Mermaid 检查各类型自己的密度与拆图阈值。若 `needsRevision=true`，只针对报告问题修正并最多再回检一次。
@@ -108,7 +108,7 @@ Canvas 关系标签在浏览器中按实际字形宽度测量，最多显示两�
 - Proposal 出现后仍可继续手工编辑 Canvas：接受增量 Proposal 时，插件会先保存本地 dirty 草稿，再通过字段级 rebase 合并；整图 Proposal 无法安全合并本地草稿时会阻止覆盖
 - 当用户明确要求多个方案 / A-B 对比时，`diagram.proposeSubgraphPatch` 可通过 `branchLabel` 在同一 base revision 上保留最多 6 个候选；右侧 Proposal 面板会并排显示每个方案的修改/新增/删除、自动影响以及独有/共同影响元素，切换候选不会写文件，接受时只应用当前方案
 - 多个未应用候选可以通过 `diagram.composeProposalBranches` 做服务端组合：同一元素的不同字段可以合并，相同字段写入不同值、更新/删除冲突等会直接拒绝，不使用 last-write-wins；组合结果本身仍是新的可审查 Proposal，不会直接写 Canvas
-- 已应用的增量 AI Patch 会进入当前图的“历史”时间线，记录修改原因、直接修改、自动影响、部分接受和并发 Rebase 状态；历史数据保存在用户本机的 `~/.codex-diagram/history/`，不会向项目仓库写入额外文件
+- 已应用的增量 AI Patch 会进入当前图的“历史”时间线，记录修改原因、直接修改、自动影响、部分接受和并发 Rebase 状态；历史数据保存在用户本机的 `~/.diagram-plugin/history/`，不会向项目仓库写入额外文件
 - AI Patch History 会按字段和结构因果生成 Patch DAG，而不是简单把所有历史串成链；后续 Patch 修改前一 Patch 拥有的字段、引用其新增节点等才建立 dependency，不同子图保持并行根/分支。右侧时间线显示 roots / edges / 上下游关系，Codex 也可通过 `diagram.patchGraph` 读取同一依赖图
 - “撤销这次修改”按子图事务做反向三方合并：只恢复该 AI Patch 真正拥有的字段，保留后来对其它字段的人工修改；如果同一字段后来又被编辑、AI 新增节点已被后续关系依赖等，则拒绝危险撤销并明确提示冲突
 - 已撤销的 AI Patch 可以安全 Redo；Redo 与 Undo 使用同一套字段所有权和结构依赖检查，后续无关字段修改会保留，同字段修改、新关系依赖或 ID 复用会阻止覆盖。接受 A/B 候选后，Timeline 也会保留实际采用的分支标签

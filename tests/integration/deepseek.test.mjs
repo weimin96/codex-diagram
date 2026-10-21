@@ -11,7 +11,7 @@ async function connect() {
   const client = new Client({ name: 'diagram-integration', version: '1.0.0' })
   await client.connect(new StdioClientTransport({
     command: process.execPath, args: [path.resolve('package/dist/server.mjs')], cwd: os.tmpdir(),
-    env: { ...process.env, CODEX_DIAGRAM_HOST: 'deepseek' }, stderr: 'inherit',
+    env: { ...process.env, DIAGRAM_PLUGIN_HOST: 'deepseek' }, stderr: 'inherit',
   }))
   return client
 }

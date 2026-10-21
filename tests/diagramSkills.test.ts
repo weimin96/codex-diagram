@@ -72,7 +72,7 @@ test('Mermaid skills keep theme colors in Visual Grammar by default', () => {
 
 test('Mermaid skills expose named visual profiles instead of arbitrary per-node styling', () => {
   const rules = diagramSkill('flowchart').visualRules.join('\n')
-  assert.match(rules, /codex-diagram:style=<profile>/)
+  assert.match(rules, /diagram-plugin:style=<profile>/)
   assert.match(rules, /technical/)
   assert.match(rules, /minimal/)
   assert.match(rules, /editorial/)

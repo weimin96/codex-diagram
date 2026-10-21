@@ -11,7 +11,7 @@ const sourceDir = readArg('--source-dir', args)
 const outputDir = path.resolve(readArg('--output-dir', args) ?? path.join(root, 'test-results', 'visual-gallery'))
 if (!sourceDir) throw new Error('render-gallery requires --source-dir <directory>.')
 const resolvedSourceDir = path.resolve(sourceDir)
-const temp = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-gallery-'))
+const temp = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-gallery-'))
 
 try {
   const chrome = await findChrome()
@@ -97,10 +97,10 @@ async function writeGallery(result) {
     </article>`).join('\n')
   await writeFile(path.join(outputDir, 'index.html'), `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Codex Diagram Visual Gallery</title>
+<title>Diagram Plugin Visual Gallery</title>
 <style>
 body{margin:0;padding:32px;background:#111113;color:#f4f4f5;font:14px ui-sans-serif,system-ui,sans-serif}h1{font-size:22px;margin:0 0 24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:20px}article{overflow:hidden;border:1px solid #303036;border-radius:10px;background:#1b1b1f}img{display:block;width:100%;aspect-ratio:7/5;object-fit:contain;background:#fff}article:nth-of-type(even) img{background:#18181b}article div{display:flex;justify-content:space-between;gap:16px;padding:12px 14px}span{color:#a1a1aa;font-size:12px}
-</style></head><body><h1>Codex Diagram Visual Gallery</h1><main class="grid">${cards}</main></body></html>`, 'utf8')
+</style></head><body><h1>Diagram Plugin Visual Gallery</h1><main class="grid">${cards}</main></body></html>`, 'utf8')
 }
 
 function browserEntry(cases) {

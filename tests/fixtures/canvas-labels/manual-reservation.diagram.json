@@ -1,5 +1,5 @@
 {
-  "type": "codex-diagram-canvas",
+  "type": "diagram-plugin-canvas",
   "version": 1,
   "title": "人工标签位置避让",
   "width": 1100,

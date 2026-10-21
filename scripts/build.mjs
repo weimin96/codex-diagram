@@ -25,7 +25,7 @@ await build({
   format: 'esm',
   sourcemap: true,
   banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
-  define: { __CODEX_DIAGRAM_VERSION__: JSON.stringify(version) },
+  define: { __DIAGRAM_PLUGIN_VERSION__: JSON.stringify(version) },
 })
 
 await build({
@@ -41,7 +41,7 @@ await build({
   minify: true,
   define: {
     'process.env.NODE_ENV': '"production"',
-    __CODEX_DIAGRAM_VERSION__: JSON.stringify(version),
+    __DIAGRAM_PLUGIN_VERSION__: JSON.stringify(version),
   },
 })
 
@@ -59,7 +59,7 @@ await cp(path.join(root, 'manifest/mcp.json'), path.join(packageRoot, '.mcp.json
 await cp(path.join(root, 'assets/icon.svg'), path.join(packageRoot, 'assets/icon.svg'))
 await cp(path.join(root, 'assets/icon-dark.svg'), path.join(packageRoot, 'assets/icon-dark.svg'))
 
-console.log(`Built Codex Diagram plugin: ${packageRoot}`)
+console.log(`Built Diagram Plugin package: ${packageRoot}`)
 
 await build({
   entryPoints: [path.join(root, 'integrations/deepseek/host.mjs')],
@@ -69,7 +69,7 @@ await build({
   target: 'node22',
   format: 'esm',
   external: ['@deepseek-ai/*'],
-  define: { __CODEX_DIAGRAM_VERSION__: JSON.stringify(version) },
+  define: { __DIAGRAM_PLUGIN_VERSION__: JSON.stringify(version) },
   banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
 })
 const clientBuild = await build({
@@ -81,19 +81,19 @@ const clientBuild = await build({
   external: ['react'],
   write: false,
 })
-await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@weimin96/diagram-deepseek",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
+await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@weimin96/diagram-plugin",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
 await mkdir(path.join(packageRoot, 'locale'), { recursive: true })
 await cp(path.join(root, 'integrations/deepseek/locale/en.json'), path.join(packageRoot, 'locale/en.json'))
 await cp(path.join(root, 'integrations/deepseek/locale/zh.json'), path.join(packageRoot, 'locale/zh.json'))
 await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
-  name: '@weimin96/diagram-deepseek', version, type: 'module',
+  name: '@weimin96/diagram-plugin', version, type: 'module',
   description: '在 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
   keywords: [
     'dsh-plugin', 'deepseek', 'deepseek-harness', 'dsh', 'diagram', 'mermaid',
     'canvas', 'architecture', 'visualization', 'mcp', 'cordis',
   ],
   license: packageJson.license,
-  repository: { type: 'git', url: 'git+https://github.com/weimin96/codex-diagram.git' },
+  repository: { type: 'git', url: 'git+https://github.com/weimin96/diagram-plugin.git' },
   engines: { node: '>=22', dsh: '>=0.2.0-rc.1 <0.3.0-0' },
   publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
   icon: './assets/icon.svg',

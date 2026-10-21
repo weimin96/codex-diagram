@@ -16,7 +16,7 @@ test('中英文、人工位置与独立连线固定样例的标签不遮挡节�
 
 test('质量检查报告人工标签与节点和其他标签的碰撞', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: '人工标签碰撞', width: 900, height: 500,
+    type: 'diagram-plugin-canvas', version: 1, title: '人工标签碰撞', width: 900, height: 500,
     elements: [
       { id: 'a', type: 'node', x: 20, y: 180, width: 180, height: 80, text: '入口' },
       { id: 'b', type: 'node', x: 680, y: 180, width: 180, height: 80, text: '服务' },
@@ -33,7 +33,7 @@ test('质量检查报告人工标签与节点和其他标签的碰撞', () => {
 
 test('Canvas quality gate catches overlap, edge-through-node and long labels', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Quality',
     width: 1200,
@@ -61,7 +61,7 @@ test('Canvas quality gate catches overlap, edge-through-node and long labels', (
 
 test('Canvas quality gate identifies crossing independent relationships', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Crossing',
     width: 1000,
@@ -83,7 +83,7 @@ test('Canvas quality gate identifies crossing independent relationships', () => 
 
 test('同一 bundle 的非共线路段交叉仍然需要报告', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Bundled crossing',
     width: 1000,
@@ -106,7 +106,7 @@ test('同一 bundle 的非共线路段交叉仍然需要报告', () => {
 
 test('质量检查区分独立连线重叠与共享总线', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: '重叠线路', width: 600, height: 300,
+    type: 'diagram-plugin-canvas', version: 1, title: '重叠线路', width: 600, height: 300,
     elements: [
       { id: 'a', type: 'node', x: 0, y: 0, width: 40, height: 40, text: 'A' },
       { id: 'b', type: 'node', x: 400, y: 0, width: 40, height: 40, text: 'B' },
@@ -124,7 +124,7 @@ test('质量检查区分独立连线重叠与共享总线', () => {
 
 test('Canvas quality gate passes a simple clean diagram', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Clean',
     width: 900,
@@ -143,7 +143,7 @@ test('Canvas quality gate passes a simple clean diagram', () => {
 
 test('长注释不会被当作节点标题触发改写', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Note',
     width: 800,

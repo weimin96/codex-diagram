@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "codex-diagram": {
+    "diagram-plugin": {
       "command": "node",
       "args": ["./dist/server.mjs"],
       "cwd": "."

@@ -11,11 +11,11 @@ export const inject = ['tools', 'connection', 'sessionController', 'workingDirec
 
 export async function apply(ctx) {
   const directory = path.dirname(fileURLToPath(import.meta.url))
-  const client = new Client({ name: 'diagram-deepseek', version: __CODEX_DIAGRAM_VERSION__ })
+  const client = new Client({ name: 'diagram-plugin', version: __DIAGRAM_PLUGIN_VERSION__ })
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(directory, 'server.mjs')],
-    env: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !/KEY|PASSWORD|SECRET|TOKEN|^DSH_/i.test(key))), ELECTRON_RUN_AS_NODE: '1', CODEX_DIAGRAM_HOST: 'deepseek' },
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !/KEY|PASSWORD|SECRET|TOKEN|^DSH_/i.test(key))), ELECTRON_RUN_AS_NODE: '1', DIAGRAM_PLUGIN_HOST: 'deepseek' },
     stderr: 'inherit',
   })
   ctx.effect(() => () => client.close())

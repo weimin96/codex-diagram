@@ -29,20 +29,20 @@ import { skillPromptLines } from './diagramSkills/types.js'
 import { assessMermaidVisualQuality } from './mermaidQuality.js'
 import { diagramTypes, isMermaidDiagramType, type DiagramSurface, type DiagramType, type WorkspaceSnapshot } from './types.js'
 
-declare const __CODEX_DIAGRAM_VERSION__: string
+declare const __DIAGRAM_PLUGIN_VERSION__: string
 
-const version = __CODEX_DIAGRAM_VERSION__
-const uiTemplate = 'ui://codex-diagram/workspace-v{version}'
+const version = __DIAGRAM_PLUGIN_VERSION__
+const uiTemplate = 'ui://diagram-plugin/workspace-v{version}'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const [appJs, appCss] = await Promise.all([
   readFile(path.join(here, 'app.js'), 'utf8'),
   readFile(path.join(here, 'app.css'), 'utf8'),
 ])
 const uiRevision = createHash('sha256').update(appJs).update('\0').update(appCss).digest('hex').slice(0, 12)
-const legacyUiUri = 'ui://codex-diagram/workspace-v1'
-const workspaceUiUri = `ui://codex-diagram/workspace-v${version}-${uiRevision}`
+const legacyUiUri = 'ui://diagram-plugin/workspace-v1'
+const workspaceUiUri = `ui://diagram-plugin/workspace-v${version}-${uiRevision}`
 const hostWorkspaces = new Map<string, string>()
-const threadUiUri = `ui://codex-diagram/thread-v${version}-${uiRevision}`
+const threadUiUri = `ui://diagram-plugin/thread-v${version}-${uiRevision}`
 const icons = await loadDiagramIcons(path.join(here, '..', 'assets'))
 
 const html = (surface: DiagramSurface) => `<!doctype html>
@@ -59,10 +59,10 @@ const html = (surface: DiagramSurface) => `<!doctype html>
 </html>`
 
 const server = new McpServer(
-  { name: 'codex-diagram', title: 'Codex Diagram', version, icons },
+  { name: 'diagram-plugin', title: 'Diagram Plugin', version, icons },
   {
     instructions: [
-      'Codex Diagram reads and writes Mermaid diagrams and Codex Diagram Canvas documents in the workspace bound to the current conversation.',
+      'Diagram Plugin reads and writes Mermaid diagrams and Canvas documents in the workspace bound to the current conversation.',
       'diagram.thread is only the UI-open action. Call it when the user explicitly asks to open/show the right-side Diagram panel, or once before the first diagram operation in a conversation when no prior diagram.thread call exists.',
       'If diagram.thread has already been called in this conversation, NEVER call it again for later create/get/update/proposal/beautify requests. The existing panel follows thread state automatically; use data tools directly.',
       'A software/system/module/service architecture request is NOT a flowchart request. For architecture, system architecture, module architecture, service topology, dependency architecture, deployment-style views, or C4 views, create type=canvas with canvasWorkbench=architecture. Use canvasWorkbench=flowchart for manually editable process/decision boards and canvasWorkbench=freeform for general drawing. Ordinary architecture diagrams should use tight named boundaries and role/technology semantics without automatically adding C4 metadata. Use C4 person/software-system/container/component only when the user explicitly asks for C4 or the source/current diagram already establishes that hierarchy.',
@@ -148,9 +148,9 @@ const ui = (
   'openai/iconStyle': 'monochrome',
 })
 
-registerWorkspaceResource('codex-diagram-workspace-current', workspaceUiUri, 'workspace')
-registerWorkspaceResource('codex-diagram-thread-current', threadUiUri, 'thread')
-registerWorkspaceResource('codex-diagram-workspace-legacy', legacyUiUri)
+registerWorkspaceResource('diagram-plugin-workspace-current', workspaceUiUri, 'workspace')
+registerWorkspaceResource('diagram-plugin-thread-current', threadUiUri, 'thread')
+registerWorkspaceResource('diagram-plugin-workspace-legacy', legacyUiUri)
 
 server.registerTool('diagram.designGuide', {
   title: 'Read diagram design guide',
@@ -211,7 +211,7 @@ server.registerTool('diagram.searchArchitectureTemplates', {
   }
 })
 server.registerResource(
-  'codex-diagram-workspace-versioned-history',
+  'diagram-plugin-workspace-versioned-history',
   new ResourceTemplate(uiTemplate, { list: undefined }),
   { title: 'Diagram 工作台（历史版本兼容）', mimeType: 'text/html;profile=mcp-app' },
   async (uri) => workspaceResource(uri.toString(), 'workspace'),
@@ -1861,7 +1861,7 @@ async function bootstrapWorkspace(threadId?: string): Promise<WorkspaceSnapshot>
     const store = await DiagramStore.open(boundWorkspace)
     return { kind: 'workspace', workspacePath: store.workspacePath, recentWorkspaces: [], diagrams: await store.list() }
   }
-  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话工作区。')
+  if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话工作区。')
   const recentWorkspaces = await readRecentWorkspaces()
   const threadWorkspaces = threadId ? await readCodexDesktopRoots(threadId) : []
   const candidates = uniquePaths([
@@ -1915,8 +1915,8 @@ async function clientWorkspaceRoots(): Promise<string[]> {
 }
 
 async function readCodexDesktopRoots(threadId?: string): Promise<string[]> {
-  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') return []
-  const stateFile = process.env.CODEX_DIAGRAM_CODEX_STATE
+  if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') return []
+  const stateFile = process.env.DIAGRAM_PLUGIN_CODEX_STATE
     || path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), '.codex-global-state.json')
   try {
     const state = JSON.parse(await readFile(stateFile, 'utf8')) as CodexDesktopState
@@ -1942,15 +1942,24 @@ async function readCodexDesktopRoots(threadId?: string): Promise<string[]> {
   }
 }
 
-const recentStateFile = path.join(process.env.CODEX_DIAGRAM_STATE_HOME || path.join(os.homedir(), '.codex-diagram'), 'sidebar-state.json')
+/** 新的状态目录；未设置 DIAGRAM_PLUGIN_STATE_HOME 时使用。 */
+const stateHome = process.env.DIAGRAM_PLUGIN_STATE_HOME || path.join(os.homedir(), '.diagram-plugin')
+/** 改名前的状态目录；只读回退，让升级前的最近工作区列表不丢。 */
+const legacyStateHome = path.join(os.homedir(), '.codex-diagram')
+const recentStateFile = path.join(stateHome, 'sidebar-state.json')
+const legacyStateFile = path.join(legacyStateHome, 'sidebar-state.json')
 
 async function readRecentWorkspaces(): Promise<string[]> {
-  try {
-    const parsed = JSON.parse(await readFile(recentStateFile, 'utf8')) as { recentWorkspaces?: unknown }
-    return stringArray(parsed.recentWorkspaces)
-  } catch {
-    return []
+  for (const file of [recentStateFile, legacyStateFile]) {
+    try {
+      const parsed = JSON.parse(await readFile(file, 'utf8')) as { recentWorkspaces?: unknown }
+      const workspaces = stringArray(parsed.recentWorkspaces)
+      if (workspaces.length > 0) return workspaces
+    } catch {
+      continue
+    }
   }
+  return []
 }
 
 async function writeRecentWorkspaces(recentWorkspaces: string[]): Promise<void> {
@@ -1965,7 +1974,7 @@ function toolThreadId(meta: unknown): string | undefined {
     hostWorkspaces.set(key, context.workspacePath)
     return key
   }
-  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话身份。')
+  if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话身份。')
   if (!meta || typeof meta !== 'object') return undefined
   const threadId = (meta as Record<string, unknown>).threadId
   return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined

@@ -16,7 +16,7 @@ test('关系标签按显示宽度换行，中文、英文和超长文本保持�
 
 test('自动标签避让人工位置，并为独立连线生成相同的标签布局', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas', version: 1, title: '标签占用', width: 1000, height: 600,
+    type: 'diagram-plugin-canvas', version: 1, title: '标签占用', width: 1000, height: 600,
     elements: [
       { id: 'a', type: 'node', x: 0, y: 200, width: 100, height: 80, text: '入口' },
       { id: 'b', type: 'node', x: 900, y: 200, width: 100, height: 80, text: '服务' },
@@ -58,7 +58,7 @@ test('正交路由在混合锚点时沿各自锚点法线进出', () => {
 test('round-trips a Canvas scene and renders standalone SVG', () => {
   const source = createCanvasSource('Architecture')
   const scene = parseCanvasScene(source)
-  assert.equal(scene.type, 'codex-diagram-canvas')
+  assert.equal(scene.type, 'diagram-plugin-canvas')
   assert.equal(scene.title, 'Architecture')
   assert.equal(scene.workbench, 'freeform')
   assert.equal(scene.elements.length, 0)
@@ -87,14 +87,14 @@ test('persists Canvas workbench mode while keeping legacy canvases compatible', 
   assert.equal(flowchart.elements.length, 0)
 
   const legacyArchitecture = parseCanvasScene(JSON.stringify({
-    type: 'codex-diagram-canvas', version: 1, title: 'Legacy', width: 800, height: 600, elements: [], architecture: { theme: 'enterprise' },
+    type: 'diagram-plugin-canvas', version: 1, title: 'Legacy', width: 800, height: 600, elements: [], architecture: { theme: 'enterprise' },
   }))
   assert.equal(legacyArchitecture.workbench, 'architecture')
 })
 
 test('round-trips registered shape refs and renders their geometry', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     workbench: 'flowchart',
     title: 'Flow shapes',
@@ -135,7 +135,7 @@ test('auto anchors respect ellipse and decision geometry instead of the bounding
 
 test('round-trips free drawing lines and explicit style overrides', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     workbench: 'freeform',
     title: 'Styled drawing',
@@ -192,7 +192,7 @@ test('rejects malformed Canvas documents', () => {
 
 test('round-trips optional architecture presentation metadata on version 1 canvases', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Platform',
     width: 1400,
@@ -209,7 +209,7 @@ test('round-trips optional architecture presentation metadata on version 1 canva
 test('round-trips every built-in architecture visual theme', () => {
   for (const theme of ['enterprise', 'technical', 'presentation', 'cloud', 'editorial', 'sketch'] as const) {
     const scene: CanvasScene = {
-      type: 'codex-diagram-canvas',
+      type: 'diagram-plugin-canvas',
       version: 1,
       title: theme,
       width: 960,
@@ -232,7 +232,7 @@ test('renders selected AWS Azure and GCP architecture pack icons as embedded SVG
 
 test('round-trips a visual icon override without changing node role or technology semantics', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Icon override',
     width: 960,
@@ -259,7 +259,7 @@ test('round-trips a visual icon override without changing node role or technolog
 
 test('architecture themes produce distinct SVG treatments without changing node semantics', () => {
   const base: Omit<CanvasScene, 'architecture'> = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Theme treatments',
     width: 960,
@@ -284,7 +284,7 @@ test('architecture themes produce distinct SVG treatments without changing node 
 
 test('places relationship labels on routed segments without stacking them at the same point', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Labels',
     width: 1200,
@@ -308,7 +308,7 @@ test('places relationship labels on routed segments without stacking them at the
 
 test('round-trips and honors a manually positioned relationship label', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Manual label',
     width: 1000,
@@ -330,7 +330,7 @@ test('round-trips and honors a manually positioned relationship label', () => {
 
 test('renders compact presentation architecture without dashboard metadata in SVG export', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Unified Knowledge Platform',
     width: 1440,
@@ -375,7 +375,7 @@ test('overview projection keeps source data intact while reducing low-priority a
     emphasis: index === 0 || index === 28 ? 'primary' as const : index < 12 ? 'secondary' as const : 'muted' as const,
   }))
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Large Platform',
     width: 1600,
@@ -396,7 +396,7 @@ test('overview projection keeps source data intact while reducing low-priority a
 
 test('architecture overview collapses dense semantic regions and aggregates their relationships', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Overview aggregation',
     width: 1700,
@@ -460,7 +460,7 @@ test('architecture cards map roles into stable semantic templates', () => {
 
 test('SVG export honors architecture overview projection', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Overview export',
     width: 1600,
@@ -486,7 +486,7 @@ test('SVG export honors architecture overview projection', () => {
 
 test('architecture group drill-down collapses immediate child boundaries and keeps boundary dependencies', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Drill down',
     width: 1800,
@@ -520,7 +520,7 @@ test('architecture group drill-down collapses immediate child boundaries and kee
 
 test('architecture node focus keeps a bounded neighborhood and group breadcrumbs', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Node focus',
     width: 1600,
@@ -555,7 +555,7 @@ test('semantic LOD becomes more aggressive for large scenes at the same zoom', (
 
 test('region LOD temporarily collapses semantic boundaries without mutating source state', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'LOD',
     width: 1800,
@@ -585,7 +585,7 @@ test('region LOD temporarily collapses semantic boundaries without mutating sour
 
 test('region LOD keeps the selected region expanded', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'LOD selection',
     width: 1200,
@@ -604,7 +604,7 @@ test('region LOD keeps the selected region expanded', () => {
 
 test('semantic LOD samples very large ungrouped canvases while preserving selected nodes', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Huge canvas',
     width: 12000,
@@ -631,4 +631,14 @@ test('semantic LOD samples very large ungrouped canvases while preserving select
   assert.equal(regions.level, 'regions')
   assert.ok(regions.scene.elements.filter((item) => item.type !== 'arrow').length <= 220)
   assert.equal(serializeCanvasScene(scene), before)
+})
+
+test('改名前的 Canvas 文档仍可读取，并写回新类型', () => {
+  const legacy = parseCanvasScene(JSON.stringify({
+    type: 'codex-diagram-canvas', version: 1, title: '旧画布', width: 900, height: 600, elements: [],
+  }))
+  assert.equal(legacy.type, 'diagram-plugin-canvas')
+  assert.equal(legacy.title, '旧画布')
+  assert.equal(JSON.parse(createCanvasSource('新画布')).type, 'diagram-plugin-canvas')
+  assert.throws(() => parseCanvasScene(JSON.stringify({ type: 'unknown-canvas', version: 1, elements: [] })), /不是受支持的/)
 })

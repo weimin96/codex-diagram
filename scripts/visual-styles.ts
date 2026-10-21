@@ -18,7 +18,7 @@ try {
     await mkdir(directory)
     await Promise.all(mermaidDiagramTypes.map(({ type }) => writeFile(
       path.join(directory, `${type}.mmd`),
-      `%% codex-diagram:style=${style.id}\n${createTemplate(type, '样式验证')}`,
+      `%% diagram-plugin:style=${style.id}\n${createTemplate(type, '样式验证')}`,
       'utf8',
     )))
     try {

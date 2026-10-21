@@ -457,7 +457,7 @@ function historyState(events: CanvasHistoryEvent[]): Map<string, CanvasPatchHist
 
 function historyFile(workspacePath: string): string {
   const key = createHash('sha256').update(path.resolve(workspacePath)).digest('hex').slice(0, 24)
-  return path.join(os.homedir(), '.codex-diagram', 'history', `${key}.jsonl`)
+  return path.join(os.homedir(), '.diagram-plugin', 'history', `${key}.jsonl`)
 }
 
 function normalize(scene: CanvasScene): CanvasScene {

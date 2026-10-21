@@ -8,13 +8,13 @@ for (const file of ['.codex-plugin/plugin.json', '.mcp.json', 'dist/server.mjs',
   await access(path.join(packageRoot, file))
 }
 const manifest = JSON.parse(await readFile(path.join(packageRoot, '.codex-plugin/plugin.json'), 'utf8'))
-if (manifest.name !== 'codex-diagram') throw new Error('Unexpected plugin manifest name.')
+if (manifest.name !== 'diagram-plugin') throw new Error('Unexpected plugin manifest name.')
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 if (manifest.version !== packageJson.version) throw new Error('Plugin manifest version does not match package.json.')
 
 const serverBundle = await readFile(path.join(packageRoot, 'dist/server.mjs'), 'utf8')
 for (const marker of [
-  'ui://codex-diagram/thread-v',
+  'ui://diagram-plugin/thread-v',
   'diagram.threadState',
   'Open the full-screen Diagram library',
   '["model", "app"]',
@@ -42,10 +42,10 @@ const appCss = await readFile(path.join(packageRoot, 'dist/app.css'), 'utf8')
 for (const marker of ['freeform-bundle-trunk', 'emphasis-primary', 'c4-software-system']) {
   if (!appCss.includes(marker)) throw new Error(`Missing architecture design style marker: ${marker}`)
 }
-console.log('Codex Diagram package smoke check passed.')
+console.log('Diagram Plugin package smoke check passed.')
 
 const deepseekManifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
-if (deepseekManifest.name !== '@weimin96/diagram-deepseek' || deepseekManifest.version !== packageJson.version || deepseekManifest.dsh?.client?.platform !== 'web') throw new Error('DeepSeek plugin metadata is invalid.')
+if (deepseekManifest.name !== '@weimin96/diagram-plugin' || deepseekManifest.version !== packageJson.version || deepseekManifest.dsh?.client?.platform !== 'web') throw new Error('DeepSeek plugin metadata is invalid.')
 for (const entry of Object.values(deepseekManifest.exports)) {
   if (typeof entry !== 'string' || entry.includes('*')) continue
   await access(path.join(packageRoot, entry))

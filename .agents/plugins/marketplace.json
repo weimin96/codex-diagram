@@ -1,11 +1,11 @@
 {
-  "name": "codex-diagram-local",
+  "name": "diagram-plugin-local",
   "interface": {
-    "displayName": "Codex Diagram Local"
+    "displayName": "Diagram Plugin Local"
   },
   "plugins": [
     {
-      "name": "codex-diagram",
+      "name": "diagram-plugin",
       "source": {
         "source": "local",
         "path": "./package"

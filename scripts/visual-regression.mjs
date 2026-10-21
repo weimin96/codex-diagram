@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const temp = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-regression-'))
+const temp = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-regression-'))
 const fixtureDir = path.join(root, 'tests/fixtures/visual-stress')
 const baselineDir = path.join(root, 'tests/fixtures/visual-baseline')
 const resultDir = path.join(root, 'test-results/visual-regression')
@@ -94,7 +94,7 @@ async function run(chrome, cases) {
         await writeRegressionArtifacts(regressions)
         throw new Error(`Visual regressions detected:\n${regressions.map((item) => `${item.mode}/${item.name}: pixels=${percent(item.diff.significantRatio)}, mean=${percent(item.diff.meanDelta)}, macro=${percent(item.diff.macroRatio)}`).join('\n')}`)
       }
-      console.log(`Codex Diagram pixel visual regression passed: ${result.length} golden renders.`)
+      console.log(`Diagram Plugin pixel visual regression passed: ${result.length} golden renders.`)
     }
   } finally {
     server.kill('SIGTERM')

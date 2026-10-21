@@ -3,7 +3,7 @@ import { OpenAIExtensions } from '@openai/mcp-extensions/app'
 import type { DiagramHost } from './types.js'
 
 export function createCodexHost(version: string): DiagramHost {
-  const app = new App({ name: 'codex-diagram-sidebar', version })
+  const app = new App({ name: 'diagram-plugin-sidebar', version })
   const extensions = new OpenAIExtensions(app)
   return {
     canSelectWorkspace: true,

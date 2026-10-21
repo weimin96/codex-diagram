@@ -5,7 +5,7 @@ import { buildCanvasPatchHistoryEntry, redoCanvasPatchHistory, undoCanvasPatchHi
 
 function scene(): CanvasScene {
   return {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'History',
     width: 1400,
@@ -136,7 +136,7 @@ test('history entry retains the accepted AI proposal branch identity', () => {
 
 test('history entry remains sparse for a 5000-node canvas', () => {
   const before: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'Large history',
     width: 120000,

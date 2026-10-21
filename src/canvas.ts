@@ -58,8 +58,13 @@ export interface CanvasLane {
   tone?: CanvasTone
 }
 
+/** 写入磁盘的 Canvas 文档类型。 */
+export const CANVAS_DOCUMENT_TYPE = 'diagram-plugin-canvas'
+/** 改名前的文档类型；只用于读取，保证旧图仍能打开。 */
+export const LEGACY_CANVAS_DOCUMENT_TYPE = 'codex-diagram-canvas'
+
 export interface CanvasScene {
-  type: 'codex-diagram-canvas'
+  type: typeof CANVAS_DOCUMENT_TYPE
   version: 1
   title: string
   width: number
@@ -259,7 +264,7 @@ export interface CanvasArchitectureCardTemplate {
 
 export function createCanvasSource(title: string, workbench: CanvasWorkbenchMode = 'freeform'): string {
   return serializeCanvasScene({
-    type: 'codex-diagram-canvas',
+    type: CANVAS_DOCUMENT_TYPE,
     version: 1,
     title: title.trim() || 'Canvas',
     width: 1600,
@@ -279,14 +284,15 @@ export function parseCanvasScene(source: string): CanvasScene {
   }
   if (!value || typeof value !== 'object') throw new Error('自由画布内容无效。')
   const scene = value as Partial<CanvasScene>
-  if (scene.type !== 'codex-diagram-canvas' || scene.version !== 1 || !Array.isArray(scene.elements)) {
-    throw new Error('不是受支持的 Codex Diagram Canvas 文档。')
+  const acceptedType = scene.type === CANVAS_DOCUMENT_TYPE || scene.type === LEGACY_CANVAS_DOCUMENT_TYPE
+  if (!acceptedType || scene.version !== 1 || !Array.isArray(scene.elements)) {
+    throw new Error('不是受支持的 Diagram Plugin Canvas 文档。')
   }
   if (scene.style !== undefined && !isDiagramVisualStyle(scene.style)) throw new Error('不支持的画布样式，请从内置样式中选择。')
   const architecture = normalizeArchitectureAppearance(scene.architecture)
   const workbench = normalizeCanvasWorkbench(scene.workbench, Boolean(architecture))
   return {
-    type: 'codex-diagram-canvas',
+    type: CANVAS_DOCUMENT_TYPE,
     version: 1,
     title: typeof scene.title === 'string' ? scene.title : 'Canvas',
     width: positive(scene.width, 1600),

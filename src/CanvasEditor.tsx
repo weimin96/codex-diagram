@@ -127,10 +127,10 @@ const ICON_SOURCE_OPTIONS: ReadonlyArray<readonly ['all' | CanvasIconSource, str
   ['gcp', 'GCP'],
 ]
 
-const TEMPLATE_FAVORITES_STORAGE_KEY = 'codex-diagram:architecture-template-favorites'
-const TEMPLATE_RECENTS_STORAGE_KEY = 'codex-diagram:architecture-template-recents'
-const TEMPLATE_DRAG_MIME = 'application/x-codex-diagram-architecture-template'
-const SHAPE_DRAG_MIME = 'application/x-codex-diagram-shape'
+const TEMPLATE_FAVORITES_STORAGE_KEY = 'diagram-plugin:architecture-template-favorites'
+const TEMPLATE_RECENTS_STORAGE_KEY = 'diagram-plugin:architecture-template-recents'
+const TEMPLATE_DRAG_MIME = 'application/x-diagram-plugin-architecture-template'
+const SHAPE_DRAG_MIME = 'application/x-diagram-plugin-shape'
 const TEMPLATE_RECENT_LIMIT = 8
 
 type ArchitectureTemplateDragState = {

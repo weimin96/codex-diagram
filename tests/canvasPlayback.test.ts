@@ -5,7 +5,7 @@ import { buildCanvasPlaybackPlan } from '../src/CanvasEditor.js'
 
 test('schedules a reverse cross-region arrow only after both endpoint nodes are placed', () => {
   const scene: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'cross-region',
     width: 2600,
@@ -34,7 +34,7 @@ test('schedules a reverse cross-region arrow only after both endpoint nodes are 
 
 test('stages previous node, arrow and boundary presentation until update actions run', () => {
   const previous: CanvasScene = {
-    type: 'codex-diagram-canvas',
+    type: 'diagram-plugin-canvas',
     version: 1,
     title: 'before-after',
     width: 1600,

@@ -136,13 +136,13 @@ test('flowchart render normalization removes HTML line breaks without rewriting 
 
 test('visual style directives select stable profiles without changing the diagram grammar', () => {
   assert.equal(resolveMermaidVisualStyle('flowchart LR\n  A --> B'), 'technical')
-  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=editorial\nflowchart LR\n  A --> B'), 'editorial')
-  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=presentation\nflowchart LR\n  A --> B'), 'presentation')
+  assert.equal(resolveMermaidVisualStyle('%% diagram-plugin:style=editorial\nflowchart LR\n  A --> B'), 'editorial')
+  assert.equal(resolveMermaidVisualStyle('%% diagram-plugin:style=presentation\nflowchart LR\n  A --> B'), 'presentation')
 
   const technical = mermaidVisualConfig('flowchart', palette, 'flowchart LR\n  A --> B')
-  const minimal = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=minimal\nflowchart LR\n  A --> B')
-  const editorial = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=editorial\nflowchart LR\n  A --> B')
-  const presentation = mermaidVisualConfig('flowchart', palette, '%% codex-diagram:style=presentation\nflowchart LR\n  A --> B')
+  const minimal = mermaidVisualConfig('flowchart', palette, '%% diagram-plugin:style=minimal\nflowchart LR\n  A --> B')
+  const editorial = mermaidVisualConfig('flowchart', palette, '%% diagram-plugin:style=editorial\nflowchart LR\n  A --> B')
+  const presentation = mermaidVisualConfig('flowchart', palette, '%% diagram-plugin:style=presentation\nflowchart LR\n  A --> B')
 
   assert.equal(technical.look, 'neo')
   assert.equal(minimal.look, 'classic')
@@ -157,7 +157,7 @@ test('共享样式覆盖全部 Mermaid 图种，并保留各自的图形语法',
   for (const { type } of mermaidDiagramTypes) {
     const outputs = new Set<string>()
     for (const style of diagramVisualStyles) {
-      const source = `%% codex-diagram:style=${style.id}\n`
+      const source = `%% diagram-plugin:style=${style.id}\n`
       assert.equal(resolveMermaidVisualStyle(source), style.id)
       const config = mermaidVisualConfig(type, palette, source)
       assert.ok(config.fontFamily)
@@ -169,9 +169,18 @@ test('共享样式覆盖全部 Mermaid 图种，并保留各自的图形语法',
 })
 
 test('切换 Mermaid 样式只替换样式声明，保留 YAML、换行和业务内容', () => {
-  const source = '---\r\ntitle: 审批\r\n---\r\n%% codex-diagram:style=warm\r\nsequenceDiagram\r\nA->>B: 请求\r\n'
+  const source = '---\r\ntitle: 审批\r\n---\r\n%% diagram-plugin:style=warm\r\nsequenceDiagram\r\nA->>B: 请求\r\n'
   const changed = setMermaidVisualStyle(source, 'forest')
   assert.equal(changed, source.replace('style=warm', 'style=forest'))
   assert.equal(setMermaidVisualStyle(changed, 'forest'), changed)
-  assert.equal(resolveMermaidVisualStyle('%% codex-diagram:style=unknown\nflowchart LR'), 'technical')
+  assert.equal(resolveMermaidVisualStyle('%% diagram-plugin:style=unknown\nflowchart LR'), 'technical')
+})
+
+test('改名前的样式指令仍能被识别，切换时迁移为新前缀', () => {
+  const legacy = '%% codex-diagram:style=warm\nflowchart LR\n  A --> B'
+  assert.equal(resolveMermaidVisualStyle(legacy), 'warm')
+  const migrated = setMermaidVisualStyle(legacy, 'forest')
+  assert.ok(migrated.startsWith('%% diagram-plugin:style=forest\n'))
+  assert.ok(!migrated.includes('codex-diagram'))
+  assert.ok(migrated.includes('flowchart LR'))
 })

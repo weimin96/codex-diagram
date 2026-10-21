@@ -1,4 +1,4 @@
-export const TOOL_RESULT_JSON_PREFIX = '__CODEX_DIAGRAM_JSON__:'
+export const TOOL_RESULT_JSON_PREFIX = '__DIAGRAM_PLUGIN_JSON__:'
 
 export interface ToolResultLike {
   isError?: boolean

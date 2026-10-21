@@ -1,16 +1,16 @@
 {
-  "name": "codex-diagram",
+  "name": "diagram-plugin",
   "version": "0.19.0",
-  "description": "Create, inspect and edit Mermaid diagrams beside Codex conversations.",
+  "description": "Create, inspect and edit Mermaid diagrams and Canvas documents beside the conversation.",
   "author": {
-    "name": "Codex Diagram"
+    "name": "Diagram Plugin"
   },
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Diagram",
-    "shortDescription": "Live diagrams beside your Codex conversation",
-    "longDescription": "Keep a live Diagram panel beside the current Codex conversation. Diagram follows the graph Codex reads, creates or updates in that thread, while the global Diagram library remains available for browsing, CRUD, export and full-screen editing. Supports Mermaid structured diagrams and version-controlled freeform Canvas documents.",
-    "developerName": "Codex Diagram",
+    "shortDescription": "Live diagrams beside your conversation",
+    "longDescription": "Keep a live Diagram panel beside the current conversation. Diagram follows the graph the assistant reads, creates or updates in that thread, while the global Diagram library remains available for browsing, CRUD, export and full-screen editing. Supports Mermaid structured diagrams and version-controlled freeform Canvas documents.",
+    "developerName": "Diagram Plugin",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid", "Canvas", "Code Analysis"],
     "composerIcon": "./assets/icon.svg",

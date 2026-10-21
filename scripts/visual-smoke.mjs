@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const temp = await mkdtemp(path.join(os.tmpdir(), 'codex-diagram-visual-'))
+const temp = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-visual-'))
 const sourceDir = readSourceDirArg(process.argv.slice(2))
 const qualityBenchmark = process.argv.includes('--quality-benchmark')
 
@@ -86,7 +86,7 @@ async function runVisualSmoke(chrome, externalCases, qualityBenchmark) {
     if (hardOversized.length) {
       throw new Error(`Visual smoke oversized diagrams:\n${hardOversized.map((item) => `${item.mode}/${item.name ?? item.type}: ${item.width}x${item.height}`).join('\n')}`)
     }
-    console.log(`Codex Diagram visual smoke passed: ${result.length} browser renders${externalCases ? ' from external cases' : ''}.`)
+    console.log(`Diagram Plugin visual smoke passed: ${result.length} browser renders${externalCases ? ' from external cases' : ''}.`)
   } finally {
     server.kill('SIGTERM')
   }

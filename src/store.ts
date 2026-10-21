@@ -357,7 +357,7 @@ async function withWorkspaceMutation<T>(workspace: string, operation: () => Prom
   let unlock: (() => Promise<void>) | undefined
   try {
     unlock = await lockfile.lock(workspace, {
-      lockfilePath: path.join(os.tmpdir(), `codex-diagram-${createHash('sha256').update(workspace).digest('hex')}.lock`),
+      lockfilePath: path.join(os.tmpdir(), `diagram-plugin-${createHash('sha256').update(workspace).digest('hex')}.lock`),
       retries: { retries: 12, minTimeout: 25, maxTimeout: 200, randomize: true },
     }).catch((cause: NodeJS.ErrnoException) => {
       if (cause.code === 'ELOCKED') throw new Error('工作区正在由其他 Diagram 实例写入，请稍后重试。', { cause })
