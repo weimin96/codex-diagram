@@ -81,10 +81,15 @@ const clientBuild = await build({
   external: ['react'],
   write: false,
 })
-await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@local/diagram-deepseek",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
+await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@weimin96/diagram-deepseek",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
 await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
-  name: '@local/diagram-deepseek', version, type: 'module',
+  name: '@weimin96/diagram-deepseek', version, type: 'module',
   description: '在 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
+  license: packageJson.license,
+  repository: { type: 'git', url: 'git+https://github.com/weimin96/codex-diagram.git' },
+  engines: { node: '>=22' },
+  publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
+  files: ['dist/*.mjs', 'dist/*.js', 'dist/*.css', 'assets/*.svg', 'cordis.patch.yml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
   main: './dist/deepseek-host.mjs',
   exports: { '.': './dist/deepseek-host.mjs', './client': './dist/deepseek-client.js' },
   dsh: { manifestVersion: 1, bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', inject: [
@@ -102,4 +107,7 @@ await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
   },
 }, null, 2)}\n`)
 await cp(path.join(root, 'integrations/deepseek/cordis.patch.yml'), path.join(packageRoot, 'cordis.patch.yml'))
+await cp(path.join(root, 'integrations/deepseek/README.md'), path.join(packageRoot, 'README.md'))
+await cp(path.join(root, 'LICENSE'), path.join(packageRoot, 'LICENSE'))
+await cp(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(packageRoot, 'THIRD_PARTY_NOTICES.md'))
 console.log(`Built DeepSeek Diagram plugin: ${packageRoot}`)

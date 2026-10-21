@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 
 export const inject = ['sidebarRight', 'sidebarRightTabs', 'slots', 'remote', 'remote.session', 'theme']
-const tabId = '@local/diagram-deepseek'
+const tabId = '@weimin96/diagram-deepseek'
 
 function requestFetch(input, init) {
   return (globalThis.__DSH_TRANSPORT__?.fetch ?? globalThis.fetch)(input, init)

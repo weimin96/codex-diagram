@@ -37,7 +37,7 @@ pnpm check:hosts
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" plugin --profile desktop add "file:/绝对路径/codex-diagram/package"
 ```
 
-随后重新打开 Desktop。不要再为同一个 Diagram 配置通用 MCP 客户端，避免重复工具或模型与面板连接不同实例。同版本的 `file:` 依赖可能继续使用已安装副本。开发中重新构建后，需要在退出 Desktop 后先 `plugin --profile desktop remove @local/diagram-deepseek`，再执行上述添加命令，并检查插件已进入 `dsh.profile.bundles`。
+随后重新打开 Desktop。不要再为同一个 Diagram 配置通用 MCP 客户端，避免重复工具或模型与面板连接不同实例。同版本的 `file:` 依赖可能继续使用已安装副本。开发中重新构建后，需要在退出 Desktop 后先 `plugin --profile desktop remove @weimin96/diagram-deepseek`，再执行上述添加命令，并检查插件已进入 `dsh.profile.bundles`。
 
 ## 验证
 
@@ -76,3 +76,29 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 使用 `test-results/deepseek-desktop-install/workspace/` 作为独立验收工作区：模型创建、更新和回读 Mermaid，右侧面板自动跟随并渲染；随后生成 Proposal，确认前读取磁盘仍为三个节点，在面板接受后磁盘与预览均变为四个节点。Canvas 由模型创建两个节点与一条连线，在原生 Inspector 中将文字改为“DeepSeek Desktop（已验证）”并保存，磁盘读取一致。完整退出并重启 Desktop 后，插件组件显示“1 运行中”，重新选择图表可读回已保存文字；当前图选择和待确认 Proposal 仍是进程内状态，不承诺跨重启恢复。更多界面证据保存在 `test-results/deepseek-desktop-install/`，该目录不进入 Git。
 
 安装前的 desktop profile 清单与锁文件备份位于该目录的 `profile-backup/`。安装只增加当前插件，未变更其他插件或模型凭据。
+
+
+## npm 与 GitHub Actions 发布
+
+正式包名为 `@weimin96/diagram-deepseek`。构建包中的 npm 名称、客户端模块标识、标签页类型和 bundle 注册保持一致。
+
+工作流 `.github/workflows/publish-deepseek.yml` 支持手动指定版本，或推送 `deepseek-v<版本>` 标签。版本必须与根目录 `package.json` 一致。工作流执行类型检查、构建、产物检查和宿主集成测试，再生成 tarball，在隔离目录解包并运行服务验证，最后发布同一个 tarball。Actions 也会保存该 tarball 作为运行产物。
+
+首次发布前，在仓库 Actions Secrets 中添加 `NPM_TOKEN`，其 npm 账号需要有权发布 `@weimin96` 范围包，并允许 CI 发布。密钥仅传给发布步骤，不写入源码、产物或日志。当前源码仓库为私有，不启用要求公开仓库的 npm provenance，也不修改仓库可见性。
+
+本地验包：
+
+```sh
+pnpm build
+mkdir -p release
+npm pack ./package --ignore-scripts --pack-destination release
+node scripts/check-deepseek-package.mjs release/weimin96-diagram-deepseek-0.19.0.tgz
+```
+
+发布后，用户可在 Desktop 插件管理中输入包名，或完整退出应用后执行：
+
+```sh
+dsh plugin --profile desktop add @weimin96/diagram-deepseek@0.19.0
+```
+
+本地旧名称 `@local/diagram-deepseek` 与正式名称是不同包。已安装旧测试包的用户，应先移除旧插件，再安装正式包，避免重复注册 Diagram 标签页和工具。

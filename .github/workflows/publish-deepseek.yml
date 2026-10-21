@@ -1,0 +1,76 @@
+name: 发布 DeepSeek Diagram
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 发布版本，必须与 package.json 一致
+        required: true
+        default: '0.19.0'
+  push:
+    tags:
+      - 'deepseek-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-deepseek
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: 核对发布版本
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const requested = process.env.RELEASE_REF.startsWith('refs/tags/deepseek-v')
+            ? process.env.RELEASE_REF.slice('refs/tags/deepseek-v'.length)
+            : process.env.REQUESTED_VERSION;
+          if (version !== requested) throw new Error(`发布版本 ${requested} 与源码版本 ${version} 不一致`);
+          NODE
+      - name: 安装依赖
+        run: |
+          npm install --global pnpm@11.22.0
+          pnpm install --frozen-lockfile
+      - name: 验证并构建
+        run: |
+          pnpm typecheck
+          pnpm build
+          pnpm smoke
+          pnpm check:hosts
+      - name: 打包
+        working-directory: package
+        run: |
+          mkdir -p ../release
+          npm pack --ignore-scripts --pack-destination ../release
+      - name: 验证发布包
+        run: node scripts/check-deepseek-package.mjs release/*.tgz
+      - name: 保存发布产物
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diagram-deepseek-${{ github.run_number }}
+          path: release/*.tgz
+          if-no-files-found: error
+      - name: 发布到 npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo '::error::缺少仓库 Actions Secret NPM_TOKEN，无法发布到 npm。'
+            exit 1
+          fi
+          npm publish release/*.tgz --access public --registry=https://registry.npmjs.org/

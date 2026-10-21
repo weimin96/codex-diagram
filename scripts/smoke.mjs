@@ -45,7 +45,7 @@ for (const marker of ['freeform-bundle-trunk', 'emphasis-primary', 'c4-software-
 console.log('Codex Diagram package smoke check passed.')
 
 const deepseekManifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
-if (deepseekManifest.version !== packageJson.version || deepseekManifest.dsh?.client?.platform !== 'web') throw new Error('DeepSeek plugin metadata is invalid.')
+if (deepseekManifest.name !== '@weimin96/diagram-deepseek' || deepseekManifest.version !== packageJson.version || deepseekManifest.dsh?.client?.platform !== 'web') throw new Error('DeepSeek plugin metadata is invalid.')
 for (const entry of Object.values(deepseekManifest.exports)) await access(path.join(packageRoot, entry))
 if (deepseekManifest.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('DeepSeek bundle entry is missing.')
 await access(path.join(packageRoot, deepseekManifest.dsh.bundle.patch))
