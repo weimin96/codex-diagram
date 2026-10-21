@@ -1,6 +1,6 @@
 {
   "name": "diagram-plugin",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Create, inspect and edit Mermaid diagrams and Canvas documents beside the conversation.",
   "author": {
     "name": "Diagram Plugin"
@@ -12,11 +12,21 @@
     "longDescription": "Keep a live Diagram panel beside the current conversation. Diagram follows the graph the assistant reads, creates or updates in that thread, while the global Diagram library remains available for browsing, CRUD, export and full-screen editing. Supports Mermaid structured diagrams and version-controlled freeform Canvas documents.",
     "developerName": "Diagram Plugin",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write", "Diagrams", "Mermaid", "Canvas", "Code Analysis"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Diagrams",
+      "Mermaid",
+      "Canvas",
+      "Code Analysis"
+    ],
     "composerIcon": "./assets/icon.svg",
     "composerIconDark": "./assets/icon-dark.svg",
     "logo": "./assets/icon.svg",
     "logoDark": "./assets/icon-dark.svg",
-    "defaultPrompt": ["@Diagram show the diagrams in this workspace."]
+    "defaultPrompt": [
+      "@Diagram show the diagrams in this workspace."
+    ]
   }
 }

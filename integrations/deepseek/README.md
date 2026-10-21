@@ -7,13 +7,13 @@
 在 DeepSeek Desktop 的“插件 → 添加插件”中输入：
 
 ```text
-@weimin96/diagram-plugin@0.19.0
+@weimin96/diagram-plugin@0.20.0
 ```
 
 也可以在完整退出 Desktop 后，使用应用提供的 `dsh` 命令安装：
 
 ```sh
-dsh plugin --profile desktop add @weimin96/diagram-plugin@0.19.0
+dsh plugin --profile desktop add @weimin96/diagram-plugin@0.20.0
 ```
 
 重新打开 Desktop，在项目聊天标题栏点击 Diagram，或让助手调用 Diagram 工具打开画板。此包已包含编译产物，不需要克隆仓库、构建或单独配置 MCP 服务。

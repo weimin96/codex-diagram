@@ -106,13 +106,13 @@ npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号�
 pnpm build
 mkdir -p release
 npm pack ./package --ignore-scripts --pack-destination release
-node scripts/check-deepseek-package.mjs release/weimin96-diagram-plugin-0.19.0.tgz
+node scripts/check-deepseek-package.mjs release/weimin96-diagram-plugin-0.20.0.tgz
 ```
 
 发布后，用户可在 Desktop 插件管理中输入包名，或完整退出应用后执行：
 
 ```sh
-dsh plugin --profile desktop add @weimin96/diagram-plugin@0.19.0
+dsh plugin --profile desktop add @weimin96/diagram-plugin@0.20.0
 ```
 
 改名前的 `@weimin96/diagram-deepseek`、更早的测试名 `@local/diagram-deepseek` 与正式名称都是不同包。已装旧包的用户应先移除旧插件，再安装新包，否则会重复注册 Diagram 标签页和工具。
