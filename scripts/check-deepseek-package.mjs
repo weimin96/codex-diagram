@@ -7,13 +7,27 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 if (process.argv.length !== 3) throw new Error('请传入唯一的 npm tarball 路径。')
+
+/** 按 Node 的 exports 规则解析一个资源子路径，支持单个 `*` 通配。 */
+function resolveExport(exports, resource) {
+  const exact = exports[`./${resource}`]
+  if (typeof exact === 'string') return exact
+  for (const [key, target] of Object.entries(exports)) {
+    const [prefix, suffix] = key.split('*')
+    if (suffix === undefined || typeof target !== 'string') continue
+    if (!key.startsWith('./') || !resource.startsWith(prefix.slice(2)) || !resource.endsWith(suffix)) continue
+    return target.replace('*', resource.slice(prefix.length - 2, resource.length - suffix.length))
+  }
+  return undefined
+}
+
 const archive = path.resolve(process.argv[2])
 const rootManifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-release-'))
 let client
 try {
   const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n')
-  assert.ok(entries.every((entry) => /^package\/(?:dist\/[^/]+\.(?:mjs|js|css)|assets\/[^/]+\.svg|package\.json|cordis\.patch\.yml|README\.md|LICENSE|THIRD_PARTY_NOTICES\.md)$/.test(entry)), '发布包包含非运行时文件。')
+  assert.ok(entries.every((entry) => /^package\/(?:dist\/[^/]+\.(?:mjs|js|css)|assets\/[^/]+\.svg|locale\/[a-z]{2}(?:-[a-z0-9]+)*\.json|package\.json|cordis\.patch\.yml|README\.md|LICENSE|THIRD_PARTY_NOTICES\.md)$/.test(entry)), '发布包包含非运行时文件。')
   execFileSync('tar', ['-xzf', archive, '-C', root])
   const packageRoot = path.join(root, 'package')
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
@@ -27,6 +41,20 @@ try {
   const clientSource = await readFile(path.join(packageRoot, manifest.exports['./client']), 'utf8')
   assert.ok(clientSource.includes(`id:"${manifest.name}"`))
   assert.ok(!clientSource.includes('@local/diagram-deepseek'))
+
+  // 插件市场按 npm 关键词 dsh-plugin 自动扫描，并按 engines.dsh 判定兼容性。
+  assert.ok(manifest.keywords?.includes('dsh-plugin'), '发布包缺少 dsh-plugin 关键词，插件市场将无法自动发现。')
+  assert.equal(typeof manifest.engines?.dsh, 'string', '发布包缺少 engines.dsh，插件市场无法判定兼容性。')
+  assert.ok(!manifest.engines.dsh.includes('workspace:'), 'engines.dsh 不能使用 workspace: 范围。')
+  assert.ok(manifest.icon, '发布包缺少 icon，插件列表将没有图标。')
+  const english = JSON.parse(await readFile(path.join(packageRoot, 'locale/en.json'), 'utf8'))
+  assert.ok(english.meta?.title && english.meta?.description, 'locale/en.json 必须提供 meta.title 与 meta.description。')
+  await readFile(path.join(packageRoot, 'locale/zh.json'), 'utf8')
+  for (const resource of ['icon', 'locale/en.json', 'package.json']) {
+    const target = resolveExport(manifest.exports, resource)
+    assert.ok(target, `发布包 exports 未声明 ${resource}。`)
+    await readFile(path.join(packageRoot, target))
+  }
 
   client = new Client({ name: 'diagram-release-check', version: '1.0.0' })
   await client.connect(new StdioClientTransport({

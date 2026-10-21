@@ -82,16 +82,31 @@ const clientBuild = await build({
   write: false,
 })
 await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@weimin96/diagram-deepseek",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
+await mkdir(path.join(packageRoot, 'locale'), { recursive: true })
+await cp(path.join(root, 'integrations/deepseek/locale/en.json'), path.join(packageRoot, 'locale/en.json'))
+await cp(path.join(root, 'integrations/deepseek/locale/zh.json'), path.join(packageRoot, 'locale/zh.json'))
 await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
   name: '@weimin96/diagram-deepseek', version, type: 'module',
   description: '在 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
+  keywords: [
+    'dsh-plugin', 'deepseek', 'deepseek-harness', 'dsh', 'diagram', 'mermaid',
+    'canvas', 'architecture', 'visualization', 'mcp', 'cordis',
+  ],
   license: packageJson.license,
   repository: { type: 'git', url: 'git+https://github.com/weimin96/codex-diagram.git' },
-  engines: { node: '>=22' },
+  engines: { node: '>=22', dsh: '>=0.2.0-rc.1 <0.3.0-0' },
   publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
-  files: ['dist/*.mjs', 'dist/*.js', 'dist/*.css', 'assets/*.svg', 'cordis.patch.yml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
+  icon: './assets/icon.svg',
+  files: ['dist/*.mjs', 'dist/*.js', 'dist/*.css', 'assets/*.svg', 'locale/*.json', 'cordis.patch.yml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
   main: './dist/deepseek-host.mjs',
-  exports: { '.': './dist/deepseek-host.mjs', './client': './dist/deepseek-client.js' },
+  exports: {
+    '.': './dist/deepseek-host.mjs',
+    './client': './dist/deepseek-client.js',
+    './icon': './assets/icon.svg',
+    './locale/*.json': './locale/*.json',
+    './package.json': './package.json',
+    './cordis.patch.yml': './cordis.patch.yml',
+  },
   dsh: { manifestVersion: 1, bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', inject: [
     '@deepseek-ai/dsh-api-gateway', '@deepseek-ai/dsh-api-session-controller',
     '@deepseek-ai/dsh-client-ui-sidebar-right', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-theme',

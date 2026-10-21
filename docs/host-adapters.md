@@ -96,6 +96,8 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 
 npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号认证完成首次建包，再配置可信发布者；不能仅凭 GitHub 仓库身份首次占用 npm 包名。首次认证可以使用交互式 `npm login`，不必创建长期 CI token。当前源码仓库为私有，工作流显式关闭 npm provenance，不修改仓库可见性。
 
+2026-10-21 已完成首次建包：通过交互式 2FA 发布 `0.0.0` 占位版本（仅含 `package.json`、`README.md`、`LICENSE`，不含运行时代码），`latest` 指向 `0.0.0`；随后用 `npm trust github` 绑定仓库 `weimin96/codex-diagram`、工作流文件 `publish-deepseek.yml`、不绑定 Environment，权限为 `publish`。正式版本由工作流发布，本地不再需要长期 npm token。
+
 本地验包：
 
 ```sh
@@ -112,3 +114,17 @@ dsh plugin --profile desktop add @weimin96/diagram-deepseek@0.19.0
 ```
 
 本地旧名称 `@local/diagram-deepseek` 与正式名称是不同包。已安装旧测试包的用户，应先移除旧插件，再安装正式包，避免重复注册 Diagram 标签页和工具。
+
+## 插件市场发现
+
+社区插件市场靠两条互相独立的通道发现插件，发布包必须同时满足。
+
+**npm 关键词**。索引生成器用 `keywords:dsh-plugin` 搜索 npm，再逐包拉取 packument，只保留声明了 `dsh.bundle` 的包。构建产物因此写入 `keywords`（首个为 `dsh-plugin`）与 `dsh.bundle.patch`；缺任一项都不会被收录。关键词只认 `dsh-plugin`，不要用 `dsh` 代替——后者在其它语境也常用，会混入大量非插件包。
+
+**GitHub topic**。另一类市场直接读 GitHub `dsh-plugin` topic，因此仓库需要设置该 topic，且仓库公开可见才能被检索。
+
+兼容性由 `engines.dsh` 单独决定，声明后 `peerDependencies` 不再参与判定。当前值为 `>=0.2.0-rc.1 <0.3.0-0`：下界覆盖 DSH `0.2.x` 全系，上界用 `<0.3.0-0` 排除 `0.3` 的预发布版本。比较使用 `includePrerelease: true`，若漏写该选项，`*` 对 `0.2.1-rc.2` 会判定为不兼容。`engines.dsh` 禁止 `workspace:` 前缀。
+
+展示信息来自 `package.json` 的 `icon` 与 `locale/<lang>.json` 的 `meta.title` / `meta.description`，`en.json` 必须存在，其余语言可选。这些资源都要通过 `exports` 暴露（`./icon`、`./locale/*.json`），否则 DSH 的模块解析器读不到，插件列表会退化成包名且没有图标。
+
+`scripts/check-deepseek-package.mjs` 与 `scripts/smoke.mjs` 会断言上述字段，构建产物缺字段时在打包阶段就失败。
