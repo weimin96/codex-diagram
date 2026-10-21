@@ -82,7 +82,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 
 正式包名为 `@weimin96/diagram-plugin`。构建包中的 npm 名称、客户端模块标识、标签页类型和 bundle 注册保持一致。
 
-工作流 `.github/workflows/publish-deepseek.yml` 支持手动指定版本，或推送 `deepseek-v<版本>` 标签。版本必须与根目录 `package.json` 一致。工作流执行类型检查、构建、产物检查和宿主集成测试，再生成 tarball，在隔离目录解包并运行服务验证，最后发布同一个 tarball。Actions 也会保存该 tarball 作为运行产物。
+工作流 `.github/workflows/publish-plugin.yml` 支持手动指定版本，或推送 `diagram-plugin-v<版本>` 标签。版本必须与根目录 `package.json` 一致。工作流执行类型检查、构建、产物检查和宿主集成测试，再生成 tarball，在隔离目录解包并运行服务验证，最后发布同一个 tarball。Actions 也会保存该 tarball 作为运行产物。
 
 发布使用 npm Trusted Publishing（OIDC），不配置 `NPM_TOKEN`。工作流使用 GitHub-hosted runner、Node.js 24、npm 11.21.0，并声明 `id-token: write`。
 
@@ -90,7 +90,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 
 - Organization or user：`weimin96`
 - Repository：`diagram-plugin`
-- Workflow filename：`publish-deepseek.yml`
+- Workflow filename：`publish-plugin.yml`
 - Environment：留空（工作流未使用 GitHub Environment）
 - Allowed actions：允许直接 `npm publish`
 
@@ -98,7 +98,7 @@ npm 当前要求配置 trust 的包已存在。新包需要先通过 npm 账号�
 
 旧包 `@weimin96/diagram-deepseek` 已完成首次建包并绑定过 Trusted Publisher，现按“保留旧包、另发新包”的策略处理：旧包不再更新，也不再配置新的 trust。
 
-新包 `@weimin96/diagram-plugin` 需要在 npm 上重新走一次首次建包（交互式 2FA 发布占位版本），再执行 `npm trust github` 绑定仓库 `weimin96/diagram-plugin`、工作流文件 `publish-deepseek.yml`、不绑定 Environment，权限为 `publish`。完成后正式版本由工作流发布，本地不再需要长期 npm token。
+新包 `@weimin96/diagram-plugin` 需要在 npm 上重新走一次首次建包（交互式 2FA 发布占位版本），再执行 `npm trust github` 绑定仓库 `weimin96/diagram-plugin`、工作流文件 `publish-plugin.yml`、不绑定 Environment，权限为 `publish`。完成后正式版本由工作流发布，本地不再需要长期 npm token。
 
 本地验包：
 

@@ -1,4 +1,4 @@
-name: 发布 DeepSeek Diagram
+name: 发布 Diagram Plugin
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         default: '0.19.0'
   push:
     tags:
-      - 'deepseek-v*'
+      - 'diagram-plugin-v*'
 
 permissions:
   contents: read
@@ -40,8 +40,8 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-          const requested = process.env.RELEASE_REF.startsWith('refs/tags/deepseek-v')
-            ? process.env.RELEASE_REF.slice('refs/tags/deepseek-v'.length)
+          const requested = process.env.RELEASE_REF.startsWith('refs/tags/diagram-plugin-v')
+            ? process.env.RELEASE_REF.slice('refs/tags/diagram-plugin-v'.length)
             : process.env.REQUESTED_VERSION;
           if (version !== requested) throw new Error(`发布版本 ${requested} 与源码版本 ${version} 不一致`);
           NODE
