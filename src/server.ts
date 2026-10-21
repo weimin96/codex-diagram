@@ -1,3 +1,4 @@
+import { diagramSessionContext } from './hosts/serverContext.js'
 import { diagramVisualStyleGuide } from './diagramVisualStyles.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -40,8 +41,9 @@ const [appJs, appCss] = await Promise.all([
 const uiRevision = createHash('sha256').update(appJs).update('\0').update(appCss).digest('hex').slice(0, 12)
 const legacyUiUri = 'ui://codex-diagram/workspace-v1'
 const workspaceUiUri = `ui://codex-diagram/workspace-v${version}-${uiRevision}`
+const hostWorkspaces = new Map<string, string>()
 const threadUiUri = `ui://codex-diagram/thread-v${version}-${uiRevision}`
-const icons = await loadDiagramIcons()
+const icons = await loadDiagramIcons(path.join(here, '..', 'assets'))
 
 const html = (surface: DiagramSurface) => `<!doctype html>
 <html lang="zh-CN">
@@ -1854,6 +1856,12 @@ function workspaceResource(uri: string, surface: DiagramSurface) {
 }
 
 async function bootstrapWorkspace(threadId?: string): Promise<WorkspaceSnapshot> {
+  const boundWorkspace = threadId ? hostWorkspaces.get(threadId) : undefined
+  if (boundWorkspace) {
+    const store = await DiagramStore.open(boundWorkspace)
+    return { kind: 'workspace', workspacePath: store.workspacePath, recentWorkspaces: [], diagrams: await store.list() }
+  }
+  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话工作区。')
   const recentWorkspaces = await readRecentWorkspaces()
   const threadWorkspaces = threadId ? await readCodexDesktopRoots(threadId) : []
   const candidates = uniquePaths([
@@ -1907,6 +1915,7 @@ async function clientWorkspaceRoots(): Promise<string[]> {
 }
 
 async function readCodexDesktopRoots(threadId?: string): Promise<string[]> {
+  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') return []
   const stateFile = process.env.CODEX_DIAGRAM_CODEX_STATE
     || path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), '.codex-global-state.json')
   try {
@@ -1950,6 +1959,13 @@ async function writeRecentWorkspaces(recentWorkspaces: string[]): Promise<void> 
 }
 
 function toolThreadId(meta: unknown): string | undefined {
+  const context = diagramSessionContext(meta)
+  if (context) {
+    const key = `${context.host}:${JSON.stringify([context.sessionId, context.workspacePath])}`
+    hostWorkspaces.set(key, context.workspacePath)
+    return key
+  }
+  if (process.env.CODEX_DIAGRAM_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话身份。')
   if (!meta || typeof meta !== 'object') return undefined
   const threadId = (meta as Record<string, unknown>).threadId
   return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined

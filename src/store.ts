@@ -1,5 +1,6 @@
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import lockfile from 'proper-lockfile'
+import { createHash, randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { createCanvasSource, type CanvasWorkbenchMode } from './canvas.js'
@@ -353,10 +354,20 @@ async function withWorkspaceMutation<T>(workspace: string, operation: () => Prom
   const pending = new Promise<void>((resolve) => { release = resolve })
   workspaceMutations.set(workspace, pending)
   await previous
+  let unlock: (() => Promise<void>) | undefined
   try {
+    unlock = await lockfile.lock(workspace, {
+      lockfilePath: path.join(os.tmpdir(), `codex-diagram-${createHash('sha256').update(workspace).digest('hex')}.lock`),
+      retries: { retries: 12, minTimeout: 25, maxTimeout: 200, randomize: true },
+    }).catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code === 'ELOCKED') throw new Error('工作区正在由其他 Diagram 实例写入，请稍后重试。', { cause })
+      throw cause
+    })
     return await operation()
   } finally {
-    release()
-    if (workspaceMutations.get(workspace) === pending) workspaceMutations.delete(workspace)
+    try { await unlock?.() } finally {
+      release()
+      if (workspaceMutations.get(workspace) === pending) workspaceMutations.delete(workspace)
+    }
   }
 }

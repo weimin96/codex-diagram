@@ -4,12 +4,13 @@ import React, { Component, type CSSProperties, type ErrorInfo, type ReactNode, u
 import { createRoot } from 'react-dom/client'
 import mermaid from 'mermaid'
 import {
-  App as McpApp,
   applyDocumentTheme,
   applyHostFonts,
   applyHostStyleVariables,
 } from '@modelcontextprotocol/ext-apps'
-import { OpenAIExtensions } from '@openai/mcp-extensions/app'
+import { createCodexHost } from './hosts/codex.js'
+import { createDeepSeekHost } from './hosts/deepseek.js'
+import type { HostContext } from './hosts/types.js'
 import { ChevronDownIcon, MessageSquareMoreIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
@@ -276,35 +277,38 @@ interface DiagramGitImpactResult {
 
 type ViewMode = 'preview' | 'source' | 'split'
 
-const mcpApp = new McpApp({ name: 'codex-diagram-sidebar', version: __CODEX_DIAGRAM_VERSION__ })
-const openai = new OpenAIExtensions(mcpApp)
 const rootElement = document.getElementById('root')!
+const host = rootElement.dataset.diagramHost === 'deepseek'
+  ? createDeepSeekHost()
+  : createCodexHost(__CODEX_DIAGRAM_VERSION__)
 const hostSurface: DiagramSurface = rootElement.dataset.diagramSurface === 'thread' ? 'thread' : 'workspace'
 let initialWorkspace: WorkspaceSnapshot | null = null
 
-mcpApp.ontoolresult = (result) => {
+host.onToolResult((result) => {
   const content = result.structuredContent as Partial<WorkspaceSnapshot> | undefined
   if (content?.kind === 'workspace') initialWorkspace = content as WorkspaceSnapshot
-}
+})
 
-function applyHostContext(context: ReturnType<McpApp['getHostContext']>) {
+function applyHostContext(context: HostContext) {
   if (context?.theme) applyDocumentTheme(context.theme)
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables)
   if (context?.styles?.css?.fonts) applyHostFonts(context.styles.css.fonts)
   window.dispatchEvent(new Event('diagram-theme-change'))
 }
 
-mcpApp.addEventListener('hostcontextchanged', applyHostContext)
+host.onContextChanged(applyHostContext)
 
 renderBootStatus('正在连接 Diagram…')
 void main().catch(renderFatalError)
 
 async function main() {
-  await mcpApp.connect()
-  applyHostContext(mcpApp.getHostContext())
+  await host.connect()
+  applyHostContext(host.getHostContext())
 
   if (!initialWorkspace) {
-    const result = await mcpApp.callServerTool({ name: hostSurface === 'thread' ? 'diagram.thread' : 'diagram.workspace', arguments: {} }) as ServerToolResult
+    const result = await host.callServerTool({ name: hostSurface === 'thread' ? 'diagram.thread' : 'diagram.workspace', arguments: {} }) as ServerToolResult
+    const error = extractToolResultError(result)
+    if (error) throw new Error(error)
     const content = result.structuredContent as WorkspaceSnapshot | undefined
     if (content?.kind === 'workspace') initialWorkspace = content
   }
@@ -364,7 +368,7 @@ function WorkspacePicker({ current, onOpen }: { current: WorkspaceSnapshot; onOp
         <div>
           <div className="eyebrow">DIAGRAM WORKSPACE</div>
           <h1>打开项目中的图表</h1>
-          <p>识别工作空间里的 Mermaid 文件，并让 Codex 与可视化编辑器操作同一份源码。</p>
+          <p>识别工作空间里的 Mermaid 文件，并让 AI 与可视化编辑器操作同一份源码。</p>
         </div>
         <form
           className="workspace-open-row"
@@ -595,8 +599,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 setProposalBranchSet(proposal.branchSet ?? null)
                 setProposalReviewOpen(true)
                 setNotice(proposal.proposal.patchSummary
-                  ? `Codex 提交增量候选：${proposal.proposal.patchSummary.updated} 修改 · ${proposal.proposal.patchSummary.added} 新增 · ${proposal.proposal.patchSummary.removed} 删除`
-                  : 'Codex 提交了一版候选修改，文件尚未写入')
+                  ? `AI 提交增量候选：${proposal.proposal.patchSummary.updated} 修改 · ${proposal.proposal.patchSummary.added} 新增 · ${proposal.proposal.patchSummary.removed} 删除`
+                  : 'AI 提交了一版候选修改，文件尚未写入')
               }
             } catch {
               // Proposal sync is best-effort; normal thread following can continue.
@@ -612,7 +616,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               if (!disposed) {
                 setGitImpactReport(impact)
                 setGitImpactOpen(false)
-                setNotice(`Codex 已分析代码影响：${impact.git.files.length} 个改动文件 · ${impact.directElementIds.length} 个直接节点 · ${Math.max(0, impact.trace.nodeIds.length - impact.directElementIds.length)} 个间接节点`)
+                setNotice(`AI 已分析代码影响：${impact.git.files.length} 个改动文件 · ${impact.directElementIds.length} 个直接节点 · ${Math.max(0, impact.trace.nodeIds.length - impact.directElementIds.length)} 个间接节点`)
               }
             } catch {
               // Git impact sync is best-effort; graph following can continue.
@@ -812,7 +816,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       if (!watch || inFlight) return
       if (Date.now() > watch.until) {
         aiWatch.current = null
-        setError('未检测到 Codex 创建的新图表。可以刷新列表，或在当前对话中查看任务执行结果。')
+        setError('未检测到 AI 创建的新图表。可以刷新列表，或在当前对话中查看任务执行结果。')
         return
       }
       inFlight = true
@@ -823,7 +827,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           if (created && !dirty) {
             aiWatch.current = null
             await selectDiagram(created.path)
-            setNotice(`Codex 已创建 ${created.name}`)
+            setNotice(`AI 已创建 ${created.name}`)
           }
         })
         .catch((cause) => {
@@ -1101,7 +1105,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           path: result.diagram.path,
           mode: 'update',
           fromSource: result.proposalApply?.beforeSource ?? aiProposal.before.source,
-          label: 'Codex 正在应用候选修改',
+          label: 'AI 正在应用候选修改',
         })
       }
       setSelected(result.diagram)
@@ -1116,7 +1120,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       })
       if (patchHistoryOpen && result.proposalApply?.historyRecorded) void loadPatchHistory(result.diagram.path)
       const historyWarning = result.proposalApply?.historyEntryId && result.proposalApply.historyRecorded === false ? '；但本地历史记录写入失败' : ''
-      setNotice(`${result.proposalApply?.rebased ? '已接受 Codex 候选修改，并安全合并期间的其它画布改动' : '已接受 Codex 候选修改'}${historyWarning}`)
+      setNotice(`${result.proposalApply?.rebased ? '已接受 AI 候选修改，并安全合并期间的其它画布改动' : '已接受 AI 候选修改'}${historyWarning}`)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -1132,7 +1136,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setAiProposal(null)
       setProposalBranchSet(null)
       setProposalReviewOpen(false)
-      setNotice('已拒绝 Codex 候选修改，当前文件未改变')
+      setNotice('已拒绝 AI 候选修改，当前文件未改变')
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -1524,7 +1528,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       const direct = gitImpactReport.buckets.find((bucket) => bucket.distance === 0)?.elementIds ?? []
       const oneHop = gitImpactReport.buckets.find((bucket) => bucket.distance === 1)?.elementIds ?? []
       const twoHop = gitImpactReport.buckets.find((bucket) => bucket.distance === 2)?.elementIds ?? []
-      await sendCodexMessage([
+      await sendHostMessage([
         '基于当前 Diagram 的 Git 影响报告分析这次代码改动。请先核对真实代码事实，再说明影响链路、风险点、需要回归的模块和可能遗漏的图节点。',
         `图表：${gitImpactReport.path}`,
         `Git 改动文件：${gitImpactReport.git.files.map((file) => file.path).join(', ') || '无'}`,
@@ -1647,8 +1651,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   async function sendGeneration(request: DiagramGenerationRequest) {
-    if (!openai.message) {
-      setError('当前 Codex Host 没有提供对话消息能力。')
+    if (!host.sendMessage) {
+      setError('当前宿主没有提供对话消息能力。')
       return
     }
     setAiSending(true)
@@ -1658,9 +1662,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         until: Date.now() + 90_000,
         existingPaths: new Set(snapshot.diagrams.map((item) => item.path)),
       }
-      await sendCodexMessage(buildGenerationPrompt(workspacePath, request))
+      await sendHostMessage(buildGenerationPrompt(workspacePath, request))
       setAiOpen(false)
-      setNotice('已发送到当前 Codex 对话，生成后会自动刷新')
+      setNotice('已发送到当前 对话，生成后会自动刷新')
     } catch (cause) {
       aiWatch.current = null
       setError(errorMessage(cause))
@@ -1671,20 +1675,20 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function sendModification(instruction: string) {
     if (!selected) return
-    if (!openai.message) {
-      setError('当前 Codex Host 没有提供对话消息能力。')
+    if (!host.sendMessage) {
+      setError('当前宿主没有提供对话消息能力。')
       return
     }
     if (dirty) {
-      setError('先保存当前修改，再让 Codex 继续编辑这张图。')
+      setError('先保存当前修改，再让 AI 继续编辑这张图。')
       return
     }
     setAiSending(true)
     setError(null)
     try {
-      await sendCodexMessage(buildModificationPrompt(workspacePath, selected, instruction))
+      await sendHostMessage(buildModificationPrompt(workspacePath, selected, instruction))
       setAiOpen(false)
-      setNotice('已发送到当前 Codex 对话；Codex 返回候选修改后会先进入 Proposal 审查')
+      setNotice('已发送到当前 对话；AI 返回候选修改后会先进入 Proposal 审查')
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -1698,18 +1702,18 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       if (element.type === 'arrow') return { id: element.id, type: element.type, from: element.from, to: element.to, label: element.label, lineStyle: element.lineStyle, routing: element.routing, fromAnchor: element.fromAnchor, toAnchor: element.toAnchor, points: element.points, labelPosition: element.labelPosition, emphasis: element.emphasis, bundleKey: element.bundleKey }
       return { id: element.id, type: element.type, text: element.text, x: element.x, y: element.y, width: element.width, height: element.height, rotation: element.rotation, tone: element.tone, shape: element.shape, shapeRef: element.shapeRef, textOnly: element.type === 'note' ? element.textOnly : undefined, fontSize: element.type === 'note' ? element.fontSize : undefined, fontWeight: element.type === 'note' ? element.fontWeight : undefined, textColor: element.type === 'note' ? element.textColor : undefined, imagePath: element.type === 'note' ? element.imagePath : undefined, imageFit: element.type === 'note' ? element.imageFit : undefined, icon: element.icon, stencil: element.stencil, c4Type: element.c4Type, subtitle: element.subtitle, description: element.description, tags: element.tags, locked: element.locked, groupId: element.groupId, laneId: element.laneId, sourcePaths: element.sourcePaths }
     })
-    if (!openai.message) {
-      setError('当前 Codex Host 没有提供对话消息能力。')
+    if (!host.sendMessage) {
+      setError('当前宿主没有提供对话消息能力。')
       return
     }
     if (dirty) {
-      setError('先保存当前修改，再让 Codex 继续编辑这张图。')
+      setError('先保存当前修改，再让 AI 继续编辑这张图。')
       return
     }
     setAiSending(true)
     setError(null)
     try {
-      await sendCodexMessage(buildSubgraphModificationPrompt(
+      await sendHostMessage(buildSubgraphModificationPrompt(
         workspacePath,
         selected,
         canvasSelection.ids,
@@ -1780,9 +1784,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   async function deliverExport(filename: string, format: 'svg' | 'png', content: string): Promise<string> {
-    if (mcpApp.getHostCapabilities()?.downloadFile) {
+    if (host.downloadFile) {
       const result = format === 'svg'
-        ? await mcpApp.downloadFile({
+        ? await host.downloadFile({
             contents: [{
               type: 'resource',
               resource: {
@@ -1792,7 +1796,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               },
             }],
           })
-        : await mcpApp.downloadFile({
+        : await host.downloadFile({
             contents: [{
               type: 'resource',
               resource: {
@@ -1802,7 +1806,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               },
             }],
           })
-      if (result.isError) throw new Error('Codex Host 取消或拒绝了文件导出。')
+      if (result.isError) throw new Error('宿主取消或拒绝了文件导出。')
       return filename
     }
 
@@ -1817,9 +1821,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function openDiagramFile() {
     if (!selected) return
-    const fileApi = openai.files
+    const fileApi = host.files
     if (!fileApi) {
-      setError('当前 Codex Host 没有提供原生文件打开能力。')
+      setError('当前宿主没有提供原生文件打开能力。')
       return
     }
     try {
@@ -1830,9 +1834,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   }
 
   async function openWorkspaceSource(path: string) {
-    const fileApi = openai.files
+    const fileApi = host.files
     if (!fileApi) {
-      setError('当前 Codex Host 没有提供原生文件打开能力。')
+      setError('当前宿主没有提供原生文件打开能力。')
       return
     }
     try {
@@ -1854,14 +1858,14 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
 
   async function explainInConversation() {
     if (!selected || aiSending) return
-    if (!openai.message) {
-      setError('当前 Codex Host 没有提供对话消息能力。')
+    if (!host.sendMessage) {
+      setError('当前宿主没有提供对话消息能力。')
       return
     }
     setAiSending(true)
     setError(null)
     try {
-      await sendCodexMessage([
+      await sendHostMessage([
         '解释 Diagram 侧边栏当前选中的图表，并在当前对话中回答，不要修改文件。',
         `工作空间：${workspacePath}`,
         `图表路径：${selected.path}`,
@@ -1869,7 +1873,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         '',
         '先调用 diagram.get 读取最新版本；结合当前对话上下文说明主流程、关键边界、异常路径和最值得关注的设计点。',
       ].join('\n'))
-      setNotice('已让 Codex 在当前对话中解释这张图')
+      setNotice('已让 AI 在当前对话中解释这张图')
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -1895,7 +1899,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               <button className="icon-text-button" type="button" onClick={() => setCreating((value) => !value)}>新建</button>
             </div>
           </div>
-          <button className="workspace-path" type="button" onClick={requestWorkspaceSwitch} title={workspacePath}>{workspacePath}</button>
+          <button className="workspace-path" type="button" disabled={!host.canSelectWorkspace} onClick={requestWorkspaceSwitch} title={workspacePath}>{workspacePath}</button>
         </div>
 
         {creating && !isThread ? <NewDiagramForm onCancel={() => setCreating(false)} onCreate={requestCreateDiagram} /> : null}
@@ -2057,7 +2061,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         {aiProposal ? (
           <div className="proposal-banner" role="status">
             <div>
-              <strong>{proposalBranchSet?.branches.length && proposalBranchSet.branches.length > 1 ? `Codex 候选分支 · ${proposalBranchSet.branches.length}` : aiProposal.summary.patchSummary ? 'Codex 增量候选修改' : aiProposal.summary.scopeElementIds?.length ? 'Codex 子图候选修改' : 'Codex 候选修改'}</strong>
+              <strong>{proposalBranchSet?.branches.length && proposalBranchSet.branches.length > 1 ? `AI 候选分支 · ${proposalBranchSet.branches.length}` : aiProposal.summary.patchSummary ? 'AI 增量候选修改' : aiProposal.summary.scopeElementIds?.length ? 'AI 子图候选修改' : 'AI 候选修改'}</strong>
               <span>{aiProposal.summary.patchSummary
                 ? `${aiProposal.summary.branchLabel ? `${aiProposal.summary.branchLabel} · ` : ''}${aiProposal.summary.patchSummary.updated} 修改 · ${aiProposal.summary.patchSummary.added} 新增 · ${aiProposal.summary.patchSummary.removed} 删除${aiProposal.summary.automaticElementIds?.length ? ` · ${aiProposal.summary.automaticElementIds.length} 自动影响` : ''}`
                 : aiProposal.summary.reason || '尚未写入文件，先查看 Diff 再决定。'}</span>
@@ -2097,7 +2101,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span>{selected.path}</span>
               </div> : null}
               <div className="toolbar-actions">
-                {!isThread ? <button type="button" onClick={() => setAiOpen(true)}>Codex</button> : null}
+                {!isThread ? <button type="button" onClick={() => setAiOpen(true)}>AI</button> : null}
                 {!isThread ? (
                   <div className="export-actions" aria-label="导出图表">
                     <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
@@ -2654,7 +2658,7 @@ function GitImpactPanel({ report, onClose, onFocus, onExplain, onReanalyze, expl
         ) : null}
       </div>
       <div className="change-review-actions">
-        <button type="button" disabled={explaining} onClick={onExplain}>{explaining ? '发送中…' : '交给 Codex 分析'}</button>
+        <button type="button" disabled={explaining} onClick={onExplain}>{explaining ? '发送中…' : '交给 AI 分析'}</button>
         <button type="button" onClick={() => onFocus(report.directElementIds)}>定位直接修改</button>
         <button className="primary-button" type="button" onClick={() => onFocus(report.trace.nodeIds)}>查看完整影响</button>
       </div>
@@ -2749,7 +2753,7 @@ function ProposalReviewPanel({ before, after, reason, scopeElementIds, newElemen
     setSelectedBranchIds((current) => current.filter((id) => available.has(id)))
   }, [branches])
   return (
-    <aside className="change-review-panel proposal-review-panel" aria-label="Codex 候选修改">
+    <aside className="change-review-panel proposal-review-panel" aria-label="AI 候选修改">
       <div className="change-review-head">
         <div>
           <div className="eyebrow">AI PROPOSAL</div>
@@ -3563,7 +3567,7 @@ class RuntimeErrorBoundary extends Component<{ children: ReactNode }, { error: E
 }
 
 async function callTool<T>(name: string, arguments_: Record<string, unknown>): Promise<T> {
-  const result = await mcpApp.callServerTool({ name, arguments: arguments_ }) as ServerToolResult
+  const result = await host.callServerTool({ name, arguments: arguments_ }) as ServerToolResult
   const serverError = extractToolResultError(result)
   if (serverError) throw new Error(serverError)
   const payload = extractToolResultPayload<T>(result)
@@ -3571,13 +3575,9 @@ async function callTool<T>(name: string, arguments_: Record<string, unknown>): P
   return payload
 }
 
-async function sendCodexMessage(text: string): Promise<void> {
-  if (!openai.message) throw new Error('当前 Codex Host 没有提供对话消息能力。')
-  await openai.message.send({
-    role: 'user',
-    content: [{ type: 'text', text }],
-    _meta: { 'openai/message': { target: 'active', send: true } },
-  })
+async function sendHostMessage(text: string): Promise<void> {
+  if (!host.sendMessage) throw new Error('当前宿主没有提供对话消息能力。')
+  await host.sendMessage(text)
 }
 
 function diagramLabel(type: DiagramSummary['type']): string {
@@ -3597,12 +3597,12 @@ function diagramDocumentLabel(diagram: DiagramDocument): string {
 }
 
 function playbackActivityLabel(kind: NonNullable<DiagramThreadStateResult['activity']>['kind']): string {
-  if (kind === 'create') return 'Codex 正在创建画板'
-  if (kind === 'source-sync') return 'Codex 正在同步源码节点'
-  if (kind === 'proposal') return 'Codex 正在应用候选修改'
+  if (kind === 'create') return 'AI 正在创建画板'
+  if (kind === 'source-sync') return 'AI 正在同步源码节点'
+  if (kind === 'proposal') return 'AI 正在应用候选修改'
   if (kind === 'history-undo') return '正在撤销 AI 修改'
   if (kind === 'history-redo') return '正在重做 AI 修改'
-  return 'Codex 正在更新画板'
+  return 'AI 正在更新画板'
 }
 
 function formatPatchHistoryTime(value: string): string {

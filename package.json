@@ -18,7 +18,8 @@
     "visual:regression:update": "node scripts/visual-regression.mjs --update",
     "visual:verify": "pnpm visual:smoke && pnpm visual:benchmark && pnpm visual:styles && pnpm visual:regression",
     "plugin:install": "pnpm build && node scripts/install-codex-plugin.mjs",
-    "plugin:install:desktop": "pnpm plugin:install && node scripts/reload-codex-desktop.mjs"
+    "plugin:install:desktop": "pnpm plugin:install && node scripts/reload-codex-desktop.mjs",
+    "check:hosts": "node --test tests/integration/*.test.mjs"
   },
   "dependencies": {
     "@codemirror/language": "^6.11.3",
@@ -35,6 +36,7 @@
     "lucide": "^1.54.0",
     "lucide-react": "^1.54.0",
     "mermaid": "^11.12.0",
+    "proper-lockfile": "^4.1.2",
     "radix-ui": "^1.7.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -46,6 +48,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.0.0",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "esbuild": "^0.25.0",

@@ -25,7 +25,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
         ? '画布默认 1600x1000。按明确阅读方向组织流程；使用 flowchart:terminator 表示开始/结束、flowchart:process 表示处理、flowchart:decision 表示判断，并按真实语义使用 data/document/database/subprocess 等流程图元。开始/处理/决策/结束保持同一抽象粒度，跨角色流程可使用 lanes。不要主动添加 C4、架构 Boundary、技术 stencil 或云产品图标，除非它们本身就是流程语义的一部分。'
         : '画布默认 1600x1000。按用户意图组织空间关系和说明，可用 basic:rectangle/basic:rounded/basic:ellipse/basic:diamond/basic:triangle/basic:hexagon/basic:cloud 等基础图形；不强制套用架构分区、C4 或流程泳道，只有事实和任务需要时才添加技术语义。'
     return [
-      '基于当前 Codex 工作空间生成一张 Diagram 自由画布，并写回 Diagram 插件。',
+      '基于当前 项目工作空间生成一张 Diagram 自由画布，并写回 Diagram 插件。',
       `工作空间：${workspacePath}`,
       `标题：${request.title.trim()}`,
       scope
@@ -47,7 +47,7 @@ export function buildGenerationPrompt(workspacePath: string, request: DiagramGen
   }
   const skill = diagramSkill(request.type)
   return [
-    '基于当前 Codex 工作空间生成一张 Mermaid 图表，并写回 Diagram 插件。',
+    '基于当前 项目工作空间生成一张 Mermaid 图表，并写回 Diagram 插件。',
     `工作空间：${workspacePath}`,
     `目标类型：${request.type}`,
     `标题：${request.title.trim()}`,

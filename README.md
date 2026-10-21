@@ -1,5 +1,7 @@
 # Codex Diagram
 
+新增宿主适配层，支持构建 DeepSeek Harness Desktop `0.2.1-rc.2` 插件，复用现有图表服务和编辑器。接入边界、安装与验收见 [宿主适配说明](docs/host-adapters.md)。
+
 Codex 的可视化图表插件。**主使用方式是当前聊天右侧的 Diagram 伴随面板**：一边和 Codex 对话，一边查看、编辑和跟随当前图；全局 `Diagram 图表库` 只负责图表浏览、CRUD、导出和完整分屏编辑。结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局图使用可版本控制的 `.diagram.json` Canvas 文档。v0.8 起 Canvas 支持缩放/平移、多选、框选、复制粘贴、撤销重做、节点 resize、对齐/分布、对象锁定、图层顺序、命名容器、自动布局、技术角色节点、源码双向定位、样式 Inspector 与 MiniMap。Diagram 不再把当前图常驻注入聊天 Model Context；Codex 通过 MCP 按需读取图表，选区修改由右侧操作显式携带 element ids。
 
 v0.16 起 Mermaid 不再走单一通用生成 Prompt；v0.17 进一步扩展到 19 种正式 Mermaid 类型。Flowchart / Sequence / Mindmap / Class / ER / State / Gantt / Timeline / GitGraph / Journey / Quadrant / Kanban / Requirement / Sankey / XY Chart / Pie / Radar / Treemap / Ishikawa 全部进入 Diagram Skill Registry。每种类型都有独立的构图、密度、视觉、反模式、生成与修改规则；数据图额外禁止无依据编造数值。预览与 SVG/PNG 导出同时使用按图类型的 Visual Grammar，并根据源码规模自动切换 comfortable / compact / dense 间距，不修改 Mermaid 源文件。类型选择器按核心结构、分析规划、数据可视化和专业分析分组，避免类型扩展后形成长平铺菜单。

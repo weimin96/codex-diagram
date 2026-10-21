@@ -94,7 +94,7 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
   }, [onClose])
 
   return (
-    <aside className="ai-panel" aria-label="Codex 图表操作">
+    <aside className="ai-panel" aria-label="AI 图表操作">
       <div className="ai-panel-head">
         <div>
           <div className="eyebrow">CODEX</div>
@@ -206,7 +206,7 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
           disabled={sending || !title.trim()}
           onClick={() => void onGenerate({ type, ...(type === 'canvas' ? { canvasWorkbench } : {}), title, scope, instructions: generationInstructions })}
         >
-          {sending ? '发送中…' : '交给 Codex'}
+          {sending ? '发送中…' : '交给 AI'}
         </Button>
       </section>
 

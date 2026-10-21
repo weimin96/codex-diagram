@@ -1,0 +1,3 @@
+- insert:
+    - id: diagram
+      name: '@local/diagram-deepseek'

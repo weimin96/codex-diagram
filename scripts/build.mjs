@@ -24,6 +24,7 @@ await build({
   target: 'node22',
   format: 'esm',
   sourcemap: true,
+  banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
   define: { __CODEX_DIAGRAM_VERSION__: JSON.stringify(version) },
 })
 
@@ -59,3 +60,46 @@ await cp(path.join(root, 'assets/icon.svg'), path.join(packageRoot, 'assets/icon
 await cp(path.join(root, 'assets/icon-dark.svg'), path.join(packageRoot, 'assets/icon-dark.svg'))
 
 console.log(`Built Codex Diagram plugin: ${packageRoot}`)
+
+await build({
+  entryPoints: [path.join(root, 'integrations/deepseek/host.mjs')],
+  outfile: path.join(dist, 'deepseek-host.mjs'),
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'esm',
+  external: ['@deepseek-ai/*'],
+  define: { __CODEX_DIAGRAM_VERSION__: JSON.stringify(version) },
+  banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
+})
+const clientBuild = await build({
+  entryPoints: [path.join(root, 'integrations/deepseek/client.mjs')],
+  bundle: true,
+  platform: 'browser',
+  target: 'chrome120',
+  format: 'cjs',
+  external: ['react'],
+  write: false,
+})
+await writeFile(path.join(dist, 'deepseek-client.js'), `window.__ModuleLoader__.load({id:"@local/diagram-deepseek",factory:(require)=>{const module={exports:{}};const exports=module.exports;\n${clientBuild.outputFiles[0].text}\nreturn module.exports;}});\n`)
+await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
+  name: '@local/diagram-deepseek', version, type: 'module',
+  description: '在 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
+  main: './dist/deepseek-host.mjs',
+  exports: { '.': './dist/deepseek-host.mjs', './client': './dist/deepseek-client.js' },
+  dsh: { manifestVersion: 1, bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', inject: [
+    '@deepseek-ai/dsh-api-gateway', '@deepseek-ai/dsh-api-session-controller',
+    '@deepseek-ai/dsh-client-ui-sidebar-right', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-theme',
+  ] } },
+  peerDependencies: {
+    '@deepseek-ai/cordis': '~4.0.5',
+    '@deepseek-ai/dsh-mcp-client': '0.2.1-rc.2',
+    '@deepseek-ai/dsh-api-session-controller': '0.2.1-rc.2',
+    '@deepseek-ai/dsh-client-connection': '0.2.1-rc.2',
+    '@deepseek-ai/dsh-working-directory': '0.2.1-rc.2',
+    '@deepseek-ai/dsh-system-prompt': '0.2.1-rc.2',
+    '@deepseek-ai/dsh-tools': '0.2.1-rc.2',
+  },
+}, null, 2)}\n`)
+await cp(path.join(root, 'integrations/deepseek/cordis.patch.yml'), path.join(packageRoot, 'cordis.patch.yml'))
+console.log(`Built DeepSeek Diagram plugin: ${packageRoot}`)

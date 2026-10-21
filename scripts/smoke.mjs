@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageRoot = path.join(root, 'package')
-for (const file of ['.codex-plugin/plugin.json', '.mcp.json', 'dist/server.mjs', 'dist/app.js', 'dist/app.css', 'assets/icon.svg']) {
+for (const file of ['.codex-plugin/plugin.json', '.mcp.json', 'dist/server.mjs', 'dist/app.js', 'dist/app.css', 'assets/icon.svg', 'package.json', 'dist/deepseek-host.mjs', 'dist/deepseek-client.js']) {
   await access(path.join(packageRoot, file))
 }
 const manifest = JSON.parse(await readFile(path.join(packageRoot, '.codex-plugin/plugin.json'), 'utf8'))
@@ -43,3 +43,10 @@ for (const marker of ['freeform-bundle-trunk', 'emphasis-primary', 'c4-software-
   if (!appCss.includes(marker)) throw new Error(`Missing architecture design style marker: ${marker}`)
 }
 console.log('Codex Diagram package smoke check passed.')
+
+const deepseekManifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
+if (deepseekManifest.version !== packageJson.version || deepseekManifest.dsh?.client?.platform !== 'web') throw new Error('DeepSeek plugin metadata is invalid.')
+for (const entry of Object.values(deepseekManifest.exports)) await access(path.join(packageRoot, entry))
+if (deepseekManifest.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('DeepSeek bundle entry is missing.')
+await access(path.join(packageRoot, deepseekManifest.dsh.bundle.patch))
+console.log('DeepSeek Diagram package smoke check passed.')
