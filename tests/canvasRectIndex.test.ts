@@ -40,3 +40,33 @@ test('支持超大矩形、负坐标、增量插入和边缘相接', () => {
   assert.equal(index.overlaps({ x: 5400, y: 0, width: 20, height: 20 }, (item) => item.id !== 2), false)
   assert.equal(index.overlaps({ x: -10000, y: -10000, width: 19000, height: 20000 }), true)
 })
+
+test('视口空间查询与全量过滤结果及绘制顺序一致，且保留视口外的选中节点', () => {
+  let seed = 9187
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return seed / 0x100000000
+  }
+  const items: Item[] = Array.from({ length: 1800 }, (_, id) => ({
+    id,
+    x: Math.floor(random() * 30000) - 5000,
+    y: Math.floor(random() * 24000) - 4000,
+    width: id === 222 ? 18000 : Math.floor(random() * 450) + 1,
+    height: id === 222 ? 9000 : Math.floor(random() * 360) + 1,
+  }))
+  const index = new CanvasRectIndex(items, 768)
+  const pinned = [items[1500], items[2], items[1500]]
+  for (let n = 0; n < 180; n += 1) {
+    const view = {
+      x: Math.floor(random() * 30000) - 6000,
+      y: Math.floor(random() * 24000) - 5000,
+      width: n === 0 ? 40000 : 400 + Math.floor(random() * 11000),
+      height: n === 0 ? 36000 : 300 + Math.floor(random() * 8500),
+    }
+    const expected = items.filter((item) => pinned.includes(item) || overlaps(view, item)).map((item) => item.id)
+    assert.deepEqual(index.find(view, pinned).map((item) => item.id), expected, `视口 ${n}`)
+  }
+  const appended: Item = { id: 1801, x: -9000, y: -8000, width: 120, height: 90 }
+  index.add(appended)
+  assert.deepEqual(index.find({ x: -9100, y: -8100, width: 400, height: 400 }).at(-1)?.id, 1801)
+})

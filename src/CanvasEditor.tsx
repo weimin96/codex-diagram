@@ -1259,6 +1259,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     }
     return canvasSemanticLodProjection(lodScene, lodLevel, lodSelection ?? [])
   }, [architectureScope, playbackActive, lodScene, lodLevel, lodSelection])
+  const sourceBoxes = useMemo(() => parsed.scene?.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow') ?? [], [parsed.scene])
+  const sourceArrows = useMemo(() => parsed.scene?.elements.filter((item): item is CanvasArrow => item.type === 'arrow') ?? [], [parsed.scene])
+  const sourceCollisionIndex = useMemo(() => selectedIds.length > 3 ? new CanvasRectIndex(sourceBoxes) : null, [selectedIds.length > 3, sourceBoxes])
+  const staticRenderItems = useMemo(() => {
+    const scene = staticSemanticLodProjection?.scene
+    if (!scene) return null
+    const collapsedOwners = canvasCollapsedOwners(scene)
+    const projectedBoxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+    const projectedArrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+    const boxes = projectedBoxes.filter((item) => !collapsedOwners.has(item.id))
+    const arrows = projectedArrows.filter((item) => !collapsedOwners.has(item.from) && !collapsedOwners.has(item.to))
+    const index = boxes.length > 6000 ? new CanvasRectIndex(boxes, 768) : null
+    return {
+      scene, collapsedOwners, projectedBoxes, projectedArrows, boxes, arrows, index,
+      // For ordinary scenes a linear filter is faster than collecting/sorting indexed hits.
+      byId: index ? new Map(boxes.map((item) => [item.id, item])) : null,
+    }
+  }, [staticSemanticLodProjection])
+  const staticMinimapNodeCloudPath = useMemo(() => {
+    if (!staticRenderItems || staticRenderItems.boxes.length <= 420) return ''
+    const selected = new Set(selectedIds)
+    return staticRenderItems.boxes.filter((item) => !selected.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
+  }, [selectedIds, staticRenderItems])
   const staticGroupBounds = useMemo(() => parsed.scene ? canvasGroupFrames(parsed.scene) : [], [parsed.scene])
   const staticProjectedGroupBounds = useMemo(() => {
     const projected = staticSemanticLodProjection?.scene
@@ -1306,8 +1329,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const architectureWorkbench = workbench === 'architecture'
   const flowchartWorkbench = workbench === 'flowchart'
   const shapeLibraryPacks = flowchartWorkbench ? ['flowchart', 'basic'] as const : ['basic', 'flowchart'] as const
-  const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-  const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const boxes = sourceBoxes
+  const arrows = sourceArrows
   const baseArchitectureProjection = staticArchitectureProjection!
   const scopedArchitectureProjection = staticScopeProjection
   const architectureProjection = scopedArchitectureProjection
@@ -1339,8 +1362,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       }
     : renderSceneBase
   const architectureBreadcrumbs = scopedArchitectureProjection?.breadcrumbs ?? []
-  const projectedBoxes = renderScene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-  const projectedArrows = renderScene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
+  const staticGeometry = staticRenderItems?.scene === renderScene ? staticRenderItems : null
+  const projectedBoxes = staticGeometry?.projectedBoxes ?? renderScene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
+  const projectedArrows = staticGeometry?.projectedArrows ?? renderScene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
   const selected = scene.elements.filter((item) => selectedIds.includes(item.id))
   const selectedSingle = selected.length === 1 ? selected[0] : null
   const selectedBox = selectedSingle && selectedSingle.type !== 'arrow' ? selectedSingle : null
@@ -1398,10 +1422,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : scene.groups?.some((group) => group.c4Type === 'container' && group.collapsed)
       ? 'container'
       : 'expanded'
-  const collapsedOwners = canvasCollapsedOwners(renderScene)
+  const collapsedOwners = staticGeometry?.collapsedOwners ?? canvasCollapsedOwners(renderScene)
   const collapsedMemberIds = new Set(collapsedOwners.keys())
-  const renderBoxes = projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
-  const renderArrows = projectedArrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
+  const renderBoxes = staticGeometry?.boxes ?? projectedBoxes.filter((item) => !collapsedMemberIds.has(item.id))
+  const renderArrows = staticGeometry?.arrows ?? projectedArrows.filter((arrow) => !collapsedMemberIds.has(arrow.from) && !collapsedMemberIds.has(arrow.to))
   const dragCollisionIds = new Set<string>()
   if (gesturePositionOverrides) {
     const movingIds = new Set(Object.keys(gesturePositionOverrides))
@@ -1417,9 +1441,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const gestureAutoReflowCount = gesturePositionOverrides
     ? Object.keys(gesturePositionOverrides).filter((id) => !selectedIds.includes(id)).length
     : 0
-  const selectedBoxIndex = selectedBoxes.length > 3 ? new CanvasRectIndex(boxes) : null
-  const selectedHasOverlap = selectedBoxes.some((item) => selectedBoxIndex
-    ? selectedBoxIndex.overlaps({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }, (other) => item.id !== other.id)
+  const selectedHasOverlap = selectedBoxes.some((item) => sourceCollisionIndex && selectedBoxes.length > 3
+    ? sourceCollisionIndex.overlaps({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }, (other) => item.id !== other.id)
     : boxes.some((other) => item.id !== other.id && rectanglesOverlapWithPadding(item, other, 8)))
   const minimapViewBounds = (() => {
     if (!architectureScope) return { x: 0, y: 0, width: scene.width, height: scene.height }
@@ -1455,7 +1478,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     .filter((arrow) => selectedIds.includes(arrow.id))
     .flatMap((arrow) => [arrow.from, arrow.to]))
   const viewportRenderBoxes = largeSceneViewportCulling
-    ? renderBoxes.filter((item) => selectedIds.includes(item.id) || selectedArrowEndpointIds.has(item.id) || intersects(viewportBounds, item))
+    ? staticGeometry?.index
+      ? staticGeometry.index.find(viewportBounds, [...new Set([...selectedIds, ...selectedArrowEndpointIds])]
+        .map((id) => staticGeometry.byId?.get(id)).filter((item): item is CanvasNode | CanvasNote => Boolean(item)))
+      : renderBoxes.filter((item) => selectedIds.includes(item.id) || selectedArrowEndpointIds.has(item.id) || intersects(viewportBounds, item))
     : renderBoxes
   const viewportNodeIds = new Set(viewportRenderBoxes.map((item) => item.id))
   const viewportRenderArrows = largeSceneViewportCulling
@@ -1498,7 +1524,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...projectedBoxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
   const compactMinimap = renderBoxes.length > 420
   const minimapNodeCloudPath = compactMinimap
-    ? renderBoxes.filter((item) => !selectedIdSet.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
+    ? staticGeometry ? staticMinimapNodeCloudPath
+      : renderBoxes.filter((item) => !selectedIdSet.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
     : ''
   const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
   const connectSourceBox = connectFrom ? boxes.find((item) => item.id === connectFrom) : undefined
