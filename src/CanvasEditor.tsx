@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
-import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowBoxRoute, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
+import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowBoxRoute, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, resolveCanvasSemanticLod, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, canvasRotationFromPointer, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasResizeHandle, type CanvasSpacingGuide, type CanvasTraceDirection, type CanvasTransformBox } from './canvasOperations.js'
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
@@ -259,6 +259,19 @@ async function readCanvasImageFile(file: File): Promise<{ dataUrl: string; conte
   })
   const content = dataUrl.slice(dataUrl.indexOf(',') + 1)
   return { dataUrl, content, ...size, mimeType: file.type as 'image/png' | 'image/jpeg' | 'image/webp' }
+}
+
+function relationLabelScene(scene: CanvasScene, architecture: boolean, level: CanvasSemanticLodLevel, selected: Set<string>): CanvasScene {
+  return {
+    ...scene,
+    elements: scene.elements.map((item) => {
+      if (item.type !== 'arrow' || !item.label) return item
+      const visible = architecture
+        ? selected.has(item.id) || canvasArchitectureRelationLabelVisible(item)
+        : semanticLodAllowsArrowLabel(level, item, selected)
+      return visible ? item : { ...item, label: undefined }
+    }),
+  }
 }
 
 export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, onImportImage, onResolveImage, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
@@ -1235,20 +1248,41 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!parsed.scene || playbackActive || !architectureScope) return null
     return canvasArchitectureScopeProjection(parsed.scene, architectureScope)
   }, [architectureScope, parsed.scene, playbackActive])
+  const lodScene = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
+  const lodNodeCount = useMemo(() => lodScene?.elements.filter((item) => item.type !== 'arrow').length ?? 0, [lodScene])
+  const lodLevel: CanvasSemanticLodLevel = playbackActive || architectureScope ? 'detail' : resolveCanvasSemanticLod(viewport.zoom, lodNodeCount)
+  const lodSelection = lodLevel === 'detail' || lodLevel === 'compact' ? null : selectedIds
   const staticSemanticLodProjection = useMemo(() => {
-    const projected = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
-    if (!projected) return null
+    if (!lodScene) return null
     if (playbackActive || architectureScope) {
-      return { scene: projected, level: 'detail' as const, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
+      return { scene: lodScene, level: 'detail' as const, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
     }
-    return canvasSemanticLodProjection(projected, viewport.zoom, selectedIds)
-  }, [architectureScope, playbackActive, selectedIds, staticArchitectureProjection, staticScopeProjection, viewport.zoom])
+    return canvasSemanticLodProjection(lodScene, lodLevel, lodSelection ?? [])
+  }, [architectureScope, playbackActive, lodScene, lodLevel, lodSelection])
   const staticGroupBounds = useMemo(() => parsed.scene ? canvasGroupFrames(parsed.scene) : [], [parsed.scene])
   const staticProjectedGroupBounds = useMemo(() => {
     const projected = staticSemanticLodProjection?.scene
     return projected ? canvasGroupFrames(projected) : []
   }, [staticSemanticLodProjection])
   const staticArchitectureHeader = useMemo(() => parsed.scene ? canvasArchitectureHeader(parsed.scene) : undefined, [parsed.scene])
+  const architectureScene = Boolean(parsed.scene?.architecture)
+  const staticUnculledScene = useMemo(() => {
+    if (playbackActive || !staticSemanticLodProjection?.scene) return null
+    const projected = staticSemanticLodProjection.scene
+    if (!architectureScope) {
+      const limit = architectureScene ? staticArchitectureProjection?.view === 'detail' ? 100 : Infinity : 180
+      // A conservative upper bound: collapsed nodes may lower the actual count, but never raise it.
+      if (projected.elements.filter((item) => item.type !== 'arrow').length > limit) return null
+    }
+    return projected
+  }, [architectureScene, architectureScope, playbackActive, staticArchitectureProjection, staticSemanticLodProjection])
+  const staticRelationshipGeometry = useMemo(() => staticUnculledScene ? {
+    connections: canvasCollapsedConnections(staticUnculledScene, staticProjectedGroupBounds),
+    trunks: canvasBundleTrunks(staticUnculledScene),
+  } : null, [staticProjectedGroupBounds, staticUnculledScene])
+  const staticRelationshipLabels = useMemo(() => staticUnculledScene
+    ? canvasArrowLabelLayouts(relationLabelScene(staticUnculledScene, architectureScene, staticSemanticLodProjection!.level, new Set(selectedIds)))
+    : null, [architectureScene, selectedIds, staticSemanticLodProjection, staticUnculledScene])
 
   useEffect(() => {
     if (!parsed.scene || selectedIds.length === 0) {
@@ -1434,25 +1468,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const playbackVisibleGroupIds = playback?.active ? new Set(playback.visibleGroupIds ?? []) : null
   const visibleRenderBoxes = playbackVisibleIds ? viewportRenderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderBoxes
   const visibleRenderArrows = playbackVisibleIds ? viewportRenderArrows.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderArrows
-  const collapsedConnections = playback?.active ? [] : canvasCollapsedConnections(renderScene, projectedGroupBounds)
+  const reuseStaticRelationships = staticUnculledScene === renderScene && !largeSceneViewportCulling
+  const collapsedConnections = playback?.active ? [] : reuseStaticRelationships && staticRelationshipGeometry
+    ? staticRelationshipGeometry.connections : canvasCollapsedConnections(renderScene, projectedGroupBounds)
   const relationshipRenderScene = largeSceneViewportCulling
     ? { ...renderScene, elements: [...viewportRenderBoxes, ...viewportRenderArrows] }
     : renderScene
   const relationBundleTrunks = playback?.active || Boolean(gesturePositionOverrides) && renderArrows.length > 120
     ? []
-    : canvasBundleTrunks(relationshipRenderScene)
+    : reuseStaticRelationships && staticRelationshipGeometry ? staticRelationshipGeometry.trunks : canvasBundleTrunks(relationshipRenderScene)
   const selectedIdSet = new Set(selectedIds)
-  const relationshipLabelScene = {
-    ...relationshipRenderScene,
-    elements: relationshipRenderScene.elements.map((item) => {
-      if (item.type !== 'arrow' || !item.label) return item
-      const visible = scene.architecture
-        ? selectedIdSet.has(item.id) || canvasArchitectureRelationLabelVisible(item)
-        : semanticLodAllowsArrowLabel(semanticLodLevel, item, selectedIdSet)
-      return visible ? item : { ...item, label: undefined }
-    }),
-  }
-  const relationLabelLayouts = canvasArrowLabelLayouts(relationshipLabelScene)
+  const relationLabelLayouts = reuseStaticRelationships && staticRelationshipLabels
+    ? staticRelationshipLabels : canvasArrowLabelLayouts(relationLabelScene(relationshipRenderScene, architectureScene, semanticLodLevel, selectedIdSet))
   const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
     ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)

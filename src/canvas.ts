@@ -834,12 +834,12 @@ export function resolveCanvasSemanticLod(zoom: number, nodeCount: number): Canva
  */
 export function canvasSemanticLodProjection(
   scene: CanvasScene,
-  zoom: number,
+  zoom: number | CanvasSemanticLodLevel,
   selectedIds: string[] = [],
 ): CanvasSemanticLodProjection {
   const boxes = scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
   const arrows = scene.elements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const level = resolveCanvasSemanticLod(zoom, boxes.length)
+  const level = typeof zoom === 'number' ? resolveCanvasSemanticLod(zoom, boxes.length) : zoom
   if (level === 'detail' || level === 'compact') {
     return { scene, level, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
   }

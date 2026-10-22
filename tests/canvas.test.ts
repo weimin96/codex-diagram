@@ -633,6 +633,18 @@ test('semantic LOD samples very large ungrouped canvases while preserving select
   assert.equal(serializeCanvasScene(scene), before)
 })
 
+test('semantic LOD accepts the resolved tier without altering projection geometry', () => {
+  const scene: CanvasScene = {
+    type: 'diagram-plugin-canvas', version: 1, title: 'Tier projection', width: 1000, height: 700,
+    groups: [{ id: 'services', label: 'Services', kind: 'boundary' }],
+    elements: Array.from({ length: 10 }, (_, i) => ({ id: `n-${i}`, type: 'node' as const,
+      x: 80 + i * 75, y: 140, width: 64, height: 56, text: `Service ${i}`, groupId: 'services' })),
+  }
+  for (const [zoom, level] of [[1, 'detail'], [0.75, 'compact'], [0.5, 'overview'], [0.2, 'regions']] as const) {
+    assert.deepEqual(canvasSemanticLodProjection(scene, level, ['n-4']), canvasSemanticLodProjection(scene, zoom, ['n-4']))
+  }
+})
+
 test('改名前的 Canvas 文档仍可读取，并写回新类型', () => {
   const legacy = parseCanvasScene(JSON.stringify({
     type: 'codex-diagram-canvas', version: 1, title: '旧画布', width: 900, height: 600, elements: [],
