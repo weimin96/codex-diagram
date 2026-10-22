@@ -819,7 +819,9 @@ export function canvasArchitectureScopeProjection(scene: CanvasScene, scope: Can
 }
 
 export function resolveCanvasSemanticLod(zoom: number, nodeCount: number): CanvasSemanticLodLevel {
-  const pressure = nodeCount >= 3000 ? 0.22 : nodeCount >= 1200 ? 0.14 : nodeCount >= 500 ? 0.08 : nodeCount >= 180 ? 0.04 : 0
+  // Very large diagrams should start in overview; mounting thousands of tiny SVG
+  // details at 100% costs more than the visible information they communicate.
+  const pressure = nodeCount >= 3000 ? 0.4 : nodeCount >= 1200 ? 0.14 : nodeCount >= 500 ? 0.08 : nodeCount >= 180 ? 0.04 : 0
   if (zoom >= 0.92 + pressure) return 'detail'
   if (zoom >= 0.62 + pressure) return 'compact'
   if (zoom >= 0.36 + pressure / 2) return 'overview'

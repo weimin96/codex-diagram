@@ -550,6 +550,9 @@ test('architecture node focus keeps a bounded neighborhood and group breadcrumbs
 test('semantic LOD becomes more aggressive for large scenes at the same zoom', () => {
   assert.equal(resolveCanvasSemanticLod(0.7, 40), 'compact')
   assert.equal(resolveCanvasSemanticLod(0.7, 1400), 'overview')
+  assert.equal(resolveCanvasSemanticLod(1, 3000), 'overview')
+  assert.equal(resolveCanvasSemanticLod(1.2, 3000), 'compact')
+  assert.equal(resolveCanvasSemanticLod(1.4, 3000), 'detail')
   assert.equal(resolveCanvasSemanticLod(0.34, 40), 'regions')
 })
 
@@ -627,6 +630,9 @@ test('semantic LOD samples very large ungrouped canvases while preserving select
   assert.ok(overviewNodes.length <= 640)
   assert.ok(overviewNodes.some((item) => item.id === 'node-0'))
   assert.ok(overviewNodes.some((item) => item.id === 'node-4999'))
+  const defaultOverview = canvasSemanticLodProjection(scene, 1, ['node-4999'])
+  assert.equal(defaultOverview.level, 'overview')
+  assert.ok(defaultOverview.scene.elements.some((item) => item.id === 'node-4999'))
   const regions = canvasSemanticLodProjection(scene, 0.3, ['node-4999'])
   assert.equal(regions.level, 'regions')
   assert.ok(regions.scene.elements.filter((item) => item.type !== 'arrow').length <= 220)
