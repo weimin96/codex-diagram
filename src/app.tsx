@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { PatchHistoryPanel, GitImpactPanel, ChangeReviewPanel, ProposalReviewPanel } from './ReviewPanels.js'
 import type { DiagramProposalSummary, DiagramPatchHistoryEntry, DiagramGitImpactResult } from './reviewTypes.js'
 import mermaid from 'mermaid'
+import { createMermaidRenderQueue } from './mermaidRenderQueue.js'
 import {
   applyDocumentTheme,
   applyHostFonts,
@@ -2553,23 +2554,30 @@ function MermaidChoicePreview({ type, label }: { type: MermaidDiagramType; label
 
   useEffect(() => {
     let cancelled = false
-    const handle = window.setTimeout(() => {
-      void renderMermaidSvg(createTemplate(type, label), `${renderId}-${Date.now()}`)
-        .then((markup) => {
-          if (cancelled || !container.current) return
-          const svg = createSafeSvgElement(markup)
-          svg.removeAttribute('width')
-          svg.removeAttribute('height')
-          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
-          container.current.replaceChildren(svg)
-        })
-        .catch(() => {
-          if (!cancelled && container.current) container.current.replaceChildren()
-        })
-    }, 90)
+    let handle: number | undefined
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return
+      observer.disconnect()
+      handle = window.setTimeout(() => {
+        void renderMermaidSvg(createTemplate(type, label), `${renderId}-${Date.now()}`, () => cancelled)
+          .then((markup) => {
+            if (cancelled || !container.current) return
+            const svg = createSafeSvgElement(markup)
+            svg.removeAttribute('width')
+            svg.removeAttribute('height')
+            svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+            container.current.replaceChildren(svg)
+          })
+          .catch(() => {
+            if (!cancelled && container.current) container.current.replaceChildren()
+          })
+      }, 90)
+    }, { rootMargin: '120px' })
+    if (container.current) observer.observe(container.current)
     return () => {
       cancelled = true
-      window.clearTimeout(handle)
+      observer.disconnect()
+      if (handle !== undefined) window.clearTimeout(handle)
     }
   }, [label, renderId, type])
 
@@ -2642,7 +2650,7 @@ function MermaidPreview({ source }: { source: string }) {
     async function render() {
       if (!container.current) return
       try {
-        const svg = await renderMermaidSvg(source, `${renderId}-${Date.now()}`)
+        const svg = await renderMermaidSvg(source, `${renderId}-${Date.now()}`, () => cancelled)
         if (cancelled || !container.current) return
         const svgElement = createSafeSvgElement(svg)
         const viewBox = svgElement.getAttribute('viewBox')?.trim().split(/\s+/).map(Number)
@@ -2731,30 +2739,34 @@ function MermaidPreview({ source }: { source: string }) {
   )
 }
 
-async function renderMermaidSvg(source: string, renderId: string): Promise<string> {
-  const styles = getComputedStyle(document.documentElement)
-  const type = detectDiagramType(source)
-  const renderSource = normalizeMermaidSourceForRender(type, source)
-  const visualConfig = mermaidVisualConfig(type, {
-    background: resolveCssColor('--app-bg', '#ffffff'),
-    surface: resolveCssColor('--surface-panel', '#fafafa'),
-    raised: resolveCssColor('--surface-raised', '#f5f5f5'),
-    muted: resolveCssColor('--surface-muted', '#eeeeee'),
-    text: resolveCssColor('--text-primary', '#171717'),
-    secondaryText: resolveCssColor('--text-secondary', '#666666'),
-    border: resolveCssColor('--border', '#d4d4d4'),
-    strongBorder: resolveCssColor('--border-strong', '#b8b8b8'),
-    accent: resolveCssColor('--accent', '#2563eb'),
-    success: resolveCssColor('--editor-string', '#16803a'),
-    warning: resolveCssColor('--editor-type', '#b45309'),
-    danger: resolveCssColor('--danger', '#c9362b'),
-  }, renderSource)
-  mermaid.initialize({
-    ...visualConfig,
-    fontFamily: visualConfig.fontFamily ?? (styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui'),
-  })
-  const result = await mermaid.render(renderId, renderSource || 'flowchart LR\n  A[空图表]')
-  return fitMermaidSvgToContent(serializeSafeSvg(result.svg), visualConfig.themeVariables?.background)
+const queueMermaidRender = createMermaidRenderQueue()
+
+function renderMermaidSvg(source: string, renderId: string, isObsolete?: () => boolean): Promise<string> {
+  return queueMermaidRender(async () => {
+    const styles = getComputedStyle(document.documentElement)
+    const type = detectDiagramType(source)
+    const renderSource = normalizeMermaidSourceForRender(type, source)
+    const visualConfig = mermaidVisualConfig(type, {
+      background: resolveCssColor('--app-bg', '#ffffff'),
+      surface: resolveCssColor('--surface-panel', '#fafafa'),
+      raised: resolveCssColor('--surface-raised', '#f5f5f5'),
+      muted: resolveCssColor('--surface-muted', '#eeeeee'),
+      text: resolveCssColor('--text-primary', '#171717'),
+      secondaryText: resolveCssColor('--text-secondary', '#666666'),
+      border: resolveCssColor('--border', '#d4d4d4'),
+      strongBorder: resolveCssColor('--border-strong', '#b8b8b8'),
+      accent: resolveCssColor('--accent', '#2563eb'),
+      success: resolveCssColor('--editor-string', '#16803a'),
+      warning: resolveCssColor('--editor-type', '#b45309'),
+      danger: resolveCssColor('--danger', '#c9362b'),
+    }, renderSource)
+    mermaid.initialize({
+      ...visualConfig,
+      fontFamily: visualConfig.fontFamily ?? (styles.getPropertyValue('--font-sans').trim() || 'ui-sans-serif, system-ui'),
+    })
+    const result = await mermaid.render(renderId, renderSource || 'flowchart LR\n  A[空图表]')
+    return fitMermaidSvgToContent(serializeSafeSvg(result.svg), visualConfig.themeVariables?.background)
+  }, isObsolete)
 }
 
 function createSafeSvgElement(markup: string): SVGSVGElement {
