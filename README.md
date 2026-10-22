@@ -25,6 +25,62 @@
 | :---: | :---: |
 | <img src="docs/images/thread-panel.jpg" width="330" alt="对话旁的 Mermaid 预览面板"> | <img src="docs/images/canvas-editor.jpg" width="330" alt="Canvas 编辑器"> |
 
+## 安装
+
+| 宿主 | 当前安装方式 | 环境要求 |
+| --- | --- | --- |
+| [DeepSeek Harness](#deepseek-harness) | 插件管理中安装 npm 成品包，无需下载源码 | Desktop `0.2.1-rc.2`，使用宿主自带运行时 |
+| [Codex](#codex) | 本地构建安装，暂未提供免构建安装包 | Codex Desktop、Codex CLI、Node.js 22+、pnpm 11 |
+
+### DeepSeek Harness
+
+在 Desktop 的「插件 → 添加插件」中输入：
+
+```text
+@weimin96/diagram-plugin
+```
+
+安装后重新打开 Desktop，即可在项目聊天标题栏打开 **Diagram**。npm 包已包含构建产物，无需克隆仓库、构建或单独配置 MCP 服务。
+
+<details>
+<summary>使用命令行安装</summary>
+
+完全退出 Desktop 后，使用自带的 `dsh` 命令安装：
+
+```sh
+dsh plugin --profile desktop add @weimin96/diagram-plugin
+```
+
+完成后重新打开 Desktop。
+
+</details>
+
+### Codex
+
+支持 Codex Desktop 的对话侧边面板。目前需从源码构建安装；已发布的 npm 包尚未包含完整的 Codex 插件配置，不能直接用于 Codex 安装。
+
+<details>
+<summary>从源码安装</summary>
+
+准备好 Codex CLI、Node.js 22+ 和 pnpm 11，然后执行：
+
+```sh
+git clone https://github.com/weimin96/diagram-plugin.git
+cd diagram-plugin
+pnpm install
+pnpm plugin:install
+```
+
+安装命令会自动构建插件、注册本地 marketplace，并安装 `diagram-plugin@diagram-plugin-local`。完成后重新打开 Codex Desktop。
+
+如果 Codex Desktop 已经打开，也可以将最后一条命令替换为 `pnpm plugin:install:desktop`，安装后自动刷新宿主。
+
+</details>
+
+本地调试与发布流程见 [开发与发布](docs/development.md)。
+
+> 不要为同一个 Diagram 再配置通用 MCP 客户端，否则会出现重复工具，并可能让模型与图表面板连接到不同实例。
+
 ## 功能特性
 
 - **对话伴随面板**：在当前聊天右侧打开 Diagram，助手读取、创建或修改图表时面板自动跟随；支持多图标签页和跟随开关。
@@ -102,53 +158,6 @@
 > 数据类图表只使用真实数据或用户明确给出的示意数据，不要为图形效果编造数值。
 
 > 内置类型聚焦上表 19 种。Mermaid 的 C4、architecture-beta、block-beta、packet-beta 等扩展语法没有专门的构图规则与质量检查；架构类需求请使用 Canvas 架构画布。
-
-## 安装
-
-### 环境要求
-
-- Node.js 22 或更高版本；使用 DeepSeek Harness Desktop 自带的运行时则无需单独安装。
-- DeepSeek Harness Desktop `0.2.1-rc.2`（已在 macOS 原生验收）或 Codex Desktop。
-- 从源码安装 Codex 插件时需要 pnpm 11。
-
-### DeepSeek Harness
-
-在 Desktop 的「插件 → 添加插件」中输入包名安装：
-
-```text
-@weimin96/diagram-plugin
-```
-
-也可以完全退出 Desktop 后，使用自带的 `dsh` 命令安装：
-
-```sh
-dsh plugin --profile desktop add @weimin96/diagram-plugin
-```
-
-重新打开 Desktop，在项目聊天标题栏点击 **Diagram**，或让助手调用图表工具打开画板。npm 包已包含构建产物，不需要克隆仓库、构建或单独配置 MCP 服务。
-
-> 不要为同一个 Diagram 再配置通用 MCP 客户端，否则会出现重复工具，并可能让模型与图表面板连接到不同实例。
-
-### Codex
-
-从源码安装。命令会自动构建插件并注册本地 marketplace：
-
-```sh
-git clone https://github.com/weimin96/diagram-plugin.git
-cd diagram-plugin
-pnpm install
-pnpm plugin:install
-```
-
-如果 Codex Desktop 已经打开，可以使用 `pnpm plugin:install:desktop` 在安装后顺便刷新宿主。
-
-等价的底层命令：
-
-```sh
-pnpm build
-codex plugin marketplace add .
-codex plugin add diagram-plugin@diagram-plugin-local
-```
 
 ## 使用
 
