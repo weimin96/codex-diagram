@@ -31,7 +31,7 @@
 
 - **对话伴随面板**：在当前聊天右侧打开 Diagram，助手读取、创建或修改图表时面板自动跟随；支持多图标签页和跟随开关。
 - **双图表引擎**：结构化图使用 Mermaid，直接读写 `.mmd` / `.mermaid`；自由布局与系统架构使用 Canvas，保存为可版本控制的 `.diagram.json`。
-- **19 种 Mermaid 图表**：覆盖流程图、时序图、类图、ER 图、状态图、思维导图、甘特图、时间线、Git 分支图、用户旅程、四象限、看板、需求图、桑基图、XY 图、饼图、雷达图、矩形树图和鱼骨图。
+- **19 种 Mermaid 图表**：覆盖流程图、时序图、思维导图（脑图）、类图、ER 图、状态图、甘特图、时间线、Git 分支图、用户旅程、四象限、看板、需求图、桑基图、XY 图、饼图、雷达图、矩形树图和鱼骨图。
 - **3 种 Canvas 工作台**：架构画布、流程画布和自由画布，分别面向系统拓扑、手工流程和白板草图。
 - **AI 可读可改**：通过 MCP 工具按需读取图表；修改先生成可审查的 Proposal Diff，支持部分接受、A/B 候选与字段级并发 rebase。
 - **安全可回溯**：保存时检查文件 revision，采用原子写入；AI 修改拥有独立历史和依赖 DAG，可按子图撤销与重做。
@@ -42,30 +42,68 @@
 
 ## 支持的图表
 
-| 类型 | 适用场景 | 文件格式 |
+共支持 **3 种 Canvas 画布工作台**与 **19 种 Mermaid 图表**。每种 Mermaid 类型都有独立的构图原型、密度策略与质量检查规则。
+
+### Canvas 画布
+
+| 工作台 | 适用场景 | 文件格式 |
 | --- | --- | --- |
-| Canvas · 架构画布 | 系统 / 服务 / 模块拓扑、C4、部署视图 | `.diagram.json` |
-| Canvas · 流程画布 | 手动排版的业务流程与决策链 | `.diagram.json` |
-| Canvas · 自由画布 | 白板、草图、任意布局 | `.diagram.json` |
-| Mermaid | 结构化、分析与数据可视化图表 | `.mmd` / `.mermaid` |
+| 架构画布 | 系统 / 服务 / 模块拓扑、C4 Context / Container / Component、服务拓扑、事件与数据流、部署视图 | `.diagram.json` |
+| 流程画布 | 手动排版的业务流程、审批链与决策流 | `.diagram.json` |
+| 自由画布 | 白板、草图、任意布局与说明图 | `.diagram.json` |
 
-<details>
-<summary>查看全部 19 种 Mermaid 图表</summary>
+架构画布内置系统架构、C4 系统上下文、C4 容器、C4 组件、服务拓扑、事件与数据流等生成预设。
 
-| 分组 | 图表 |
-| --- | --- |
-| 核心结构 | Flowchart · Sequence · Class · ER · State · Mindmap · Gantt · Timeline |
-| 分析与规划 | Git Graph · Journey · Quadrant · Kanban · Requirement |
-| 数据可视化 | Sankey · XY Chart · Pie · Radar · Treemap |
-| 专业分析 | Ishikawa |
-
-</details>
-
-### 架构画布
-
-架构画布内置角色与技术语义、命名分区、C4 容器、云厂商图标和正交连线路由，可用 `diagram.beautifyArchitecture` 一键整理。
+架构画布还内置角色与技术语义、命名分区、C4 容器、云厂商图标和正交连线路由，可用 `diagram.beautifyArchitecture` 一键整理。
 
 <img src="docs/images/architecture-canvas.png" width="720" alt="架构画布示例">
+
+### Mermaid 图表
+
+结构化图表直接读写 `.mmd` / `.mermaid` 文件。
+
+#### 核心结构
+
+| 图表 | 适用场景 |
+| --- | --- |
+| 流程图 Flowchart | 业务流程、分支判断、审批与决策链 |
+| 时序图 Sequence | API 调用顺序、服务协作、MQ 交互 |
+| 思维导图 Mindmap（脑图） | 知识拆解、功能地图、方案发散 |
+| 类图 Class | 类、接口、继承 / 实现 / 组合关系 |
+| ER 图 ER | 数据实体、字段、主外键与表关系 |
+| 状态图 State | 生命周期、状态机、状态流转 |
+| 甘特图 Gantt | 项目排期、阶段依赖与里程碑 |
+| 时间线 Timeline | 历史演进、版本里程碑 |
+
+#### 分析与规划
+
+| 图表 | 适用场景 |
+| --- | --- |
+| Git 分支图 Git Graph | 分支、提交与合并策略 |
+| 用户旅程 Journey | 用户触点、体验阶段与情绪 |
+| 四象限图 Quadrant | 二维优先级、定位与取舍 |
+| 看板 Kanban | 任务状态与工作流可视化 |
+| 需求关系图 Requirement | 需求到实现、验证的追踪关系 |
+
+#### 数据可视化
+
+| 图表 | 适用场景 |
+| --- | --- |
+| 桑基图 Sankey | 可加总的流量、转化与去向 |
+| XY 图表 XY Chart | 柱状 / 折线趋势与指标对比 |
+| 饼图 Pie | 单一总体内的占比 |
+| 雷达图 Radar | 同尺度多维评分对比 |
+| 矩形树图 Treemap | 层级面积构成 |
+
+#### 专业分析
+
+| 图表 | 适用场景 |
+| --- | --- |
+| 鱼骨图 Ishikawa | 根因分析、问题归因 |
+
+> 数据类图表只使用真实数据或用户明确给出的示意数据，不要为图形效果编造数值。
+
+> 内置类型聚焦上表 19 种。Mermaid 的 C4、architecture-beta、block-beta、packet-beta 等扩展语法没有专门的构图规则与质量检查；架构类需求请使用 Canvas 架构画布。
 
 ## 安装
 
