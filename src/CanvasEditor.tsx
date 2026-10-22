@@ -274,6 +274,7 @@ function relationLabelScene(scene: CanvasScene, architecture: boolean, level: Ca
   }
 }
 
+
 const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, darkTheme, architecture, density, level, selected, imageSource, typingText }: {
   item: CanvasNode | CanvasNote
   visualStyle?: DiagramVisualStyle
@@ -363,6 +364,26 @@ const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, dar
               </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
               {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
+  </>
+})
+
+const CanvasArrowInk = memo(function CanvasArrowInk({ label, path, markerEnd, strokeColor, strokeWidth }: {
+  label?: string
+  path: string
+  markerEnd?: string
+  strokeColor?: string
+  strokeWidth?: number
+}) {
+  return <>
+    {label ? <title>{label}</title> : null}
+    <path className="freeform-arrow-hit-path" d={path} />
+    <path
+      className="freeform-arrow-line"
+      d={path}
+      markerEnd={markerEnd}
+      pathLength="1"
+      style={{ ...(strokeColor !== undefined ? { stroke: strokeColor } : {}), ...(strokeWidth ? { strokeWidth } : {}) }}
+    />
   </>
 })
 
@@ -4094,15 +4115,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               : automaticLabelLayout
             return (
               <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
-                {displayArrow.label ? <title>{displayArrow.label}</title> : null}
-                <path className="freeform-arrow-hit-path" d={path} />
-                <path
-                  className="freeform-arrow-line"
-                  d={path}
-                  markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'}
-                  pathLength="1"
-                  style={{ ...(displayArrow.strokeColor || visualSkin ? { stroke: displayArrow.strokeColor ?? visualSkin?.edge } : {}), ...(displayArrow.strokeWidth ? { strokeWidth: displayArrow.strokeWidth } : {}) }}
-                />
+                <CanvasArrowInk label={displayArrow.label} path={path} markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'} strokeColor={displayArrow.strokeColor || visualSkin ? displayArrow.strokeColor ?? visualSkin?.edge : undefined} strokeWidth={displayArrow.strokeWidth} />
                 {displayArrow.label && labelLayout ? (
                   <g
                     className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
