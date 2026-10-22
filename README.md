@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@weimin96/diagram-plugin"><img alt="npm" src="https://img.shields.io/npm/v/@weimin96/diagram-plugin?color=cb3837&logo=npm&logoColor=white"></a>
+  <a href="https://github.com/weimin96/diagram-plugin/actions/workflows/publish-plugin.yml"><img alt="构建与发布" src="https://github.com/weimin96/diagram-plugin/actions/workflows/publish-plugin.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <a href="package.json"><img alt="Node.js >= 22" src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white"></a>
   <a href="#codex"><img alt="支持 Codex" src="https://img.shields.io/badge/Codex-%E6%94%AF%E6%8C%81-087F73"></a>
@@ -25,12 +26,83 @@
 | :---: | :---: |
 | <img src="docs/images/thread-panel.jpg" width="330" alt="对话旁的 Mermaid 预览面板"> | <img src="docs/images/canvas-editor.jpg" width="330" alt="Canvas 编辑器"> |
 
-## 安装
+## 快速安装
 
-| 宿主 | 当前安装方式 | 环境要求 |
+**Codex Desktop / CLI**（Node.js 22+，已安装 `codex` 命令）：
+
+```sh
+npx -y @weimin96/diagram-plugin@latest install --codex
+```
+
+**DeepSeek Harness Desktop**：在「插件 → 添加插件」中输入 `@weimin96/diagram-plugin`。
+
+安装后重新打开对应 Desktop，在项目对话中打开 **Diagram**，或让助手创建图表。Codex CLI 负责注册与调用图表 MCP 工具；右侧可视化面板需在支持 MCP Apps 的 Codex Desktop 中使用。两个宿主共享图表能力，但使用各自的插件安装方式，**无需克隆本仓库或自行构建**。
+
+[安装详情](#安装与管理) · [功能特性](#功能特性) · [开始使用](#开始使用) · [常见问题](#常见问题) · [开发文档](docs/development.md)
+
+## 安装与管理
+
+| 宿主 | 支持环境 | 安装方式 |
 | --- | --- | --- |
-| [DeepSeek Harness](#deepseek-harness) | 插件管理中安装 npm 成品包，无需下载源码 | Desktop `0.2.1-rc.2`，使用宿主自带运行时 |
-| [Codex](#codex) | npm 一条命令安装（从 `0.20.1` 版本开始） | Codex Desktop、Codex CLI `0.163.0` 或兼容版本、Node.js 22+ |
+| [Codex](#codex) | Codex Desktop + CLI `0.163.0`（已验收版本），Node.js 22+ | npm 一键安装 |
+| [DeepSeek Harness](#deepseek-harness) | Desktop `0.2.1-rc.2`（已验收版本） | 插件市场或 `dsh` 命令 |
+
+### Codex
+
+安装前确认命令可用：
+
+```sh
+node --version
+codex --version
+```
+
+执行 [npm 包](https://www.npmjs.com/package/@weimin96/diagram-plugin)的安装命令：
+
+```sh
+npx -y @weimin96/diagram-plugin@latest install --codex
+```
+
+安装器会将构建产物保存到 `~/.codex/diagram-plugin-npm/`（设置了 `CODEX_HOME` 时使用对应目录），并注册 `diagram-plugin-npm` marketplace 及 MCP 服务。重新打开 Codex Desktop 后即可使用对话旁的 Diagram 面板。
+
+验证是否安装成功：
+
+```sh
+codex plugin list --json
+```
+
+输出中应存在 `diagram-plugin@diagram-plugin-npm`，且 `installed`、`enabled` 均为 `true`。**升级**时重复执行同一条 `npx` 命令即可，安装器会替换自己管理的版本，不修改其他插件。
+
+**从源码版迁移**：如果以前安装了 `diagram-plugin@diagram-plugin-local`，先移除旧版，再安装 npm 版，避免重复注册：
+
+```sh
+codex plugin remove diagram-plugin@diagram-plugin-local
+npx -y @weimin96/diagram-plugin@latest install --codex
+```
+
+**卸载 npm 版**：
+
+```sh
+codex plugin remove diagram-plugin@diagram-plugin-npm
+codex plugin marketplace remove diagram-plugin-npm
+```
+
+以上命令会解除插件与 marketplace 注册。持久化的文件目录 `~/.codex/diagram-plugin-npm/` 不会自动删除，如不再需要，可确认路径后手动删除。
+
+<details>
+<summary>从源码安装开发版本</summary>
+
+需要 Node.js 22+、Codex CLI 与 pnpm 11：
+
+```sh
+git clone https://github.com/weimin96/diagram-plugin.git
+cd diagram-plugin
+pnpm install
+pnpm plugin:install
+```
+
+如 Codex Desktop 已打开，可运行 `pnpm plugin:install:desktop` 在安装后刷新宿主。源码安装注册的是 `diagram-plugin@diagram-plugin-local`，请勿与 npm 版同时启用。
+
+</details>
 
 ### DeepSeek Harness
 
@@ -40,7 +112,7 @@
 @weimin96/diagram-plugin
 ```
 
-安装后重新打开 Desktop，即可在项目聊天标题栏打开 **Diagram**。npm 包已包含构建产物，无需克隆仓库、构建或单独配置 MCP 服务。
+安装后重新打开 Desktop，在项目对话的标题栏打开 **Diagram**。使用宿主自带运行时，无需另配 Node.js。
 
 <details>
 <summary>使用命令行安装</summary>
@@ -55,39 +127,9 @@ dsh plugin --profile desktop add @weimin96/diagram-plugin
 
 </details>
 
-### Codex
+卸载时完全退出 Desktop，执行 `dsh plugin --profile desktop remove @weimin96/diagram-plugin`；更新时可先移除旧版，再安装最新版。
 
-支持 Codex Desktop 的对话侧边面板。`0.20.1` 及以上版本的 npm 包已内置 Codex marketplace、MCP 服务和安装器。**该版本发布到 npm 后**，安装了 Codex CLI 和 Node.js 22+ 的用户可以运行：
-
-```sh
-npx @weimin96/diagram-plugin@latest install --codex
-```
-
-安装器将 npm 包中的构建产物复制到 `~/.codex/diagram-plugin-npm/`，注册 `diagram-plugin-npm` marketplace，再安装 `diagram-plugin@diagram-plugin-npm`。无需克隆源码或安装 pnpm。完成后重新打开 Codex Desktop。重复执行同一命令可更新插件；不会删除其他 marketplace。
-
-如果此前已经从源码安装了 `diagram-plugin@diagram-plugin-local`，需先运行 `codex plugin remove diagram-plugin@diagram-plugin-local`，再安装 npm 版，避免两个来源重复注册同一套工具。
-
-版本 `0.20.0` 仅支持 DeepSeek Harness 的 npm 安装，不包含上述 Codex 命令。
-
-<details>
-<summary>从源码安装</summary>
-
-如需安装未发布的开发版本，准备好 Codex CLI、Node.js 22+ 和 pnpm 11，然后执行：
-
-```sh
-git clone https://github.com/weimin96/diagram-plugin.git
-cd diagram-plugin
-pnpm install
-pnpm plugin:install
-```
-
-安装命令会自动构建插件、注册本地 marketplace，并安装 `diagram-plugin@diagram-plugin-local`。完成后重新打开 Codex Desktop。
-
-如果 Codex Desktop 已经打开，也可以将最后一条命令替换为 `pnpm plugin:install:desktop`，安装后自动刷新宿主。
-
-</details>
-
-本地调试与发布流程见 [开发与发布](docs/development.md)。
+DeepSeek Web 使用单独的插件配置文件（`--profile web`），不会自动继承 Desktop 安装。详细配置见[开发与发布](docs/development.md)。
 
 > 不要为同一个 Diagram 再配置通用 MCP 客户端，否则会出现重复工具，并可能让模型与图表面板连接到不同实例。
 
@@ -169,7 +211,7 @@ pnpm plugin:install
 
 > 内置类型聚焦上表 19 种。Mermaid 的 C4、architecture-beta、block-beta、packet-beta 等扩展语法没有专门的构图规则与质量检查；架构类需求请使用 Canvas 架构画布。
 
-## 使用
+## 开始使用
 
 1. 在 Codex 或 DeepSeek Harness 中打开一个项目聊天。
 2. 从聊天标题栏打开 **Diagram**，或直接对助手说「打开右侧画板」。
@@ -207,6 +249,40 @@ docs/diagrams/
 | 查看影响范围 | 选中节点后追踪上游/下游，或分析当前 Git 改动的影响 |
 | 导出 | 预览右上角导出 SVG 或 2x PNG，默认进入 `docs/diagrams/exports/` |
 
+## 常见问题
+
+<details>
+<summary>执行 npx 后提示找不到命令或仍安装旧版本？</summary>
+
+先运行 `node --version`、`codex --version` 检查依赖；npm 版 Codex 安装器需要 `0.20.1` 或更高版本。可运行 `npm view @weimin96/diagram-plugin version` 查看当前 npm 注册表的公开版本，再执行 `npx -y @weimin96/diagram-plugin@latest install --codex`。如果公司 npm 镜像尚未同步，可尝试通过官方注册表执行 `npm exec --yes --registry=https://registry.npmjs.org/ --package=@weimin96/diagram-plugin@latest -- diagram-plugin install --codex`。
+
+</details>
+
+<details>
+<summary>Codex 已安装，但看不到 Diagram 面板？</summary>
+
+1. 使用 `codex plugin list --json` 检查 `diagram-plugin@diagram-plugin-npm` 的 `installed` 和 `enabled` 是否都为 `true`。
+2. 完全退出并重新打开 Codex Desktop，进入一个项目对话。
+3. 如果看到旧的 `diagram-plugin@diagram-plugin-local`，先移除旧来源后重新安装 npm 版。
+
+命令行环境只提供 MCP 工具调用，不等同于具有可视化面板的 Desktop。
+
+</details>
+
+<details>
+<summary>图表文件保存在哪里？会上传到云端吗？</summary>
+
+默认保存在当前项目的 `docs/diagrams/`，Mermaid 为 `.mmd` / `.mermaid`，Canvas 为 `.diagram.json`。插件自身以本地文件为准，不需要独立云端图表服务；如果通过 AI 助手读取或生成内容，数据处理仍遵循相应宿主及模型服务的设置。
+
+</details>
+
+<details>
+<summary>为什么 AI 修改图表后没有立即写入文件？</summary>
+
+对现有图表的 AI 修改通常先生成 Proposal。请在 Diagram 面板查看 Diff 并接受修改，才会写入项目文件；这可避免模型直接覆盖未确认的更改。
+
+</details>
+
 ## MCP 工具
 
 Diagram 以 MCP Server 形式运行，模型与图表面板共享同一个服务实例。暴露给模型的常用工具如下（在 DeepSeek Harness 中注册为 `diagram_create` 等下划线形式）：
@@ -226,6 +302,7 @@ Diagram 以 MCP Server 形式运行，模型与图表面板共享同一个服务
 
 - Canvas 聚焦架构草图与流程场景，暂不包含手绘压感、图片批注和多人实时协作。
 - 宿主目前没有公开「当前活动编辑器文件 / 代码选区」的读取接口，生成图表时需从工作区选择文件或目录。
+- Codex npm 安装已在隔离环境验证 CLI 安装、启用与 MCP 服务；不同平台上的 Codex Desktop 侧边面板仍需原生交互验收。
 - DeepSeek Harness 已在 macOS 完成原生验收；Windows、Linux 与其他宿主版本尚未验证。
 
 ## 开发
