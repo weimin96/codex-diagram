@@ -1,5 +1,6 @@
 import { canvasVisualSkin, canvasStyledBox, isDiagramVisualStyle, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
+import { CanvasRectIndex } from './canvasRectIndex.js'
 import {
   CANVAS_ROLE_ICON_IDS,
   CANVAS_STENCIL_IDS,
@@ -1013,8 +1014,7 @@ export function canvasArchitectureHeader(scene: CanvasScene): CanvasArchitecture
 export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasArrowLabelLayout> {
   const collapsedOwners = canvasCollapsedOwners(scene)
   const boxes = new Map(scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && !collapsedOwners.has(item.id)).map((item) => [item.id, item]))
-  const occupiedBoxes = [...boxes.values()].map((item) => ({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }))
-  const occupiedLabels: Array<{ x: number; y: number; width: number; height: number }> = []
+  const occupied = new CanvasRectIndex([...boxes.values()].map((item) => ({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 })))
   const arrows = scene.elements
     .filter((item): item is CanvasArrow => item.type === 'arrow' && Boolean(item.label))
     .slice()
@@ -1039,7 +1039,7 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
     const { width, height } = dimensions
     if (arrow.labelPosition) {
       const placed = { id: arrow.id, ...arrow.labelPosition, ...dimensions }
-      occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
+      occupied.add({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
       result.set(arrow.id, placed)
       continue
     }
@@ -1061,7 +1061,7 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
           const y = segment.point.y + (segment.next.y - segment.point.y) * fraction + (segment.horizontal ? offset : 0)
           const rect = { x: x - width / 2, y: y - height / 2, width, height }
           if (rect.x < 0 || rect.y < 0 || rect.x + width > scene.width || rect.y + height > scene.height) continue
-          if (occupiedBoxes.some((box) => rectanglesOverlap(rect, box)) || occupiedLabels.some((label) => rectanglesOverlap(rect, label))) continue
+          if (occupied.overlaps(rect)) continue
           placed = { id: arrow.id, x, y, ...dimensions }
           break
         }
@@ -1078,7 +1078,7 @@ export function canvasArrowLabelLayouts(scene: CanvasScene): Map<string, CanvasA
         : { x: (routeStart.x + routeEnd.x) / 2, y: (routeStart.y + routeEnd.y) / 2 }
       placed = { id: arrow.id, x: midpoint.x, y: midpoint.y - height / 2 - 6, ...dimensions }
     }
-    occupiedLabels.push({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
+    occupied.add({ x: placed.x - width / 2, y: placed.y - height / 2, width, height })
     result.set(arrow.id, placed)
   }
   return result
@@ -1861,13 +1861,6 @@ function emphasisRank(value: CanvasEmphasis | undefined): number {
   if (value === 'primary') return 0
   if (value === 'secondary' || !value) return 1
   return 2
-}
-
-function rectanglesOverlap(left: { x: number; y: number; width: number; height: number }, right: { x: number; y: number; width: number; height: number }): boolean {
-  return left.x < right.x + right.width
-    && left.x + left.width > right.x
-    && left.y < right.y + right.height
-    && left.y + left.height > right.y
 }
 
 function dedupeRoutePoints(points: CanvasPoint[]): CanvasPoint[] {

@@ -1,5 +1,6 @@
 import { canvasVisualSkin, canvasStyledBox, diagramVisualStyles, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
+import { CanvasRectIndex } from './canvasRectIndex.js'
 import { buildCanvasPlaybackPlan, playbackActionTarget, playbackBoundsForIds, playbackInspectorOptions, playbackActionIntent, commonPrefixLength, playbackPhaseLabel, type CanvasPlaybackPhase } from './canvasPlayback.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
@@ -1370,15 +1371,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const dragCollisionIds = new Set<string>()
   if (gesturePositionOverrides) {
     const movingIds = new Set(Object.keys(gesturePositionOverrides))
+    const stationaryBoxes = movingIds.size > 3 ? new CanvasRectIndex(renderBoxes.filter((item) => !movingIds.has(item.id))) : null
     for (const item of renderBoxes) {
       if (!movingIds.has(item.id)) continue
-      if (renderBoxes.some((other) => other.id !== item.id && !movingIds.has(other.id) && rectanglesOverlapWithPadding(item, other, 8))) dragCollisionIds.add(item.id)
+      const overlap = stationaryBoxes
+        ? stationaryBoxes.overlaps({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 })
+        : renderBoxes.some((other) => !movingIds.has(other.id) && rectanglesOverlapWithPadding(item, other, 8))
+      if (overlap) dragCollisionIds.add(item.id)
     }
   }
   const gestureAutoReflowCount = gesturePositionOverrides
     ? Object.keys(gesturePositionOverrides).filter((id) => !selectedIds.includes(id)).length
     : 0
-  const selectedHasOverlap = selectedBoxes.some((item) => boxes.some((other) => other.id !== item.id && rectanglesOverlapWithPadding(item, other, 8)))
+  const selectedBoxIndex = selectedBoxes.length > 3 ? new CanvasRectIndex(boxes) : null
+  const selectedHasOverlap = selectedBoxes.some((item) => selectedBoxIndex
+    ? selectedBoxIndex.overlaps({ x: item.x - 8, y: item.y - 8, width: item.width + 16, height: item.height + 16 }, (other) => item.id !== other.id)
+    : boxes.some((other) => item.id !== other.id && rectanglesOverlapWithPadding(item, other, 8)))
   const minimapViewBounds = (() => {
     if (!architectureScope) return { x: 0, y: 0, width: scene.width, height: scene.height }
     const rects = [
