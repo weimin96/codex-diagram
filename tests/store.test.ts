@@ -6,6 +6,29 @@ import test from 'node:test'
 import { parseCanvasScene } from '../src/canvas.js'
 import { DiagramStore } from '../src/store.js'
 
+test('恢复删除的草稿保留源码，拒绝覆盖重建文件和越界目录', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-draft-recovery-'))
+  try {
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    await mkdir(workspace)
+    await mkdir(outside)
+    const store = await DiagramStore.open(workspace)
+    const created = await store.create('flowchart', '审批草稿')
+    await store.delete(created.path, created.modifiedAt)
+    const draft = 'flowchart LR\n A[待确认草稿]-->B\n'
+    const restored = await store.restore(created.path, draft)
+    assert.equal(restored.source, draft)
+    assert.equal(await readFile(path.join(workspace, created.path), 'utf8'), draft)
+    await assert.rejects(store.restore(created.path, 'flowchart LR\n C-->D\n'), /原路径已存在/)
+    assert.equal((await store.get(created.path)).source, draft)
+    await symlink(outside, path.join(workspace, 'external'))
+    await assert.rejects(store.restore('external/草稿.mmd', draft), /当前工作空间内/)
+    await assert.rejects(store.restore('../outside/草稿.mmd', draft), /当前工作空间内/)
+    assert.deepEqual(await readdir(outside), [])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('同一版本的并发保存只能有一个成功，且保留完整文件', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-plugin-concurrent-'))
   try {

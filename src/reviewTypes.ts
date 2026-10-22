@@ -1,4 +1,5 @@
 export interface DiagramProposalSummary {
+  revision: string
   path: string
   reason?: string
   baseModifiedAt: string

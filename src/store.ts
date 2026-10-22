@@ -111,6 +111,23 @@ export class DiagramStore {
     })
   }
 
+  async restore(relativePath: string, source: string): Promise<DiagramDocument> {
+    return withWorkspaceMutation(this.workspacePath, async () => {
+      const lexical = path.resolve(this.workspacePath, relativePath)
+      assertInside(this.workspacePath, lexical)
+      if (!isDiagramFile(lexical)) throw new Error('只支持 .mmd、.mermaid 和 .diagram.json 图表文件。')
+      const directory = await realpath(path.dirname(lexical))
+      assertInside(this.workspacePath, directory)
+      const target = path.join(directory, path.basename(lexical))
+      await writeFile(target, normalizeSource(source), { encoding: 'utf8', flag: 'wx' }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'EEXIST') throw new Error('原路径已存在文件，请先处理外部修改再恢复草稿。')
+        throw error
+      })
+      const info = await stat(target)
+      return this.document(relativePathFromRoot(this.workspacePath, target), normalizeSource(source), info.mtime)
+    })
+  }
+
   async rename(relativePath: string, title: string, expectedModifiedAt?: string): Promise<DiagramDocument> {
     return withWorkspaceMutation(this.workspacePath, async () => {
       const target = await this.resolveExistingDiagram(relativePath)

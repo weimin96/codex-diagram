@@ -357,6 +357,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [notice, setNotice] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [externalChange, setExternalChange] = useState(false)
+  const [deletedDraftPath, setDeletedDraftPath] = useState<string | null>(null)
   const [splitPercent, setSplitPercent] = useState(44)
   const [sourceSearchRequest, setSourceSearchRequest] = useState(0)
   const [documentMenuOpen, setDocumentMenuOpen] = useState(false)
@@ -402,7 +403,8 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const threadStateInitialized = useRef(false)
   const backgroundFailures = useRef({ thread: 0, revision: 0 })
   useEffect(() => () => { selectRequestSeq.current += 1 }, [])
-  const dirty = Boolean(selected && source !== selected.source)
+  const externalDeleted = Boolean(selected && selected.path === deletedDraftPath)
+  const dirty = Boolean(selected && (source !== selected.source || externalDeleted))
   const selectedTypeLabel = useMemo(() => selected ? diagramDocumentLabel(selected) : '', [selected])
   const visibleDiagrams = useMemo(() => {
     const query = diagramQuery.trim().toLocaleLowerCase()
@@ -449,6 +451,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     selectRequestSeq.current += 1
     patchHistoryRequestSeq.current += 1
     setSelected(null)
+    setDeletedDraftPath(null)
     const availablePaths = new Set(snapshot.diagrams.map((diagram) => diagram.path))
     setThreadTabs(isThread ? (snapshot.threadDiagramPaths ?? []).filter((path) => availablePaths.has(path)) : [])
     setThreadDiagramMenuOpen(false)
@@ -516,7 +519,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             const available = new Set(snapshot.diagrams.map((diagram) => diagram.path))
             setThreadTabs(state.diagramPaths.filter((path) => available.has(path)))
           }
-          if (!state.updatedAt || state.updatedAt === lastThreadStateAt.current) return
+          if (!state.updatedAt || (state.updatedAt === lastThreadStateAt.current && state.proposal?.revision === aiProposal?.summary.revision)) return
           if (!threadStateInitialized.current) {
             threadStateInitialized.current = true
             lastPlaybackActivity.current = state.activity?.key
@@ -528,7 +531,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               && state.activity.modifiedAt === selected?.modifiedAt
             pendingPlaybackActivity.current = alreadyAppliedProposal ? undefined : state.activity
           }
-          if (state.proposal && state.proposal.updatedAt !== aiProposal?.summary.updatedAt) {
+          if (state.proposal && state.proposal.revision !== aiProposal?.summary.revision) {
             try {
               const proposal = await callTool<DiagramProposalSourceResult>('diagram.proposal', {})
               if (!disposed) {
@@ -680,9 +683,11 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       inFlight = true
       void callTool<DiagramRevisionResult>('diagram.revision', { workspacePath, path: selected.path })
         .then(async (result) => {
+          if (disposed) return
           backgroundSyncSucceeded('revision')
           reportedError = false
-          if (disposed || result.revision.modifiedAt === selected.modifiedAt) return
+          setDeletedDraftPath(null)
+          if (result.revision.modifiedAt === selected.modifiedAt) return
           if (dirty) {
             setExternalChange(true)
             return
@@ -717,12 +722,21 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           setNotice('已同步磁盘上的最新修改')
         })
         .catch(async () => {
-          if (disposed || reportedError) return
+          if (disposed) return
+          if (externalDeleted) return
+          backgroundSyncFailed('revision')
+          if (reportedError) return
           reportedError = true
           try {
             const listed = await callTool<DiagramListResult>('diagram.list', { workspacePath })
             if (disposed) return
             if (!listed.diagrams.some((diagram) => diagram.path === selected.path)) {
+              if (dirty) {
+                setDeletedDraftPath(selected.path)
+                setExternalChange(false)
+                backgroundSyncSucceeded('revision')
+                return
+              }
               const fallback = listed.diagrams[0]
               onSnapshot({ ...snapshot, diagrams: listed.diagrams, activeDiagramPath: fallback?.path })
               setSelected(null)
@@ -740,7 +754,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           } catch {
             // Keep the currently rendered diagram available and retry in the background.
           }
-          backgroundSyncFailed('revision')
         })
         .finally(() => { inFlight = false })
     }, 1_800)
@@ -748,7 +761,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       disposed = true
       window.clearInterval(handle)
     }
-  }, [dirty, onSnapshot, panelVisible, saving, selected, snapshot, workspacePath])
+  }, [dirty, externalDeleted, onSnapshot, panelVisible, saving, selected, snapshot, workspacePath])
 
   useEffect(() => {
     let inFlight = false
@@ -864,6 +877,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       }
       setSelected(result.diagram)
       setSource(result.diagram.source)
+      setDeletedDraftPath(null)
       setExternalChange(false)
       if (result.diagram.type !== 'canvas' && patchHistoryOpen) {
         patchHistoryRequestSeq.current += 1
@@ -919,22 +933,24 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setSaving(true)
     setError(null)
     try {
-      const result = await callTool<DiagramResult>('diagram.update', {
+      const result = await callTool<DiagramResult>(externalDeleted ? 'diagram.restore' : 'diagram.update', {
         workspacePath,
         path: selected.path,
         source,
-        expectedModifiedAt: selected.modifiedAt,
-        animate: false,
+        ...(externalDeleted ? {} : { expectedModifiedAt: selected.modifiedAt, animate: false }),
       })
       if (requestSeq !== selectRequestSeq.current) return
       setSelected(result.diagram)
       setSource((current) => current === source ? result.diagram.source : current)
+      setDeletedDraftPath(null)
       setExternalChange(false)
       setChangeReview(null)
       setChangeReviewOpen(false)
       onSnapshot({
         ...snapshot,
-        diagrams: snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item),
+        diagrams: snapshot.diagrams.some((item) => item.path === result.diagram.path)
+          ? snapshot.diagrams.map((item) => item.path === result.diagram.path ? result.diagram : item)
+          : [result.diagram, ...snapshot.diagrams],
       })
     } catch (cause) {
       if (requestSeq === selectRequestSeq.current) setError(errorMessage(cause))
@@ -1024,7 +1040,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           diagrams: snapshot.diagrams.map((item) => item.path === savedDraft.diagram.path ? savedDraft.diagram : item),
         })
       }
-      const result = await callTool<DiagramResult | DiagramProposalRefreshResult>('diagram.applyProposal', elementIds?.length ? { elementIds } : {})
+      const result = await callTool<DiagramResult | DiagramProposalRefreshResult>('diagram.applyProposal', {
+        expectedProposalRevision: aiProposal.summary.revision,
+        ...(elementIds?.length ? { elementIds } : {}),
+      })
       if (result.kind === 'diagram-proposal-refresh') {
         const after: DiagramDocument = { ...result.before, source: result.candidateSource }
         setAiProposal({ summary: result.proposal, before: result.before, after })
@@ -1073,7 +1092,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     if (!aiProposal) return
     setError(null)
     try {
-      await callTool<{ kind: 'diagram-proposal-dismissed' }>('diagram.dismissProposal', {})
+      await callTool<{ kind: 'diagram-proposal-dismissed' }>('diagram.dismissProposal', { expectedProposalRevision: aiProposal.summary.revision })
       setAiProposal(null)
       setProposalBranchSet(null)
       setProposalReviewOpen(false)
@@ -1507,6 +1526,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       setSelected(result.diagram)
       setSource(result.diagram.source)
       setCreating(false)
+      setDeletedDraftPath(null)
       rememberThreadTab(result.diagram.path)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -2027,7 +2047,12 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           </div>
         ) : null}
         {notice ? <div className="notice-banner"><span>{notice}</span>{changeReview ? <button type="button" onClick={() => setChangeReviewOpen(true)}>查看变更</button> : null}</div> : null}
-        {externalChange ? (
+        {externalDeleted ? (
+          <div className="conflict-banner" role="status">
+            <span>原文件已删除，草稿已保留</span>
+            <button type="button" disabled={saving} onClick={() => void saveDiagram()}>恢复文件</button>
+          </div>
+        ) : externalChange ? (
           <div className="conflict-banner">
             <span>文件已在外部修改</span>
             <button type="button" onClick={() => void reloadSelected()}>重新载入</button>

@@ -11,6 +11,7 @@ import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, 
 import { CANVAS_ICON_CATALOG, type CanvasIconSource } from './iconRegistry.js'
 import { alignCanvasSelection, assignCanvasSelectionToLane, canvasRotationFromPointer, clearCanvasLanes, computeCanvasSmartSnap, copyCanvasSelection, createCanvasLanePreset, deleteCanvasSelection, distributeCanvasSelection, expandCanvasGroupSelection, groupCanvasSelection, insertCanvasArchitectureNodeTemplate, insertCanvasArchitectureTemplate, insertCanvasNodeOnArrow, layoutCanvasNeighborhood, layoutCanvasScene, layoutCanvasSelection, nextCanvasElementId, pasteCanvasSelection, reconnectCanvasArrow, reflowCanvasNeighborhood, reorderCanvasSelection, resizeCanvasTransformBox, reverseCanvasArrow, scaleCanvasTransformBoxes, separateCanvasSelection, setCanvasC4CollapseLevel, setCanvasGroupParent, traceCanvasGraph, ungroupCanvasSelection, updateCanvasGroup, updateCanvasLane, type CanvasArchitectureTemplate, type CanvasC4CollapseLevel, type CanvasLayoutMode, type CanvasResizeHandle, type CanvasSpacingGuide, type CanvasTraceDirection, type CanvasTransformBox } from './canvasOperations.js'
 import { ShapeLibrary, ShapePreview } from './ShapeLibrary.js'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { CANVAS_SHAPE_CATALOG, canvasShapeDefinition, canvasShapeGeometry, isCanvasShapeRef, type CanvasShapeDefinition, type CanvasShapeRef } from './shapeRegistry.js'
 
 type CanvasTool = 'select' | 'hand' | 'node' | 'note' | 'text' | 'pen' | 'connect' | 'line' | 'arrow'
@@ -473,6 +474,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const sceneRef = useRef<CanvasScene | null>(parsed.scene)
   const undoStack = useRef<string[]>([])
   const redoStack = useRef<string[]>([])
+  const [, refreshHistoryControls] = useState(0)
   const clipboard = useRef<CanvasElement[]>([])
   const playbackRun = useRef(0)
   const playbackCursor = useRef<CanvasPoint>({ x: 72, y: 72 })
@@ -492,6 +494,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const geometryDraftFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
+    if (source !== sourceRef.current) {
+      // 外部源码更新建立新的撤销边界，避免旧的整图快照覆盖已同步内容。
+      undoStack.current = []
+      redoStack.current = []
+      refreshHistoryControls((revision) => revision + 1)
+    }
     sourceRef.current = source
     sceneRef.current = parsed.scene
   }, [parsed.scene, source])
@@ -569,7 +577,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const closeTransientMenus = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Element)) return
-      if (!target.closest('.freeform-toolbar-menu-wrap')) setToolbarMenu(null)
       if (!target.closest('.freeform-inspector-more')) setInspectorMenuOpen(false)
     }
     window.addEventListener('pointerdown', closeTransientMenus)
@@ -3274,25 +3281,23 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
           {!architectureWorkbench ? <ToolButton active={shapeLibraryOpen} title="图形库" onClick={() => { setLayersOpen(false); setToolbarMenu(null); setShapeLibraryOpen((value) => !value) }}><ToolbarGlyph icon={Shapes} /></ToolButton> : null}
           <span className="freeform-toolbar-separator" />
-          {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
+          {architectureWorkbench ? <Popover open={toolbarMenu === 'architecture'} onOpenChange={(open) => {
+            setToolbarMenu(open ? 'architecture' : null)
+            if (open) { setLayersOpen(false); setArchitecturePanel('settings') }
+          }}>
+            <div className="freeform-toolbar-menu-wrap">
+            <PopoverTrigger asChild>
             <button
               type="button"
               className={`${toolbarMenu === 'architecture' ? 'is-active' : ''}${scene.architecture ? ' has-mode-state' : ''}`}
               aria-expanded={toolbarMenu === 'architecture'}
               title={scene.architecture ? `${architectureView === 'overview' ? '总览视图' : '详情视图'} · ${architectureDensity === 'auto' ? '自动密度' : architectureDensity}${architectureScope ? ' · 当前处于局部视图' : ''}` : '架构工具'}
-              onClick={() => {
-                setLayersOpen(false)
-                if (toolbarMenu === 'architecture') setToolbarMenu(null)
-                else {
-                  setArchitecturePanel('settings')
-                  setToolbarMenu('architecture')
-                }
-              }}
             >
               <span className="freeform-toolbar-state-dot" />{architectureToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
             </button>
+            </PopoverTrigger>
             {toolbarMenu === 'architecture' ? (
-              <div className="freeform-toolbar-menu is-architecture" role="menu" aria-label="架构设置">
+              <PopoverContent align="end" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu is-architecture" aria-label="架构设置">
                 {scene.architecture && architecturePanel === 'assets' ? <>
                   <div className="freeform-asset-library-head">
                     <button type="button" aria-label="返回架构设置" onClick={() => setArchitecturePanel('settings')}>‹</button>
@@ -3419,22 +3424,28 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   </section>
                 </details>
                 </>}
-              </div>
+              </PopoverContent>
             ) : null}
-          </div> : null}
+            </div>
+          </Popover> : null}
           {flowchartWorkbench ? (
+            <Popover open={toolbarMenu === 'flowchart'} onOpenChange={(open) => {
+              setToolbarMenu(open ? 'flowchart' : null)
+              if (open) setLayersOpen(false)
+            }}>
             <div className="freeform-toolbar-menu-wrap">
+              <PopoverTrigger asChild>
               <button
                 type="button"
                 className={toolbarMenu === 'flowchart' ? 'is-active' : 'has-mode-state'}
                 aria-expanded={toolbarMenu === 'flowchart'}
                 title="流程图布局与泳道"
-                onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'flowchart' ? null : 'flowchart') }}
               >
                 <span className="freeform-toolbar-state-dot" />流程<span className="freeform-toolbar-chevron">⌄</span>
               </button>
+              </PopoverTrigger>
               {toolbarMenu === 'flowchart' ? (
-                <div className="freeform-toolbar-menu is-flowchart" role="menu" aria-label="流程图工具">
+                <PopoverContent align="end" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu is-flowchart" aria-label="流程图工具">
                   <section>
                     <span>阅读方向</span>
                     <div className="freeform-menu-grid two">
@@ -3450,23 +3461,29 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       <button type="button" disabled={!scene.lanes?.length} onClick={() => { removeLanes(); setToolbarMenu(null) }}>移除</button>
                     </div>
                   </section>
-                </div>
+                </PopoverContent>
               ) : null}
             </div>
+            </Popover>
           ) : null}
           <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setShapeLibraryOpen(false); setLayersOpen((value) => !value) }}>层级</button>
-          {architectureWorkbench ? <div className="freeform-toolbar-menu-wrap">
+          {architectureWorkbench ? <Popover open={toolbarMenu === 'analysis'} onOpenChange={(open) => {
+            setToolbarMenu(open ? 'analysis' : null)
+            if (open) setLayersOpen(false)
+          }}>
+            <div className="freeform-toolbar-menu-wrap">
+            <PopoverTrigger asChild>
             <button
               type="button"
               className={`${toolbarMenu === 'analysis' ? 'is-active' : ''}${traceDirection ? ' has-mode-state' : ''}`}
               aria-expanded={toolbarMenu === 'analysis'}
               title={traceDirection ? `正在追踪${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}依赖 · ${traceDepth} 跳` : '架构与代码分析'}
-              onClick={() => { setLayersOpen(false); setToolbarMenu((value) => value === 'analysis' ? null : 'analysis') }}
             >
               <span className="freeform-toolbar-state-dot" />{analysisToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
             </button>
+            </PopoverTrigger>
             {toolbarMenu === 'analysis' ? (
-              <div className="freeform-toolbar-menu is-analysis" role="menu" aria-label="架构分析">
+              <PopoverContent align="end" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu is-analysis" aria-label="架构分析">
                 {selectedBoxes.length ? (
                   <section>
                     <span>依赖追踪</span>
@@ -3484,9 +3501,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     <div className="freeform-menu-stack"><button type="button" onClick={() => { setToolbarMenu(null); void onAnalyzeGitImpact() }}>Git 改动影响</button></div>
                   </section>
                 ) : null}
-              </div>
+              </PopoverContent>
             ) : null}
-          </div> : null}
+            </div>
+          </Popover> : null}
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>

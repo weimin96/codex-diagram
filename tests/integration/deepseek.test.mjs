@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, mkdir, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -55,6 +55,7 @@ test('真实 stdio 服务隔离会话与项目，缺失身份显式失败', asyn
     const visible = (await client.listTools()).tools.filter(isModelTool)
     assert.ok(visible.some((tool) => tool.name === 'diagram.create'))
     assert.ok(!visible.some((tool) => tool.name === 'diagram.applyProposal'))
+    assert.ok(!visible.some((tool) => tool.name === 'diagram.restore'))
   } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
 })
 
@@ -83,8 +84,9 @@ test('候选修改属于原会话，接受前不写盘，确认后才保存', as
     const proposal = await call(client, root, 'proposal-owner', 'diagram.proposeUpdate', { path: created.path, source: candidate })
     assert.equal(proposal.isError, undefined)
     assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
-    assert.equal((await call(client, root, 'other-session', 'diagram.applyProposal')).isError, true)
-    assert.equal((await call(client, root, 'proposal-owner', 'diagram.applyProposal')).isError, undefined)
+    const approval = { expectedProposalRevision: proposal.structuredContent.proposal.revision }
+    assert.equal((await call(client, root, 'other-session', 'diagram.applyProposal', approval)).isError, true)
+    assert.equal((await call(client, root, 'proposal-owner', 'diagram.applyProposal', approval)).isError, undefined)
     assert.equal(await readFile(path.join(root, created.path), 'utf8'), candidate)
   } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
 })
@@ -96,8 +98,8 @@ test('会话切换工作目录后不能应用原项目的候选修改', async ()
     const changed = path.join(root, 'changed')
     await mkdir(changed)
     const created = (await call(client, root, 'moving-session', 'diagram.create', { type: 'flowchart', title: '原项目候选' })).structuredContent.diagram
-    await call(client, root, 'moving-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->Changed\n' })
-    const applied = await call(client, changed, 'moving-session', 'diagram.applyProposal')
+    const pending = await call(client, root, 'moving-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->Changed\n' })
+    const applied = await call(client, changed, 'moving-session', 'diagram.applyProposal', { expectedProposalRevision: pending.structuredContent.proposal.revision })
     assert.equal(applied.isError, true)
     assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
   } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
@@ -108,12 +110,70 @@ test('长期运行时按最近访问清理旧会话 Proposal，不删除已保�
   const client = await connect()
   try {
     const created = (await call(client, root, 'old-session', 'diagram.create', { type: 'flowchart', title: '保留文件' })).structuredContent.diagram
-    await call(client, root, 'old-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->B\n' })
+    const pending = await call(client, root, 'old-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->B\n' })
     for (let index = 0; index <= 512; index++) {
       const result = await call(client, root, `new-session-${index}`, 'diagram.threadState')
       assert.equal(result.isError, undefined)
     }
-    assert.equal((await call(client, root, 'old-session', 'diagram.applyProposal')).isError, true)
+    assert.equal((await call(client, root, 'old-session', 'diagram.applyProposal', { expectedProposalRevision: pending.structuredContent.proposal.revision })).isError, true)
     assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
+  } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('接受和拒绝必须对应已审查的候选版本', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-proposal-revision-'))
+  const client = await connect()
+  try {
+    const created = (await call(client, root, 'reviewer', 'diagram.create', { type: 'flowchart', title: '候选版本校验' })).structuredContent.diagram
+    const first = await call(client, root, 'reviewer', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->First\n' })
+    const second = await call(client, root, 'reviewer', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->Second\n' })
+    const previousRevision = first.structuredContent.proposal.revision
+    const currentRevision = second.structuredContent.proposal.revision
+    const staleApply = await call(client, root, 'reviewer', 'diagram.applyProposal', { expectedProposalRevision: previousRevision })
+    assert.equal(staleApply.isError, true)
+    const staleDismiss = await call(client, root, 'reviewer', 'diagram.dismissProposal', { expectedProposalRevision: previousRevision })
+    assert.equal(staleDismiss.isError, true)
+    assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
+    assert.equal((await call(client, root, 'reviewer', 'diagram.applyProposal')).isError, true)
+    assert.equal((await call(client, root, 'reviewer', 'diagram.applyProposal', { expectedProposalRevision: currentRevision })).isError, undefined)
+    assert.equal(await readFile(path.join(root, created.path), 'utf8'), 'flowchart LR\n A-->Second\n')
+    const pending = await call(client, root, 'reviewer', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->Dismissed\n' })
+    assert.equal((await call(client, root, 'reviewer', 'diagram.dismissProposal', { expectedProposalRevision: pending.structuredContent.proposal.revision })).isError, undefined)
+    assert.equal((await call(client, root, 'reviewer', 'diagram.proposal')).isError, true)
+  } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('源码同步优先精确路径，拒绝有歧义的后缀', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-source-resolution-'))
+  const client = await connect()
+  try {
+    for (const directory of ['aaa/src', 'src']) await mkdir(path.join(root, directory), { recursive: true })
+    for (const file of ['aaa/src/service.ts', 'src/service.ts']) await writeFile(path.join(root, file), 'export const serviceName = "审批"\n')
+    const created = (await call(client, root, 'source-owner', 'diagram.create', { type: 'canvas', title: '源码绑定' })).structuredContent.diagram
+    const nested = await call(client, root, 'source-owner', 'diagram.upsertSourceNode', { path: created.path, sourcePath: 'aaa/src/service.ts' })
+    const single = await call(client, root, 'source-owner', 'diagram.upsertSourceNode', { path: created.path, sourcePath: 'src/service.ts' })
+    assert.equal(single.isError, undefined)
+    assert.equal(single.structuredContent.sourcePath, 'src/service.ts')
+    assert.notEqual(single.structuredContent.nodeId, nested.structuredContent.nodeId)
+    const batch = await call(client, root, 'source-owner', 'diagram.upsertSourceNodes', { path: created.path, nodes: [{ sourcePath: './src/service.ts' }] })
+    assert.equal(batch.isError, undefined)
+    assert.equal(batch.structuredContent.nodes[0].sourcePath, 'src/service.ts')
+    assert.equal(batch.structuredContent.nodes[0].nodeId, single.structuredContent.nodeId)
+    const scene = JSON.parse(batch.structuredContent.diagram.source)
+    scene.elements.find((element) => element.id === nested.structuredContent.nodeId).sourcePaths = [path.join(root, 'aaa/src/service.ts')]
+    await call(client, root, 'source-owner', 'diagram.update', { path: created.path, source: JSON.stringify(scene) })
+    const absolute = await call(client, root, 'source-owner', 'diagram.upsertSourceNodes', {
+      path: created.path, nodes: [{ sourcePath: path.join(root, 'aaa/src/service.ts') }],
+    })
+    assert.equal(absolute.isError, undefined)
+    assert.equal(absolute.structuredContent.nodes[0].nodeId, nested.structuredContent.nodeId)
+    const before = await readFile(path.join(root, created.path), 'utf8')
+    for (const name of ['diagram.upsertSourceNode', 'diagram.upsertSourceNodes']) {
+      const args = name.endsWith('Nodes') ? { nodes: [{ sourcePath: 'service.ts' }] } : { sourcePath: 'service.ts' }
+      const result = await call(client, root, 'source-owner', name, { path: created.path, ...args })
+      assert.equal(result.isError, true)
+      assert.match(JSON.stringify(result), /多个源码文件/)
+    }
+    assert.equal(await readFile(path.join(root, created.path), 'utf8'), before)
   } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
 })

@@ -1,6 +1,6 @@
 import { diagramSessionContext } from './hosts/serverContext.js'
 import { diagramVisualStyleGuide } from './diagramVisualStyles.js'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -710,15 +710,14 @@ server.registerTool('diagram.upsertSourceNode', {
     cached = { files: await store.listSourceFiles(), expiresAt: now + 15_000 }
     sourceIndexCache.set(store.workspacePath, cached)
   }
-  const normalized = normalizeSourcePath(sourcePath)
-  const realSourcePath = cached.files.find((file) => sourcePathMatches(normalizeSourcePath(file), normalized))
+  const realSourcePath = await resolveSourceFile(cached.files, sourcePath, store.workspacePath)
   if (!realSourcePath) throw new Error(`工作区中不存在源码文件：${sourcePath}`)
 
   const scene = parseCanvasScene(diagram.source)
   if (groupId && !scene.groups?.some((group) => group.id === groupId)) throw new Error(`Canvas 中不存在容器：${groupId}`)
   if (laneId && !scene.lanes?.some((lane) => lane.id === laneId)) throw new Error(`Canvas 中不存在泳道：${laneId}`)
   const boxes = scene.elements.filter((item): item is CanvasNode => item.type === 'node')
-  const linked = boxes.filter((item) => item.sourcePaths?.some((candidate) => sourcePathMatches(normalizeSourcePath(candidate), normalizeSourcePath(realSourcePath))))
+  const linked = await linkedSourceNodes(boxes, store.workspacePath, realSourcePath)
   let target = elementId ? boxes.find((item) => item.id === elementId) : undefined
   if (elementId && !target) throw new Error(`Canvas 中不存在节点：${elementId}`)
   if (!target && linked.length > 1) throw new Error(`该源码已关联多个 Canvas 节点，请传 elementId：${linked.map((item) => item.id).join(', ')}`)
@@ -822,10 +821,9 @@ server.registerTool('diagram.upsertSourceNodes', {
   const scene = parseCanvasScene(diagram.source)
   const results: Array<{ sourcePath: string; nodeId: string; created: boolean }> = []
   for (const spec of nodes) {
-    const normalized = normalizeSourcePath(spec.sourcePath)
-    const realSourcePath = cached.files.find((file) => sourcePathMatches(normalizeSourcePath(file), normalized))
+    const realSourcePath = await resolveSourceFile(cached.files, spec.sourcePath, store.workspacePath)
     if (!realSourcePath) throw new Error(`工作区中不存在源码文件：${spec.sourcePath}`)
-    const result = upsertSourceNodeInScene(scene, realSourcePath, spec as SourceNodeSpec)
+    const result = await upsertSourceNodeInScene(scene, realSourcePath, spec as SourceNodeSpec, store.workspacePath)
     results.push({ sourcePath: realSourcePath, ...result })
   }
   const updated = await store.update(diagram.path, serializeCanvasScene(scene), diagram.modifiedAt)
@@ -883,6 +881,22 @@ server.registerTool('diagram.update', {
   markThreadDiagram(extra._meta, diagram.path, undefined, undefined, animate === false ? undefined : 'update', diagram.modifiedAt)
   return {
     content: [{ type: 'text', text: `Updated ${diagram.path}` }],
+    structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
+  }
+})
+
+server.registerTool('diagram.restore', {
+  title: 'Restore deleted diagram draft',
+  description: 'Internal app bridge for restoring a retained draft at its deleted path. Refuses to overwrite any existing file.',
+  inputSchema: z.object({ workspacePath: z.string().optional(), path: z.string().min(1), source: z.string().min(1) }),
+  annotations: write,
+  _meta: appOnly,
+}, async ({ workspacePath, path: diagramPath, source }, extra) => {
+  const store = await resolveStore(workspacePath, toolThreadId(extra._meta))
+  const diagram = await store.restore(diagramPath, source)
+  markThreadDiagram(extra._meta, diagram.path)
+  return {
+    content: [{ type: 'text', text: encodeToolResultFallback({ kind: 'diagram', workspacePath: store.workspacePath, diagram }) }],
     structuredContent: { kind: 'diagram', workspacePath: store.workspacePath, diagram },
   }
 })
@@ -1275,19 +1289,21 @@ server.registerTool('diagram.composeProposalBranches', {
 server.registerTool('diagram.applyProposal', {
   title: 'Apply diagram proposal',
   description: 'Internal app bridge for accepting the pending Diagram proposal after user review. Canvas proposals may pass elementIds to apply only selected nodes/links while preserving the rest of the current document.',
-  inputSchema: z.object({ elementIds: z.array(z.string().min(1)).max(200).optional() }),
+  inputSchema: z.object({ expectedProposalRevision: z.string().min(1), elementIds: z.array(z.string().min(1)).max(200).optional() }),
   annotations: write,
   _meta: appOnly,
-}, async ({ elementIds }, extra) => {
+}, async ({ expectedProposalRevision, elementIds }, extra) => {
   const threadId = toolThreadId(extra._meta)
   if (!threadId) throw new Error('当前调用没有聊天上下文。')
   const proposal = threadProposals.get(threadId)
   if (!proposal) throw new Error('当前聊天没有待应用的 Diagram Proposal。')
+  assertProposalRevision(proposal, expectedProposalRevision)
   if (elementIds?.length && proposal.patchSummary?.layout === 'local') {
     throw new Error('局部布局 Proposal 是耦合事务，不能只接受部分元素；请全部接受或拒绝后重新调整。')
   }
   const store = await DiagramStore.open(proposal.workspacePath)
   const current = await store.get(proposal.path)
+  assertProposalRevision(threadProposals.get(threadId), expectedProposalRevision)
   const stale = current.modifiedAt !== proposal.baseModifiedAt
   let candidateSource = proposal.source
   let baseSource = proposal.baseSource
@@ -1392,7 +1408,7 @@ server.registerTool('diagram.applyProposal', {
       historyRecorded = await historyStore.appendApply(entry).then(() => true).catch(() => false)
     }
   }
-  clearThreadProposals(threadId)
+  if (threadProposals.get(threadId) === proposal) clearThreadProposals(threadId)
   markThreadDiagram(extra._meta, diagram.path, undefined, undefined, 'proposal', diagram.modifiedAt)
   const proposalApply = { rebased, beforeSource: baseSource, historyEntryId, historyRecorded }
   return {
@@ -1409,12 +1425,13 @@ server.registerTool('diagram.applyProposal', {
 server.registerTool('diagram.dismissProposal', {
   title: 'Dismiss diagram proposal',
   description: 'Internal app bridge for rejecting the pending Diagram proposal without changing the file.',
-  inputSchema: z.object({}),
+  inputSchema: z.object({ expectedProposalRevision: z.string().min(1) }),
   annotations: write,
   _meta: appOnly,
-}, async (_args, extra) => {
+}, async ({ expectedProposalRevision }, extra) => {
   const threadId = toolThreadId(extra._meta)
   if (threadId) {
+    assertProposalRevision(threadProposals.get(threadId), expectedProposalRevision)
     clearThreadProposals(threadId)
     const current = threadSelection.get(threadId)
     threadSelection.set(threadId, { ...current, updatedAt: new Date().toISOString() })
@@ -2036,6 +2053,40 @@ function sourcePathMatches(candidate: string, query: string): boolean {
   return candidate === query || candidate.endsWith(`/${query}`) || query.endsWith(`/${candidate}`)
 }
 
+async function sourceFileRealpath(file: string): Promise<string | undefined> {
+  return realpath(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+}
+
+async function resolveSourceFile(files: string[], sourcePath: string, workspacePath: string): Promise<string | undefined> {
+  const input = sourcePath.replace(/\\/g, '/')
+  const lexical = path.resolve(workspacePath, input)
+  const target = path.isAbsolute(input) ? await sourceFileRealpath(lexical) : lexical
+  if (!target) return undefined
+  const requested = path.relative(workspacePath, target).split(path.sep).join('/')
+  if (requested === '..' || requested.startsWith('../')) throw new Error('源码路径必须位于当前工作空间内。')
+  const exact = files.find((file) => file === requested)
+  if (exact) return exact
+  const matches = files.filter((file) => sourcePathMatches(normalizeSourcePath(file), normalizeSourcePath(requested)))
+  if (matches.length > 1) throw new Error(`匹配到多个源码文件，请指定完整相对路径：${matches.join('、')}`)
+  return matches[0]
+}
+
+async function linkedSourceNodes(nodes: CanvasNode[], workspacePath: string, sourcePath: string): Promise<CanvasNode[]> {
+  const target = path.resolve(workspacePath, sourcePath)
+  const linked = await Promise.all(nodes.map(async (node) => {
+    for (const candidate of node.sourcePaths ?? []) {
+      const lexical = path.resolve(workspacePath, candidate.replace(/\\/g, '/'))
+      if (lexical === target) return node
+      if (path.basename(lexical) === path.basename(target) && await sourceFileRealpath(lexical) === target) return node
+    }
+    return undefined
+  }))
+  return linked.filter((node): node is CanvasNode => Boolean(node))
+}
+
 interface SourceNodeSpec {
   sourcePath: string
   elementId?: string
@@ -2051,12 +2102,11 @@ interface SourceNodeSpec {
   laneId?: string
 }
 
-function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spec: SourceNodeSpec): { nodeId: string; created: boolean } {
+async function upsertSourceNodeInScene(scene: CanvasScene, realSourcePath: string, spec: SourceNodeSpec, workspacePath: string): Promise<{ nodeId: string; created: boolean }> {
   if (spec.groupId && !scene.groups?.some((group) => group.id === spec.groupId)) throw new Error(`Canvas 中不存在容器：${spec.groupId}`)
   if (spec.laneId && !scene.lanes?.some((lane) => lane.id === spec.laneId)) throw new Error(`Canvas 中不存在泳道：${spec.laneId}`)
   const boxes = scene.elements.filter((item): item is CanvasNode => item.type === 'node')
-  const normalizedRealPath = normalizeSourcePath(realSourcePath)
-  const linked = boxes.filter((item) => item.sourcePaths?.some((candidate) => sourcePathMatches(normalizeSourcePath(candidate), normalizedRealPath)))
+  const linked = await linkedSourceNodes(boxes, workspacePath, realSourcePath)
   let target = spec.elementId ? boxes.find((item) => item.id === spec.elementId) : undefined
   if (spec.elementId && !target) throw new Error(`Canvas 中不存在节点：${spec.elementId}`)
   if (!target && linked.length > 1) throw new Error(`源码 ${realSourcePath} 已关联多个 Canvas 节点，请传 elementId：${linked.map((item) => item.id).join(', ')}`)
@@ -2213,9 +2263,18 @@ function gitImpactSummary(value: ThreadGitImpact | undefined) {
   }
 }
 
+function proposalRevision(proposal: ThreadDiagramProposal): string {
+  return createHash('sha256').update(JSON.stringify(proposal)).digest('hex')
+}
+
+function assertProposalRevision(proposal: ThreadDiagramProposal | undefined, expected: string): void {
+  if (!proposal || proposalRevision(proposal) !== expected) throw new Error('候选修改已更新，请重新审查后再操作。')
+}
+
 function proposalSummary(proposal: ThreadDiagramProposal | undefined) {
   if (!proposal) return undefined
   return {
+    revision: proposalRevision(proposal),
     path: proposal.path,
     reason: proposal.reason,
     baseModifiedAt: proposal.baseModifiedAt,
