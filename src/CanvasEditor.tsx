@@ -4220,7 +4220,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const cardTemplate = canvasArchitectureCardTemplate(displayItem)
             const architectureMark = Boolean(scene.architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
             const selectedForLod = selectedIdSet.has(item.id)
-            const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id)
+            const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (selectedForLod || tool === 'connect' || connectFrom === item.id)
             return (
             <g
               key={item.id}
