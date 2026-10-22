@@ -138,6 +138,10 @@ interface ThreadGitImpact {
   report: Record<string, unknown>
 }
 const threadGitImpacts = new Map<string, ThreadGitImpact>()
+const sessionLastAccess = new Map<string, number>()
+const sessionIdleLimitMs = 24 * 60 * 60 * 1_000
+const maxSessionStates = 512
+let sessionSweepCalls = 0
 const ui = (
   resourceUri: string,
   entrypoints: OpenAIUiToolMetadata['entrypoints'] = [],
@@ -256,6 +260,7 @@ server.registerTool('diagram.openWorkspace', {
   annotations: readonly,
   _meta: appOnly,
 }, async ({ workspacePath }, extra) => {
+  if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') throw new Error('DeepSeek 图表工作区由当前会话确定，不能手动切换。')
   const payload = workspaceContent(await openWorkspace(workspacePath), undefined, toolThreadId(extra._meta))
   return {
     content: [{ type: 'text', text: encodeToolResultFallback(payload) }],
@@ -1893,6 +1898,15 @@ async function openWorkspace(input: string): Promise<WorkspaceSnapshot> {
 }
 
 async function resolveStore(workspacePath: string | undefined, threadId?: string): Promise<DiagramStore> {
+  if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') {
+    const boundWorkspace = threadId ? hostWorkspaces.get(threadId) : undefined
+    if (!boundWorkspace) throw new Error('缺少 DeepSeek 会话工作区。')
+    const store = await DiagramStore.open(boundWorkspace)
+    if (workspacePath && (await DiagramStore.open(workspacePath)).workspacePath !== store.workspacePath) {
+      throw new Error('图表操作超出当前会话工作区。')
+    }
+    return store
+  }
   if (workspacePath) return DiagramStore.open(workspacePath)
   const snapshot = await bootstrapWorkspace(threadId)
   if (!snapshot.workspacePath) throw new Error('没有可用的 Codex 工作空间，请先在 Diagram 工作台中打开目录。')
@@ -1972,12 +1986,32 @@ function toolThreadId(meta: unknown): string | undefined {
   if (context) {
     const key = `${context.host}:${JSON.stringify([context.sessionId, context.workspacePath])}`
     hostWorkspaces.set(key, context.workspacePath)
+    recordSessionAccess(key)
     return key
   }
   if (process.env.DIAGRAM_PLUGIN_HOST === 'deepseek') throw new Error('缺少 DeepSeek 会话身份。')
   if (!meta || typeof meta !== 'object') return undefined
   const threadId = (meta as Record<string, unknown>).threadId
-  return typeof threadId === 'string' && threadId.length > 0 ? threadId : undefined
+  if (typeof threadId !== 'string' || !threadId.length) return undefined
+  recordSessionAccess(threadId)
+  return threadId
+}
+
+function recordSessionAccess(key: string): void {
+  const now = Date.now()
+  sessionLastAccess.delete(key)
+  sessionLastAccess.set(key, now)
+  if (++sessionSweepCalls < 64 && sessionLastAccess.size <= maxSessionStates) return
+  sessionSweepCalls = 0
+  for (const [session, lastAccess] of sessionLastAccess) {
+    if (lastAccess >= now - sessionIdleLimitMs && sessionLastAccess.size <= maxSessionStates) break
+    sessionLastAccess.delete(session)
+    hostWorkspaces.delete(session)
+    threadSelection.delete(session)
+    threadProposals.delete(session)
+    threadProposalBranches.delete(session)
+    threadGitImpacts.delete(session)
+  }
 }
 
 function stringArray(value: unknown): string[] {

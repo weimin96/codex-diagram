@@ -53,7 +53,11 @@ export async function apply(ctx) {
         if (!execution.agent) throw new Error('Diagram 工具必须由会话调用。')
         const context = await sessionContext(execution.agent.session.id, execution.signal, execution.agent)
         const result = await call(tool.name, args, context, execution.signal)
-        if (tool.name === 'diagram.thread' && !result.isError) openRequests.set(context.sessionId, ++openSequence)
+        if (tool.name === 'diagram.thread' && !result.isError) {
+          openRequests.delete(context.sessionId)
+          openRequests.set(context.sessionId, ++openSequence)
+          if (openRequests.size > 512) openRequests.delete(openRequests.keys().next().value)
+        }
         return result
       },
     })
@@ -79,8 +83,8 @@ export async function apply(ctx) {
       try {
         const body = await request.json()
         if (typeof body.sessionId !== 'string' || !body.sessionId.trim()) throw new Error('缺少 Diagram 会话身份。')
-        if (body.method === 'status') return Response.json({ result: { openRequest: openRequests.get(body.sessionId) ?? 0 } })
         const context = await sessionContext(body.sessionId, request.signal)
+        if (body.method === 'status') return Response.json({ result: { openRequest: openRequests.get(body.sessionId) ?? 0 } })
         let result
         if (body.method === 'tool') {
           const tool = tools.get(body.params?.name)

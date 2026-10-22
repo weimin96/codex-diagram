@@ -49,6 +49,9 @@ test('真实 stdio 服务隔离会话与项目，缺失身份显式失败', asyn
     assert.ok(!JSON.stringify(aState).includes(b.structuredContent.diagram.path))
     assert.ok(JSON.stringify(bState).includes(b.structuredContent.diagram.path))
     assert.equal((await client.callTool({ name: 'diagram.list', arguments: {} })).isError, true)
+    assert.equal((await call(client, first, 'session-a', 'diagram.list', { workspacePath: first })).isError, undefined)
+    assert.equal((await call(client, second, 'session-b', 'diagram.list', { workspacePath: first })).isError, true)
+    assert.equal((await call(client, second, 'session-b', 'diagram.openWorkspace', { workspacePath: first })).isError, true)
     const visible = (await client.listTools()).tools.filter(isModelTool)
     assert.ok(visible.some((tool) => tool.name === 'diagram.create'))
     assert.ok(!visible.some((tool) => tool.name === 'diagram.applyProposal'))
@@ -96,6 +99,21 @@ test('会话切换工作目录后不能应用原项目的候选修改', async ()
     await call(client, root, 'moving-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->Changed\n' })
     const applied = await call(client, changed, 'moving-session', 'diagram.applyProposal')
     assert.equal(applied.isError, true)
+    assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
+  } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('长期运行时按最近访问清理旧会话 Proposal，不删除已保存图表', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-session-cleanup-'))
+  const client = await connect()
+  try {
+    const created = (await call(client, root, 'old-session', 'diagram.create', { type: 'flowchart', title: '保留文件' })).structuredContent.diagram
+    await call(client, root, 'old-session', 'diagram.proposeUpdate', { path: created.path, source: 'flowchart LR\n A-->B\n' })
+    for (let index = 0; index <= 512; index++) {
+      const result = await call(client, root, `new-session-${index}`, 'diagram.threadState')
+      assert.equal(result.isError, undefined)
+    }
+    assert.equal((await call(client, root, 'old-session', 'diagram.applyProposal')).isError, true)
     assert.equal(await readFile(path.join(root, created.path), 'utf8'), created.source)
   } finally { await client.close(); await rm(root, { recursive: true, force: true }) }
 })

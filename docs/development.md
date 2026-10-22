@@ -20,6 +20,7 @@ docs/               维护者文档与 README 截图
 - 模型与图表面板共享同一个图表服务实例，面板不复制编辑器、存储或 Proposal 实现。
 - Mermaid 直接读写 `.mmd` / `.mermaid`；Canvas 保存为 `.diagram.json`，两者共用保存、revision 与导出链路。
 - 服务端写入采用进程内队列、跨进程工作区锁与 revision 检查；锁位于系统临时目录，只保证同机同用户下的多宿主互斥。
+- 会话选择、未确认的 Proposal 等状态只在当前服务进程保留；超过 24 小时不访问或进程内活跃会话超过 512 个时进行惰性清理，不影响已经保存的图表文件。
 
 ## 本地开发
 
@@ -69,6 +70,8 @@ pnpm build
 ```
 
 随后重新打开 Desktop。不要为同一个 Diagram 再配置通用 MCP 客户端，避免重复工具或模型与面板连接到不同实例。同版本的 `file:` 依赖可能继续使用已安装副本；开发中重新构建后，需要先 `plugin --profile desktop remove @weimin96/diagram-plugin`，再重新添加，并确认插件已进入 `dsh.profile.bundles`。
+
+Web 使用同一份 DeepSeek Client 与 MCP 服务，不需要独立的 Web 编辑器。将 `--profile desktop` 换成 `--profile web` 后启动 `dsh web`；Web 侧需单独检查 Web profile 是否安装插件。客户端在同一应用实例的多个会话之间复用静态画板 HTML，但每个会话都必须重新建立独立的 MessagePort 和宿主绑定。面板的工作区由当前会话确定，不能自行切换到其他目录。
 
 原生验收至少覆盖：
 

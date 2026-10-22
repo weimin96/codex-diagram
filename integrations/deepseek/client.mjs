@@ -7,6 +7,21 @@ function requestFetch(input, init) {
   return (globalThis.__DSH_TRANSPORT__?.fetch ?? globalThis.fetch)(input, init)
 }
 
+// The document contains only static bundled assets; each session still opens its own bridge.
+let appDocumentPromise
+function loadAppDocument() {
+  if (!appDocumentPromise) {
+    appDocumentPromise = requestFetch('api/diagram/app').then(async (response) => {
+      if (!response.ok) throw new Error(`加载 Diagram 失败：${response.status}`)
+      return response.text()
+    }).catch((error) => {
+      appDocumentPromise = undefined
+      throw error
+    })
+  }
+  return appDocumentPromise
+}
+
 async function callHost(sessionId, method, params, signal) {
   const response = await requestFetch('api/diagram/call', {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -85,9 +100,8 @@ export function apply(ctx) {
       window.addEventListener('message', receive)
       void (async () => {
         try {
-          const response = await requestFetch('api/diagram/app', { signal: controller.signal })
-          if (!response.ok) throw new Error(`加载 Diagram 失败：${response.status}`)
-          setHtml(await response.text())
+          const document = await loadAppDocument()
+          if (!controller.signal.aborted) setHtml(document)
         } catch (cause) {
           if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
         }
