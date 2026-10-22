@@ -33,3 +33,19 @@ test('AI 生成合同包含样式选择场景，局部修改保留原样式', ()
   assert.match(prompt, /主动选择/)
   assert.match(buildModificationPrompt('/workspace', { path: 'flow.diagram.json', name: '审批流程', type: 'canvas', modifiedAt: '', source: '{}' }, '修改节点标题'), /scene.style/)
 })
+
+test('架构节点的实底和手工底色在导出中使用可读前景色', () => {
+  const source = parseCanvasScene(readFileSync(new URL('./fixtures/shared-styles/architecture__blueprint.diagram.json', import.meta.url), 'utf8'))
+  const scene = { ...source, style: 'ocean' as const, elements: [
+    { id: 'entry', type: 'node' as const, text: '主入口', x: 30, y: 30, width: 180, height: 80, emphasis: 'primary' as const },
+    { id: 'custom-dark', type: 'node' as const, text: '深色节点', x: 240, y: 30, width: 180, height: 80, fillColor: '#101010' },
+    { id: 'custom-light', type: 'node' as const, text: '浅色节点', x: 450, y: 30, width: 180, height: 80, fillColor: '#ffffff' },
+  ] }
+  const before = serializeCanvasScene(scene)
+  const svg = canvasSceneToSvg(scene)
+  assert.match(svg, /fill="#f8fafc">主入口<\/text>/)
+  assert.match(svg, /fill="#f8fafc">深色节点<\/text>/)
+  assert.match(svg, /fill="#243247">浅色节点<\/text>/)
+  assert.match(canvasSceneToSvg({ ...scene, style: undefined }), /fill="#f8fafc">深色节点<\/text>/)
+  assert.equal(serializeCanvasScene(scene), before)
+})

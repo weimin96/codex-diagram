@@ -65,12 +65,11 @@ export function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId
     active: entries.filter((entry) => !entry.undoneAt).length,
   }), [entries])
   return (
-    <aside className="change-review-panel patch-history-panel" aria-label="AI 修改历史">
+    <aside className="change-review-panel patch-history-panel" aria-label="修改记录">
       <div className="change-review-head">
         <div>
-          <div className="eyebrow">AI CHANGE TIMELINE</div>
-          <strong>AI 修改历史</strong>
-          <span>{entries.length} transactions</span>
+          <strong>修改记录</strong>
+          <span>{entries.length} 次修改</span>
         </div>
         <div className="patch-history-head-actions">
           <button type="button" disabled={loading} onClick={onRefresh}>{loading ? '刷新中…' : '刷新'}</button>
@@ -80,14 +79,14 @@ export function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId
       <div className="change-review-path">{path}</div>
       {entries.length ? (
         <div className="patch-history-graph-summary">
-          <strong>PATCH DAG</strong>
-          <span>{graphStats.roots} roots</span>
-          <span>{graphStats.edges} edges</span>
-          <span>{graphStats.active} active</span>
+          <strong>依赖关系</strong>
+          <span>{graphStats.roots} 个起点</span>
+          <span>{graphStats.edges} 条依赖</span>
+          <span>{graphStats.active} 项生效</span>
         </div>
       ) : null}
       <div className="patch-history-body">
-        {loading && entries.length === 0 ? <div className="patch-history-empty">正在读取本地 AI 修改历史…</div> : null}
+        {loading && entries.length === 0 ? <div className="patch-history-empty">正在读取修改记录…</div> : null}
         {!loading && entries.length === 0 ? <div className="patch-history-empty">这张图还没有已应用的增量 AI 修改。</div> : null}
         {entries.map((entry) => {
           const activeDependents = activeDependentClosure.get(entry.id) ?? []
@@ -101,7 +100,7 @@ export function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId
             <div className="patch-history-entry-head">
               <div>
                 <time dateTime={entry.appliedAt}>{formatPatchHistoryTime(entry.appliedAt)}</time>
-                <strong>{entry.reason?.trim() || '增量修改 Canvas'}</strong>
+                <strong>{entry.reason?.trim() || '增量修改'}</strong>
               </div>
               <div className="patch-history-badges">
                 {entry.rebased ? <span>已 Rebase</span> : null}
@@ -116,7 +115,7 @@ export function PatchHistoryPanel({ path, entries, loading, undoingId, redoingId
             </div>
             {(entry.dependsOnIds?.length || entry.dependentIds?.length) ? (
               <div className="patch-history-graph-meta">
-                <span>Patch DAG</span>
+                <span>修改依赖</span>
                 {entry.dependsOnIds?.length ? <span>↑ {entry.dependsOnIds.length} 上游</span> : <span>根节点</span>}
                 {activeDependents.length ? <strong>↓ {activeDependents.length} 活跃下游</strong> : null}
               </div>
@@ -186,23 +185,22 @@ export function GitImpactPanel({ report, onClose, onFocus, onExplain, onReanalyz
     <aside className="change-review-panel impact-review-panel" aria-label="代码改动影响报告">
       <div className="change-review-head">
         <div>
-          <div className="eyebrow">GIT IMPACT</div>
           <strong>代码改动影响</strong>
-          <span>{report.git.files.length} files</span>
+          <span>{report.git.files.length} 个文件</span>
         </div>
         <button type="button" onClick={onClose}>关闭</button>
       </div>
       <div className="change-review-path">{report.path}</div>
       <div className="impact-review-body">
         <section className="impact-base-ref">
-          <div className="impact-section-head"><strong>比较基线</strong><span>{report.git.baseRef ? `${report.git.baseRef}...HEAD` : 'Working tree'}</span></div>
+          <div className="impact-section-head"><strong>比较基线</strong><span>{report.git.baseRef ? `${report.git.baseRef}...HEAD` : '工作区修改'}</span></div>
           <div>
             <input value={baseRef} onChange={(event) => setBaseRef(event.target.value)} placeholder="例如 origin/main" aria-label="Git 比较基线" />
             <button type="button" onClick={() => onReanalyze(baseRef.trim() || undefined)}>重新分析</button>
           </div>
         </section>
         <section>
-          <div className="impact-section-head"><strong>影响层级</strong><span>{report.trace.nodeIds.length} nodes</span></div>
+          <div className="impact-section-head"><strong>影响层级</strong><span>{report.trace.nodeIds.length} 个节点</span></div>
           {report.buckets.map((bucket) => (
             <button key={bucket.distance} type="button" className="impact-bucket" onClick={() => onFocus(bucket.elementIds)}>
               <span>{bucket.distance === 0 ? '直接修改' : `${bucket.distance} 跳影响`}</span>
@@ -212,11 +210,11 @@ export function GitImpactPanel({ report, onClose, onFocus, onExplain, onReanalyz
           {!report.buckets.length ? <p className="impact-empty">当前图没有节点绑定这些改动文件。</p> : null}
         </section>
         <section>
-          <div className="impact-section-head"><strong>改动文件</strong><span>{report.matchedFiles.length}/{report.git.files.length} mapped</span></div>
+          <div className="impact-section-head"><strong>改动文件</strong><span>{report.matchedFiles.length}/{report.git.files.length} 已关联</span></div>
           {report.matchedFiles.map((file) => (
             <button key={file.path} type="button" className="impact-file-row" title={file.path} onClick={() => onFocus(file.elementIds)}>
               <code>{file.path}</code>
-              <span>{file.elementIds.length} nodes</span>
+              <span>{file.elementIds.length} 个节点</span>
             </button>
           ))}
         </section>
@@ -252,7 +250,6 @@ export function ChangeReviewPanel({ before, after, restoring, onClose, onRestore
     <aside className="change-review-panel" aria-label="图表变更对比">
       <div className="change-review-head">
         <div>
-          <div className="eyebrow">CHANGE REVIEW</div>
           <strong>外部修改</strong>
           <span>+{added} / −{removed}</span>
         </div>
@@ -328,7 +325,6 @@ export function ProposalReviewPanel({ before, after, reason, scopeElementIds, ne
     <aside className="change-review-panel proposal-review-panel" aria-label="AI 候选修改">
       <div className="change-review-head">
         <div>
-          <div className="eyebrow">AI PROPOSAL</div>
           <strong>候选修改</strong>
           <span>+{added} / −{removed}</span>
         </div>
@@ -378,9 +374,9 @@ export function ProposalReviewPanel({ before, after, reason, scopeElementIds, ne
       ) : null}
       {scopeElementIds?.length ? (
         <div className="proposal-scope-summary">
-          <strong>SUBGRAPH</strong>
+          <strong>修改范围</strong>
           <span>
-            {scopeElementIds.length} 个 scope
+            {scopeElementIds.length} 个选中
             {newElementIds?.length ? ` · ${newElementIds.length} 新增` : ''}
             {impactElementIds?.length ? ` · ${impactElementIds.length} 影响` : ''}
             {automaticElementIds?.length ? ` · ${automaticElementIds.length} 自动` : ''}
@@ -393,7 +389,7 @@ export function ProposalReviewPanel({ before, after, reason, scopeElementIds, ne
           <span><strong>{patchSummary.added}</strong> 新增</span>
           <span><strong>{patchSummary.removed}</strong> 删除</span>
           <span>{patchSummary.layout === 'local' ? '局部布局' : '保持布局'}</span>
-          {rebaseable ? <span>并发安全合并</span> : null}
+          {rebaseable ? <span>可合并本地修改</span> : null}
         </div>
       ) : null}
       {reason ? <div className="proposal-review-reason">{reason}</div> : null}

@@ -1,4 +1,5 @@
-import { canvasVisualSkin, canvasStyledBox, isDiagramVisualStyle, type DiagramVisualStyle } from './diagramVisualStyles.js'
+import { canvasVisualSkin, canvasStyledBox, canvasFillTextColor, isDiagramVisualStyle, type DiagramVisualStyle } from './diagramVisualStyles.js'
+import { hexLuminance } from './colors.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { CanvasRectIndex } from './canvasRectIndex.js'
 import {
@@ -401,11 +402,13 @@ export function canvasSceneToSvg(scene: CanvasScene, colors?: { background?: str
     const wrapRotation = (markup: string) => item.rotation
       ? `<g transform="rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})">${markup}</g>`
       : markup
+    const architectureMark = architectureMode && item.type === 'node' && Boolean(item.iconRef || item.stencil || (item.icon && item.icon !== 'user' && item.icon !== 'external'))
     const palette = skin && item.type === 'node'
-      ? { fill: item.fillColor ?? skin.fill, text: rawItem.fillColor || architectureMode ? text : skin.text, stroke: item.strokeColor ?? skin.stroke }
+      ? { fill: item.fillColor ?? skin.fill, text: architectureMark && !rawItem.fillColor ? text : canvasFillTextColor(item.fillColor, skin.text), stroke: item.strokeColor ?? skin.stroke }
       : architectureMode
         ? canvasArchitectureTonePalette(item.tone, { panel, text, border, note }, item.type)
         : canvasTonePalette(item.tone, { panel, text, border, note }, item.type)
+    if (item.type === 'node' && !skin && item.fillColor) palette.text = canvasFillTextColor(item.fillColor, palette.text)
     if (item.type === 'note' && item.textOnly) {
       const fontSize = item.fontSize ?? 20
       const fontWeight = item.fontWeight ?? 500
@@ -1575,14 +1578,6 @@ function canvasArchitectureTonePalette(
     return palettes[tone]
   }
   return canvasTonePalette(tone, colors, kind)
-}
-
-function hexLuminance(value: string): number {
-  const match = value.trim().match(/^#([0-9a-f]{6})$/i)
-  if (!match) return 0.5
-  const rgb = [0, 2, 4].map((offset) => parseInt(match[1].slice(offset, offset + 2), 16) / 255)
-    .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
-  return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
 }
 
 function positive(value: unknown, fallback: number): number {

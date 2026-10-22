@@ -1,4 +1,16 @@
 import type { CanvasNode, CanvasNote, CanvasTone } from './canvas.js'
+import { hexLuminance } from './colors.js'
+
+export function canvasFillTextColor(fill: string | undefined, preferred: string): string {
+  if (!fill || !/^#[0-9a-f]{6}$/i.test(fill)) return preferred
+  const background = hexLuminance(fill)
+  const contrast = (color: string) => {
+    const foreground = hexLuminance(color)
+    return (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05)
+  }
+  if (contrast(preferred) >= 4.5) return preferred
+  return contrast('#f8fafc') > contrast('#18181b') ? '#f8fafc' : '#18181b'
+}
 
 export const diagramVisualStyles = [
   { id: 'ocean', label: '蓝色产品', usage: '产品方案、接口流程、技术说明；蓝色主链、白色节点、柔和投影' },

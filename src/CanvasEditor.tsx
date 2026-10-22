@@ -1,10 +1,10 @@
-import { canvasVisualSkin, canvasStyledBox, diagramVisualStyles, type DiagramVisualStyle } from './diagramVisualStyles.js'
+import { canvasVisualSkin, canvasStyledBox, canvasFillTextColor, diagramVisualStyles, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { CanvasRectIndex } from './canvasRectIndex.js'
 import { canvasArrowCrossesViewport } from './canvasViewport.js'
-import { buildCanvasPlaybackPlan, playbackActionTarget, playbackBoundsForIds, playbackInspectorOptions, playbackActionIntent, commonPrefixLength, playbackPhaseLabel, type CanvasPlaybackPhase } from './canvasPlayback.js'
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
+import { buildCanvasPlaybackPlan } from './canvasPlayback.js'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Hand, Link2, MousePointer2, Shapes, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
 import { anchorPoint, canvasArchitectureCardTemplate, canvasArchitectureHeader, canvasArchitectureProjection, canvasArchitectureRelationLabelVisible, canvasArchitectureScopeProjection, canvasArrowBoxRoute, canvasArrowLabelLayouts, canvasArrowPath, canvasArrowRoutePath, canvasArrowRoutePoints, canvasBundleTrunks, canvasCollapsedConnections, canvasCollapsedOwners, canvasGroupFrames, canvasIconLabel, canvasIconPaths, canvasIconRefLabel, canvasIconRefMarkup, canvasSemanticLodProjection, resolveCanvasSemanticLod, canvasStencilLabel, canvasStencilVisual, c4Label, parseCanvasScene, serializeCanvasScene, type CanvasAnchor, type CanvasArchitectureDensity, type CanvasArchitectureScope, type CanvasArchitectureView, type CanvasArrow, type CanvasC4Type, type CanvasElement, type CanvasGroup, type CanvasGroupFrame, type CanvasIcon, type CanvasIconRef, type CanvasLineStyle, type CanvasNode, type CanvasNote, type CanvasPoint, type CanvasRouting, type CanvasScene, type CanvasSemanticLodLevel, type CanvasShape, type CanvasStencil, type CanvasTone } from './canvas.js'
@@ -58,39 +58,6 @@ type SnapGuides = {
 }
 type InsertTarget = { arrowId: string; point: CanvasPoint }
 type GestureVisualDraft = { positions: Record<string, CanvasPoint>; guides: SnapGuides; insertTarget: InsertTarget | null }
-type PlaybackState = {
-  active: boolean
-  visibleIds: string[]
-  cursor: CanvasPoint
-  cursorVisible: boolean
-  clicking: boolean
-  currentElementId?: string
-  drawingArrowId?: string
-  typing?: { id: string; text: string }
-  positionOverrides?: Record<string, CanvasPoint>
-  boxOverrides?: Record<string, CanvasNode | CanvasNote>
-  arrowOverrides?: Record<string, CanvasArrow>
-  groupFrameOverrides?: Record<string, CanvasGroupFrame>
-  toolHint?: 'select' | 'node' | 'note' | 'connect'
-  phase?: CanvasPlaybackPhase
-  intent?: string
-  regionLabel?: string
-  regionIndex?: number
-  totalRegions?: number
-  activeRegionIds?: string[]
-  selectionBox?: { x: number; y: number; width: number; height: number }
-  boundaryDraft?: { x: number; y: number; width: number; height: number; label?: string }
-  visibleGroupIds?: string[]
-  inspectorPreview?: { title: string; rows: Array<{ label: string; value: string }>; activeIndex: number }
-  inspectorDropdownOpen?: boolean
-  ghostElements?: CanvasElement[]
-  deletingIds?: string[]
-  anchorPreview?: { from: CanvasPoint; to: CanvasPoint; path?: string; active: 'from' | 'to' }
-  finalHighlightIds?: string[]
-  step: number
-  total: number
-  label: string
-}
 type DragState =
   | { kind: 'move'; pointerId: number; startX: number; startY: number; before: string; positions: Map<string, { x: number; y: number }> }
   | { kind: 'pan'; pointerId: number; clientX: number; clientY: number; start: Viewport }
@@ -277,7 +244,7 @@ function relationLabelScene(scene: CanvasScene, architecture: boolean, level: Ca
 }
 
 
-const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, darkTheme, architecture, density, level, selected, imageSource, typingText }: {
+const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, darkTheme, architecture, density, level, selected, imageSource }: {
   item: CanvasNode | CanvasNote
   visualStyle?: DiagramVisualStyle
   darkTheme: boolean
@@ -286,18 +253,20 @@ const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, dar
   level: CanvasSemanticLodLevel
   selected: boolean
   imageSource?: string
-  typingText?: string
 }) {
   const originalItem = item
   const skin = canvasVisualSkin(originalItem.type === 'note' ? undefined : visualStyle, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
   const displayItem = canvasStyledBox(originalItem, skin)
-  const displayText = typingText ?? displayItem.text
+  const displayText = displayItem.text
   const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
   const imageFit = displayItem.type === 'note' ? displayItem.imageFit : undefined
   const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
   const cardTemplate = canvasArchitectureCardTemplate(displayItem)
   const cardMeta = displayItem.iconRef ? canvasIconRefLabel(displayItem.iconRef) : displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
   const architectureMark = Boolean(architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
+  const titleColor = architectureMark && !originalItem.fillColor
+    ? darkTheme ? '#f8fafc' : '#243247'
+    : canvasFillTextColor(displayItem.fillColor, skin?.text ?? (darkTheme ? '#f8fafc' : '#243247'))
   const stencilVisual = displayItem.stencil ? canvasStencilVisual(displayItem.stencil) : undefined
   const iconRefMarkup = displayItem.iconRef ? canvasIconRefMarkup(displayItem.iconRef, false, 'currentColor') : undefined
   const showNodeTitle = !imagePath && (level !== 'regions' || selected || displayItem.emphasis === 'primary')
@@ -359,10 +328,9 @@ const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, dar
                   style={{ fontSize: displayItem.fontSize ?? 20, fontWeight: displayItem.fontWeight ?? 500, fill: displayItem.textColor ?? undefined }}
                 >
                   {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
-                  {typingText !== undefined ? <tspan className="freeform-ai-caret">│</tspan> : null}
                 </text>
-              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : architecture ? darkTheme ? '#f8fafc' : '#243247' : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
-                {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{typingText !== undefined ? <tspan className="freeform-ai-caret">│</tspan> : null}
+              ) : <text style={displayItem.type === 'node' && (skin || originalItem.fillColor) ? { fill: titleColor, fontFamily: skin?.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+                {truncate(displayText, architectureCard ? cardTitleLimit : 28)}
               </text> : null}
               {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
               {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
@@ -431,9 +399,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [sourceLinkQuery, setSourceLinkQuery] = useState('')
   const [sourceLinkOptions, setSourceLinkOptions] = useState<string[]>([])
   const [sourceLinkLoading, setSourceLinkLoading] = useState(false)
+  const [sourceLinkError, setSourceLinkError] = useState<string | null>(null)
   const [layersOpen, setLayersOpen] = useState(false)
+  const [compactToolbar, setCompactToolbar] = useState(false)
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false)
   const [layerQuery, setLayerQuery] = useState('')
-  const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'flowchart' | 'analysis' | null>(null)
+  const [toolbarMenu, setToolbarMenu] = useState<'architecture' | 'flowchart' | 'analysis' | 'insert' | 'style' | null>(null)
   const [architecturePanel, setArchitecturePanel] = useState<'settings' | 'assets'>('settings')
   const [assetQuery, setAssetQuery] = useState('')
   const [assetProvider, setAssetProvider] = useState<'all' | ArchitectureNodeTemplateProvider>('all')
@@ -449,13 +420,18 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const [iconPickerSource, setIconPickerSource] = useState<'all' | CanvasIconSource>('all')
   const [selectedGroupTarget, setSelectedGroupTarget] = useState<string | null>(null)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
-  const [playback, setPlayback] = useState<PlaybackState | null>(null)
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
+  const [minimapOpen, setMinimapOpen] = useState<boolean | null>(null)
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
   const [traceDirection, setTraceDirection] = useState<CanvasTraceDirection | null>(null)
   const [traceDepth, setTraceDepth] = useState(2)
   const editorRef = useRef<HTMLDivElement>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const initialViewportSet = useRef(false)
   const svgRef = useRef<SVGSVGElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
   const drag = useRef<DragState | null>(null)
+  const moveStartedWithInspector = useRef(false)
   const moveLabels = useRef<{
     scene: CanvasScene
     viewport: Viewport
@@ -476,8 +452,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const redoStack = useRef<string[]>([])
   const [, refreshHistoryControls] = useState(0)
   const clipboard = useRef<CanvasElement[]>([])
-  const playbackRun = useRef(0)
-  const playbackCursor = useRef<CanvasPoint>({ x: 72, y: 72 })
+  const layoutBefore = useRef<CanvasScene | null>(null)
+  const lastTransitionKey = useRef<string | undefined>(undefined)
+  const lastFocusKey = useRef<string | undefined>(undefined)
+  const lastTraceKey = useRef<string | undefined>(undefined)
   const viewportRef = useRef(viewport)
   const arrowEndpointPreviewRef = useRef<typeof arrowEndpointPreview>(null)
   const insertTargetRef = useRef<typeof insertTarget>(null)
@@ -492,6 +470,33 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const gestureVisualFrameRef = useRef<number | null>(null)
   const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
   const geometryDraftFrameRef = useRef<number | null>(null)
+
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const updateSize = (width: number) => {
+      if (width <= 0) return
+      setCompactToolbar(width < 560)
+      if (width >= 560) setMoreToolsOpen(false)
+      if (initialViewportSet.current || !parsed.scene) return
+      initialViewportSet.current = true
+      if (width > 620 || focusKey) return
+      const live = parsed.scene
+      const target = live.elements.find((item) => item.type === 'node' && item.emphasis === 'primary')
+        ?? live.elements.find((item) => item.type !== 'arrow')
+      if (!target || target.type === 'arrow') return
+      const zoom = clamp(live.width / width, 1, MAX_ZOOM)
+      setViewport({
+        x: target.x + target.width / 2 - live.width / zoom / 2,
+        y: target.y + target.height / 2 - live.height / zoom / 2,
+        zoom,
+      })
+    }
+    updateSize(surface.getBoundingClientRect().width)
+    const observer = new ResizeObserver(([entry]) => updateSize(entry.contentRect.width))
+    observer.observe(surface)
+    return () => observer.disconnect()
+  }, [Boolean(parsed.scene), focusKey])
 
   useEffect(() => {
     if (source !== sourceRef.current) {
@@ -559,21 +564,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [connectFrom])
 
   useEffect(() => {
-    if (!playback?.active) return
-    setToolbarMenu(null)
-    setLayersOpen(false)
-    setInspectorMenuOpen(false)
-    setContextMenu(null)
-    setSelectedIds([])
-    setSelectedGroupTarget(null)
-    setTraceDirection(null)
-    arrowEndpointPreviewRef.current = null
-    setArrowEndpointPreview(null)
-    clearGestureVisual()
-    clearGeometryDrafts()
-  }, [playback?.active])
-
-  useEffect(() => {
     const closeTransientMenus = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Element)) return
@@ -593,12 +583,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const element = editorRef.current
     if (!element) return
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
       const target = event.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
-      if (playback?.active) {
-        if (event.code === 'Space' || event.key === 'Backspace' || event.key === 'Delete' || event.metaKey || event.ctrlKey) event.preventDefault()
-        return
-      }
+      if (target && (target.isContentEditable || target.closest('input, textarea, select, button, a, summary, [role="combobox"], [role="listbox"], [role="menu"]'))) return
       const mod = event.metaKey || event.ctrlKey
       if (event.code === 'Space') {
         event.preventDefault()
@@ -711,6 +698,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [parsed.scene, selectedIds])
 
   useEffect(() => {
+    setInspectorCollapsed(false)
+    setSourceLinkError(null)
     setSourceLinkQuery('')
     setSourceLinkOptions([])
     setInspectorMenuOpen(false)
@@ -720,14 +709,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     if (!selectedBoxForLinks || !onSearchSources || !sourceLinkQuery.trim()) {
       setSourceLinkLoading(false)
       setSourceLinkOptions([])
+      setSourceLinkError(null)
       return
     }
     let cancelled = false
     const handle = window.setTimeout(() => {
       setSourceLinkLoading(true)
+      setSourceLinkError(null)
       void onSearchSources(sourceLinkQuery.trim())
         .then((files) => {
           if (!cancelled) setSourceLinkOptions(files.filter((path) => !selectedBoxForLinks.sourcePaths?.includes(path)).slice(0, 8))
+        })
+        .catch((cause) => {
+          if (!cancelled) {
+            setSourceLinkOptions([])
+            setSourceLinkError(cause instanceof Error ? cause.message : '搜索源码失败')
+          }
         })
         .finally(() => {
           if (!cancelled) setSourceLinkLoading(false)
@@ -740,9 +737,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [onSearchSources, selectedBoxForLinks, sourceLinkQuery])
 
   useEffect(() => {
-    if (!parsed.scene || !focusElementIds?.length || !focusKey) return
+    if (!parsed.scene || !focusElementIds?.length || !focusKey || focusKey === lastFocusKey.current) return
     const targets = parsed.scene.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && focusElementIds.includes(item.id))
     if (!targets.length) return
+    lastFocusKey.current = focusKey
     setSelectedIds(targets.map((item) => item.id))
     const left = Math.min(...targets.map((item) => item.x))
     const top = Math.min(...targets.map((item) => item.y))
@@ -763,7 +761,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [focusElementIds, focusKey, parsed.scene])
 
   useEffect(() => {
-    if (!focusKey) return
+    if (!focusKey || focusKey === lastTraceKey.current) return
+    lastTraceKey.current = focusKey
     if (!traceRequest || traceRequest.key !== focusKey) {
       setTraceDirection(null)
       return
@@ -780,591 +779,63 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }, [focusKey, parsed.scene, traceRequest?.key])
 
   useEffect(() => {
-    if (!playbackRequest?.key || !parsed.scene) return
-    const runId = ++playbackRun.current
-    const isActiveRun = () => playbackRun.current === runId
-    const completePlayback = () => onPlaybackComplete?.(playbackRequest.key)
-    if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setPlayback(null)
-      completePlayback()
+    const external = playbackRequest?.key && playbackRequest.key !== lastTransitionKey.current ? playbackRequest : null
+    let before = layoutBefore.current
+    layoutBefore.current = null
+    if (!external && !before) return
+    if (external) {
+      lastTransitionKey.current = external.key
+      if (external.fromSource) {
+        // 旧文件可能是正在修复的无效 JSON；此时直接展示最新结果。
+        try { before = parseCanvasScene(external.fromSource) } catch { onPlaybackComplete?.(external.key); return }
+      }
+    }
+    if (!parsed.scene || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (external) onPlaybackComplete?.(external.key)
       return
     }
-    let previous: CanvasScene | undefined
-    if (playbackRequest.fromSource) {
-      try { previous = parseCanvasScene(playbackRequest.fromSource) } catch { previous = undefined }
-    }
-    const plan = buildCanvasPlaybackPlan(previous, parsed.scene, playbackRequest.mode)
-    if (!plan.actions.length) {
-      setPlayback(null)
-      completePlayback()
-      return
-    }
-    const pace = plan.actions.length > 60 ? 0.3 : plan.actions.length > 36 ? 0.46 : plan.actions.length > 20 ? 0.68 : 1
-    const regionByKey = new Map(plan.regions.map((region, index) => [region.key, { ...region, index }]))
-    const playbackPositions = new Map<string, CanvasPoint>(Object.entries(plan.initialPositionOverrides))
-    const firstTarget = playbackActionTarget(parsed.scene, plan.actions[0]) ?? { x: 72, y: 72 }
-    const firstRegion = regionByKey.get(plan.actions[0].regionKey)
-    playbackCursor.current = { x: Math.max(36, firstTarget.x - 96), y: Math.max(36, firstTarget.y - 72) }
-    setPlayback({
-      active: true,
-      visibleIds: plan.initialVisibleIds,
-      visibleGroupIds: plan.initialVisibleGroupIds,
-      cursor: playbackCursor.current,
-      cursorVisible: true,
-      clicking: false,
-      positionOverrides: plan.initialPositionOverrides,
-      boxOverrides: plan.initialBoxOverrides,
-      arrowOverrides: plan.initialArrowOverrides,
-      groupFrameOverrides: plan.initialGroupFrameOverrides,
-      ghostElements: plan.ghostElements,
-      phase: 'planning',
-      intent: firstRegion ? `准备绘制 ${firstRegion.label}` : '准备绘制画板',
-      regionLabel: firstRegion?.label,
-      regionIndex: firstRegion ? firstRegion.index + 1 : undefined,
-      totalRegions: plan.regions.length || undefined,
-      activeRegionIds: firstRegion?.elementIds,
-      step: 0,
-      total: plan.actions.length,
-      label: playbackRequest.label || (playbackRequest.mode === 'create' ? 'Codex 正在绘制画板' : 'Codex 正在调整画板'),
+    const next = parsed.scene
+    const plan = buildCanvasPlaybackPlan(before ?? undefined, next, external?.mode ?? 'update')
+    const changedIds = new Set(plan.actions.flatMap((action) => action.kind === 'arrange' ? action.ids
+      : action.kind === 'boundary' ? [] : action.kind === 'delete' ? [action.element.id] : [action.id]))
+    const previousById = new Map(before?.elements.map((item) => [item.id, item]) ?? [])
+    const nextById = new Map(next.elements.map((item) => [item.id, item]))
+    const regionOrder = new Map(plan.regions.flatMap((region, index) => region.elementIds.map((id) => [id, index] as const)))
+    setHighlightedIds(changedIds)
+    const animations: Animation[] = []
+    const frame = window.requestAnimationFrame(() => {
+      for (const element of svgRef.current?.querySelectorAll<SVGGElement>('g[data-element-id]') ?? []) {
+        const id = element.dataset.elementId!
+        if (!changedIds.has(id)) continue
+        const previous = previousById.get(id)
+        const current = nextById.get(id)
+        if (!previous) {
+          animations.push(element.animate([{ opacity: 0 }, { opacity: 1 }], {
+            duration: 180, delay: external?.mode === 'create' ? Math.min(120, (regionOrder.get(id) ?? 0) * 40) : 0,
+            easing: 'ease-out', fill: 'backwards',
+          }))
+        } else if (previous.type !== 'arrow' && current && current.type !== 'arrow'
+          && (previous.x !== current.x || previous.y !== current.y)) {
+          animations.push(element.animate([
+            { translate: `${previous.x - current.x}px ${previous.y - current.y}px` }, { translate: '0px 0px' },
+          ], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' }))
+        }
+      }
     })
-
-    const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
-    const moveCursor = (target: CanvasPoint, duration: number) => new Promise<void>((resolve) => {
-      const from = playbackCursor.current
-      const started = performance.now()
-      const frame = (now: number) => {
-        if (playbackRun.current !== runId) return resolve()
-        const raw = Math.min(1, (now - started) / duration)
-        const eased = 1 - Math.pow(1 - raw, 3)
-        const next = { x: from.x + (target.x - from.x) * eased, y: from.y + (target.y - from.y) * eased }
-        playbackCursor.current = next
-        setPlayback((current) => current ? { ...current, cursor: next, cursorVisible: true } : current)
-        if (raw < 1) window.requestAnimationFrame(frame)
-        else resolve()
-      }
-      window.requestAnimationFrame(frame)
-    })
-
-    const moveCamera = (target: CanvasPoint, duration = 260, preferredZoom = 1.12) => new Promise<void>((resolve) => {
-      const live = parsed.scene!
-      const from = viewportRef.current
-      const zoom = clamp(preferredZoom, 0.82, 1.85)
-      const width = live.width / zoom
-      const height = live.height / zoom
-      const to: Viewport = {
-        zoom,
-        x: clamp(target.x - width / 2, 0, Math.max(0, live.width - width)),
-        y: clamp(target.y - height / 2, 0, Math.max(0, live.height - height)),
-      }
-      if (Math.abs(from.x - to.x) < 8 && Math.abs(from.y - to.y) < 8 && Math.abs(from.zoom - to.zoom) < 0.03) return resolve()
-      const started = performance.now()
-      const frame = (now: number) => {
-        if (playbackRun.current !== runId) return resolve()
-        const raw = Math.min(1, (now - started) / duration)
-        const eased = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2
-        const next = {
-          x: from.x + (to.x - from.x) * eased,
-          y: from.y + (to.y - from.y) * eased,
-          zoom: from.zoom + (to.zoom - from.zoom) * eased,
-        }
-        viewportRef.current = next
-        setViewport(next)
-        if (raw < 1) window.requestAnimationFrame(frame)
-        else resolve()
-      }
-      window.requestAnimationFrame(frame)
-    })
-
-    const livePlaybackBox = (box: CanvasNode | CanvasNote): CanvasNode | CanvasNote => {
-      const point = playbackPositions.get(box.id)
-      return point ? { ...box, x: point.x, y: point.y } : box
-    }
-
-    const enterRegion = async (regionKey: string, previousRegionKey?: string) => {
-      const nextRegion = regionByKey.get(regionKey)
-      if (!nextRegion) return
-      const previousRegion = previousRegionKey ? regionByKey.get(previousRegionKey) : undefined
-      if (previousRegion && previousRegion.key !== nextRegion.key) {
-        setPlayback((current) => current ? {
-          ...current,
-          phase: 'transitioning',
-          intent: `完成 ${previousRegion.label}`,
-          toolHint: 'select',
-          activeRegionIds: previousRegion.elementIds,
-        } : current)
-        await moveCamera(previousRegion.center, 180 * pace, 0.9)
-        if (!isActiveRun()) return
-        await sleep(100 * pace)
-        if (!isActiveRun()) return
-      }
-      const regionZoom = clamp(Math.min(
-        parsed.scene!.width / Math.max(540, nextRegion.width + 420),
-        parsed.scene!.height / Math.max(360, nextRegion.height + 300),
-      ), 1.02, 1.55)
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'planning',
-        intent: `进入 ${nextRegion.label}`,
-        regionLabel: nextRegion.label,
-        regionIndex: nextRegion.index + 1,
-        totalRegions: plan.regions.length,
-        activeRegionIds: nextRegion.elementIds,
-        toolHint: 'select',
-      } : current)
-      await moveCamera(nextRegion.center, 300 * pace, regionZoom)
-      if (!isActiveRun()) return
-      await sleep(90 * pace)
-      if (!isActiveRun()) return
-    }
-
-    const typeText = async (id: string, text: string, fromText = '') => {
-      if (!text || text === fromText) return
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'typing',
-        typing: { id, text: fromText },
-        toolHint: 'select',
-        intent: `输入 ${truncate(text, 22)}`,
-      } : current)
-      const prefix = commonPrefixLength(fromText, text)
-      const start = fromText.slice(0, prefix)
-      const tail = text.slice(prefix)
-      const chunks = Math.min(pace < 0.5 ? 8 : pace < 0.8 ? 14 : 24, Math.max(1, tail.length))
-      for (let index = 1; index <= chunks; index += 1) {
-        if (playbackRun.current !== runId) return
-        const end = Math.ceil((tail.length * index) / chunks)
-        setPlayback((current) => current ? { ...current, typing: { id, text: start + tail.slice(0, end) } } : current)
-        await sleep(Math.max(10, Math.min(44, (360 * pace) / chunks)))
-      }
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? { ...current, typing: undefined } : current)
-    }
-
-    const dragBoxToFinal = (id: string, before: CanvasNode | CanvasNote, after: CanvasNode | CanvasNote) => new Promise<void>((resolve) => {
-      if (before.x === after.x && before.y === after.y) return resolve()
-      const from = { x: before.x, y: before.y }
-      const to = { x: after.x, y: after.y }
-      const started = performance.now()
-      const duration = 420 * pace
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'arranging',
-        toolHint: 'select',
-        clicking: true,
-        positionOverrides: { ...(current.positionOverrides ?? {}), [id]: from },
-      } : current)
-      const frame = (now: number) => {
-        if (playbackRun.current !== runId) return resolve()
-        const raw = Math.min(1, (now - started) / duration)
-        const eased = 1 - Math.pow(1 - raw, 3)
-        const point = { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased }
-        playbackCursor.current = { x: point.x + after.width / 2, y: point.y + after.height / 2 }
-        setPlayback((current) => current ? {
-          ...current,
-          cursor: playbackCursor.current,
-          positionOverrides: { ...(current.positionOverrides ?? {}), [id]: point },
-        } : current)
-        if (raw < 1) window.requestAnimationFrame(frame)
-        else {
-          setPlayback((current) => {
-            if (!current) return current
-            const next = { ...(current.positionOverrides ?? {}) }
-            delete next[id]
-            return { ...current, clicking: false, positionOverrides: next }
-          })
-          playbackPositions.delete(id)
-          resolve()
-        }
-      }
-      window.requestAnimationFrame(frame)
-    })
-
-    const animateSelection = async (ids: string[], intent: string) => {
-      const bounds = playbackBoundsForIds(parsed.scene!, ids, playbackPositions)
-      if (!bounds) return
-      const start = { x: Math.max(0, bounds.x - 18), y: Math.max(0, bounds.y - 18) }
-      const end = { x: Math.min(parsed.scene!.width, bounds.x + bounds.width + 18), y: Math.min(parsed.scene!.height, bounds.y + bounds.height + 18) }
-      await moveCamera({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }, 220 * pace, 1.12)
-      if (!isActiveRun()) return
-      await moveCursor(start, 180 * pace)
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'selecting',
-        intent,
-        toolHint: 'select',
-        clicking: true,
-        selectionBox: { x: start.x, y: start.y, width: 0, height: 0 },
-      } : current)
-      const started = performance.now()
-      await new Promise<void>((resolve) => {
-        const duration = 320 * pace
-        const frame = (now: number) => {
-          if (playbackRun.current !== runId) return resolve()
-          const raw = Math.min(1, (now - started) / Math.max(80, duration))
-          const eased = 1 - Math.pow(1 - raw, 3)
-          const cursor = { x: start.x + (end.x - start.x) * eased, y: start.y + (end.y - start.y) * eased }
-          playbackCursor.current = cursor
-          setPlayback((current) => current ? {
-            ...current,
-            cursor,
-            selectionBox: { x: start.x, y: start.y, width: cursor.x - start.x, height: cursor.y - start.y },
-          } : current)
-          if (raw < 1) window.requestAnimationFrame(frame)
-          else resolve()
-        }
-        window.requestAnimationFrame(frame)
-      })
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? { ...current, clicking: false } : current)
-      await sleep(90 * pace)
-      if (!isActiveRun()) return
-    }
-
-    const arrangeRegion = async (ids: string[], regionLabel: string) => {
-      if (!ids.length) return
-      await animateSelection(ids, `框选 ${regionLabel} 节点`)
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'arranging',
-        intent: `整理 ${regionLabel} 布局`,
-        toolHint: 'select',
-      } : current)
-      for (const id of ids) {
-        const after = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === id)
-        if (!after) continue
-        const point = playbackPositions.get(id)
-        if (!point || (Math.abs(point.x - after.x) < 1 && Math.abs(point.y - after.y) < 1)) continue
-        const before = { ...after, x: point.x, y: point.y }
-        await moveCursor(center(before), 100 * pace)
-        if (!isActiveRun()) return
-        await dragBoxToFinal(id, before, after)
-        if (!isActiveRun()) return
-      }
-      setPlayback((current) => current ? { ...current, selectionBox: undefined } : current)
-      await sleep(80 * pace)
-      if (!isActiveRun()) return
-    }
-
-    const drawBoundary = async (groupId: string, regionLabel: string, beforeRect?: { x: number; y: number; width: number; height: number }) => {
-      const frame = canvasGroupFrames(parsed.scene!).find((group) => group.id === groupId)
-      if (!frame) return
-      await animateSelection(frame.memberIds, `框选 ${regionLabel} 成员`)
-      if (!isActiveRun()) return
-      const finalRect = { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
-      const initialRect = beforeRect ?? { x: frame.x, y: frame.y, width: 0, height: 0 }
-      const startHandle = beforeRect
-        ? { x: beforeRect.x + beforeRect.width, y: beforeRect.y + beforeRect.height }
-        : { x: frame.x, y: frame.y }
-      const endHandle = { x: frame.x + frame.width, y: frame.y + frame.height }
-      await moveCursor(startHandle, 120 * pace)
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? {
-        ...current,
-        phase: 'grouping',
-        intent: `${beforeRect ? '调整' : '创建'} ${regionLabel} 边界`,
-        clicking: true,
-        boundaryDraft: { ...initialRect, label: frame.label },
-      } : current)
-      const started = performance.now()
-      await new Promise<void>((resolve) => {
-        const duration = 340 * pace
-        const tick = (now: number) => {
-          if (playbackRun.current !== runId) return resolve()
-          const raw = Math.min(1, (now - started) / Math.max(90, duration))
-          const eased = 1 - Math.pow(1 - raw, 3)
-          const cursor = { x: startHandle.x + (endHandle.x - startHandle.x) * eased, y: startHandle.y + (endHandle.y - startHandle.y) * eased }
-          playbackCursor.current = cursor
-          setPlayback((current) => current ? {
-            ...current,
-            cursor,
-            boundaryDraft: {
-              x: initialRect.x + (finalRect.x - initialRect.x) * eased,
-              y: initialRect.y + (finalRect.y - initialRect.y) * eased,
-              width: initialRect.width + (finalRect.width - initialRect.width) * eased,
-              height: initialRect.height + (finalRect.height - initialRect.height) * eased,
-              label: frame.label,
-            },
-          } : current)
-          if (raw < 1) window.requestAnimationFrame(tick)
-          else resolve()
-        }
-        window.requestAnimationFrame(tick)
-      })
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? {
-        ...current,
-        clicking: false,
-        boundaryDraft: undefined,
-        selectionBox: undefined,
-        visibleGroupIds: [...new Set([...(current.visibleGroupIds ?? []), groupId])],
-        groupFrameOverrides: removeRecordKey(current.groupFrameOverrides, groupId),
-      } : current)
-      await sleep(100 * pace)
-      if (!isActiveRun()) return
-    }
-
-    const previewStyle = async (id: string, rows: Array<{ label: string; value: string }>) => {
-      if (!rows.length) return
-      const box = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === id)
-      if (!box) return
-      await moveCursor(center(livePlaybackBox(box)), 150 * pace)
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? {
-        ...current,
-        currentElementId: id,
-        phase: 'styling',
-        intent: `调整 ${truncate(box.text, 18)} 属性`,
-        toolHint: 'select',
-        inspectorPreview: { title: box.text, rows, activeIndex: 0 },
-      } : current)
-      for (let index = 0; index < rows.length; index += 1) {
-        if (playbackRun.current !== runId) return
-        const dropdown = ['语义色', '形状', '图形', '角色', '技术栈', 'C4'].includes(rows[index].label)
-        setPlayback((current) => current?.inspectorPreview ? {
-          ...current,
-          intent: `设置 ${rows[index].label} · ${rows[index].value}`,
-          inspectorPreview: { ...current.inspectorPreview, activeIndex: index },
-          inspectorDropdownOpen: dropdown,
-          clicking: true,
-        } : current)
-        await sleep(90 * pace)
-        if (!isActiveRun()) return
-        setPlayback((current) => current ? { ...current, clicking: false } : current)
-        await sleep((dropdown ? 150 : 80) * pace)
-        if (!isActiveRun()) return
-        setPlayback((current) => current ? { ...current, inspectorDropdownOpen: false } : current)
-      }
-      setPlayback((current) => current ? { ...current, inspectorPreview: undefined, inspectorDropdownOpen: false, currentElementId: undefined } : current)
-      await sleep(60 * pace)
-      if (!isActiveRun()) return
-    }
-
-    void (async () => {
-      await sleep(140 * pace)
-      let activeRegionKey: string | undefined
-      for (let index = 0; index < plan.actions.length; index += 1) {
-        if (playbackRun.current !== runId) return
-        const action = plan.actions[index]
-        if (action.regionKey !== activeRegionKey) {
-          await enterRegion(action.regionKey, activeRegionKey)
-          if (!isActiveRun()) return
-          activeRegionKey = action.regionKey
-        }
-        if (action.kind === 'delete') {
-          const deleted = action.element
-          const ghostBoxes = [...plan.ghostElements, ...parsed.scene!.elements].filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-          const target = deleted.type !== 'arrow'
-            ? center(deleted)
-            : (() => {
-                const from = ghostBoxes.find((item) => item.id === deleted.from)
-                const to = ghostBoxes.find((item) => item.id === deleted.to)
-                return from && to ? { x: (center(from).x + center(to).x) / 2, y: (center(from).y + center(to).y) / 2 } : null
-              })()
-          if (target) {
-            await moveCamera(target, 220 * pace, 1.08)
-            if (!isActiveRun()) return
-            await moveCursor(target, 180 * pace)
-            if (!isActiveRun()) return
-          }
-          const selection = deleted.type === 'arrow'
-            ? undefined
-            : { x: deleted.x - 10, y: deleted.y - 10, width: deleted.width + 20, height: deleted.height + 20 }
-          setPlayback((current) => current ? {
-            ...current,
-            phase: 'selecting',
-            toolHint: 'select',
-            intent: playbackActionIntent(parsed.scene!, action),
-            selectionBox: selection,
-            deletingIds: [deleted.id],
-            clicking: true,
-            step: index + 1,
-          } : current)
-          await sleep(120 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? { ...current, clicking: false } : current)
-          await sleep(160 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? {
-            ...current,
-            ghostElements: current.ghostElements?.filter((item) => item.id !== deleted.id),
-            deletingIds: undefined,
-            selectionBox: undefined,
-          } : current)
-          await sleep(70 * pace)
-          if (!isActiveRun()) return
-          continue
-        }
-        const target = playbackActionTarget(parsed.scene!, action)
-        if (!target) continue
-        await moveCamera(target, 260 * pace)
-        if (!isActiveRun()) return
-        if (action.kind === 'box') {
-          const box = parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === action.id)
-          if (!box) continue
-          const toolHint = action.added ? (box.type === 'note' ? 'note' : 'node') : 'select'
-          setPlayback((current) => current ? {
-            ...current,
-            phase: action.added ? 'placing' : 'typing',
-            toolHint,
-            intent: playbackActionIntent(parsed.scene!, action),
-          } : current)
-          await moveCursor(target, 300 * pace)
-          if (playbackRun.current !== runId) return
-          if (action.added && action.rough) playbackPositions.set(action.id, action.rough)
-          setPlayback((current) => current ? {
-            ...current,
-            visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
-            currentElementId: action.id,
-            clicking: true,
-            typing: action.added ? { id: action.id, text: '' } : current.typing,
-            positionOverrides: action.added && action.rough
-              ? { ...(current.positionOverrides ?? {}), [action.id]: action.rough }
-              : current.positionOverrides,
-            toolHint,
-            phase: action.added ? 'placing' : current.phase,
-            step: index + 1,
-          } : current)
-          await sleep(100 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? { ...current, clicking: false } : current)
-          await typeText(action.id, box.text, action.added ? '' : action.before?.text ?? box.text)
-          if (!isActiveRun()) return
-          if (action.before) {
-            const hasStyleAction = plan.actions.some((candidate) => candidate.kind === 'style' && candidate.id === action.id)
-            setPlayback((current) => {
-              if (!current) return current
-              if (!hasStyleAction) return { ...current, boxOverrides: removeRecordKey(current.boxOverrides, action.id) }
-              return {
-                ...current,
-                boxOverrides: {
-                  ...(current.boxOverrides ?? {}),
-                  [action.id]: {
-                    ...action.before!,
-                    x: box.x,
-                    y: box.y,
-                    width: box.width,
-                    height: box.height,
-                    text: box.text,
-                  },
-                },
-              }
-            })
-          }
-          await sleep((action.added ? 120 : 80) * pace)
-          if (!isActiveRun()) return
-        } else if (action.kind === 'arrange') {
-          const region = regionByKey.get(action.regionKey)
-          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
-          await arrangeRegion(action.ids, region?.label ?? '当前区域')
-          if (!isActiveRun()) return
-        } else if (action.kind === 'boundary') {
-          const region = regionByKey.get(action.regionKey)
-          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
-          await drawBoundary(action.groupId, region?.label ?? '当前区域', action.beforeRect)
-          if (!isActiveRun()) return
-        } else if (action.kind === 'style') {
-          setPlayback((current) => current ? { ...current, step: index + 1 } : current)
-          await previewStyle(action.id, action.rows)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? { ...current, boxOverrides: removeRecordKey(current.boxOverrides, action.id) } : current)
-        } else {
-          const arrow = parsed.scene!.elements.find((item): item is CanvasArrow => item.type === 'arrow' && item.id === action.id)
-          const from = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.from) : undefined
-          const to = arrow ? parsed.scene!.elements.find((item): item is CanvasNode | CanvasNote => item.type !== 'arrow' && item.id === arrow.to) : undefined
-          if (!arrow || !from || !to) continue
-          const fromDisplay = livePlaybackBox(from)
-          const toDisplay = livePlaybackBox(to)
-          const route = canvasArrowBoxRoute(fromDisplay, toDisplay, arrow, arrow.from === arrow.to)
-          const fromAnchorPoint = route[0]
-          const toAnchorPoint = route.at(-1)!
-          const previewPath = canvasArrowRoutePath(route, arrow.freehand)
-          setPlayback((current) => current ? {
-            ...current,
-            phase: 'connecting',
-            toolHint: 'connect',
-            intent: playbackActionIntent(parsed.scene!, action),
-            anchorPreview: { from: fromAnchorPoint, to: toAnchorPoint, path: previewPath, active: 'from' },
-          } : current)
-          await moveCursor(fromAnchorPoint, 190 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? {
-            ...current,
-            visibleIds: action.added ? [...new Set([...current.visibleIds, action.id])] : current.visibleIds,
-            arrowOverrides: removeRecordKey(current.arrowOverrides, action.id),
-            drawingArrowId: action.id,
-            currentElementId: undefined,
-            clicking: true,
-            step: index + 1,
-          } : current)
-          await sleep(90 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? { ...current, clicking: false, anchorPreview: current.anchorPreview ? { ...current.anchorPreview, active: 'to' } : undefined } : current)
-          await moveCursor(toAnchorPoint, 360 * pace)
-          if (!isActiveRun()) return
-          setPlayback((current) => current ? { ...current, drawingArrowId: undefined, anchorPreview: undefined } : current)
-          await sleep(90 * pace)
-          if (!isActiveRun()) return
-        }
-      }
-      if (playbackRun.current !== runId) return
-      const changedIds = [...new Set(plan.actions.flatMap((action) => {
-        if (action.kind === 'box' || action.kind === 'arrow' || action.kind === 'style') return [action.id]
-        if (action.kind === 'arrange') return action.ids
-        return []
-      }))]
-      setPlayback((current) => current ? {
-        ...current,
-        visibleIds: parsed.scene!.elements.map((item) => item.id),
-        currentElementId: undefined,
-        drawingArrowId: undefined,
-        typing: undefined,
-        positionOverrides: {},
-        boxOverrides: {},
-        arrowOverrides: {},
-        groupFrameOverrides: {},
-        selectionBox: undefined,
-        boundaryDraft: undefined,
-        inspectorPreview: undefined,
-        inspectorDropdownOpen: false,
-        ghostElements: [],
-        deletingIds: undefined,
-        anchorPreview: undefined,
-        toolHint: 'select',
-        phase: 'finishing',
-        intent: '检查整体布局',
-        regionLabel: '全图',
-        regionIndex: plan.regions.length,
-        totalRegions: plan.regions.length,
-        activeRegionIds: undefined,
-        finalHighlightIds: changedIds,
-        step: current.total,
-      } : current)
-      await moveCamera({ x: parsed.scene!.width / 2, y: parsed.scene!.height / 2 }, 360 * pace, 1)
-      if (!isActiveRun()) return
-      viewportRef.current = { x: 0, y: 0, zoom: 1 }
-      setViewport({ x: 0, y: 0, zoom: 1 })
-      setPlayback((current) => current ? { ...current, intent: '确认最终结果' } : current)
-      await sleep(180 * pace)
-      if (!isActiveRun()) return
-      await moveCursor({ x: Math.max(72, parsed.scene!.width - 92), y: 72 }, 260 * pace)
-      if (!isActiveRun()) return
-      setPlayback((current) => current ? { ...current, intent: '完成画板', cursorVisible: false } : current)
-      await sleep(340 * pace)
-      if (!isActiveRun()) return
-      if (playbackRun.current === runId) {
-        setPlayback(null)
-        completePlayback()
-      }
-    })()
+    const finish = window.setTimeout(() => {
+      setHighlightedIds(new Set())
+      if (external) onPlaybackComplete?.(external.key)
+    }, 700)
     return () => {
-      playbackRun.current += 1
-      completePlayback()
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(finish)
+      animations.forEach((animation) => animation.cancel())
+      setHighlightedIds(new Set())
+      if (external) onPlaybackComplete?.(external.key)
     }
-    // playbackRequest.key is an event id; source/scene are intentionally read from that render.
+    // 每次数据更新只触发一次，手工拖动期间不插入位置过渡。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playbackRequest?.key, playbackRequest?.path])
+  }, [source, playbackRequest?.key, playbackRequest?.path])
 
   const traceResult = useMemo(() => {
     if (!parsed.scene || !traceDirection) return null
@@ -1372,28 +843,25 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     return seeds.length ? traceCanvasGraph(parsed.scene, seeds, traceDirection, traceDepth) : null
   }, [parsed.scene, selectedIds, traceDepth, traceDirection])
 
-  const playbackActive = Boolean(playback?.active)
   const staticArchitectureProjection = useMemo(() => {
     if (!parsed.scene) return null
-    return playbackActive
-      ? { scene: parsed.scene, view: parsed.scene.architecture?.view ?? 'detail' as const, density: 'comfortable' as const, hiddenNodes: 0, hiddenArrows: 0 }
-      : canvasArchitectureProjection(parsed.scene)
-  }, [parsed.scene, playbackActive])
+    return canvasArchitectureProjection(parsed.scene)
+  }, [parsed.scene])
   const staticScopeProjection = useMemo(() => {
-    if (!parsed.scene || playbackActive || !architectureScope) return null
+    if (!parsed.scene || !architectureScope) return null
     return canvasArchitectureScopeProjection(parsed.scene, architectureScope)
-  }, [architectureScope, parsed.scene, playbackActive])
+  }, [architectureScope, parsed.scene])
   const lodScene = staticScopeProjection?.scene ?? staticArchitectureProjection?.scene
   const lodNodeCount = useMemo(() => lodScene?.elements.filter((item) => item.type !== 'arrow').length ?? 0, [lodScene])
-  const lodLevel: CanvasSemanticLodLevel = playbackActive || architectureScope ? 'detail' : resolveCanvasSemanticLod(viewport.zoom, lodNodeCount)
+  const lodLevel: CanvasSemanticLodLevel = architectureScope ? 'detail' : resolveCanvasSemanticLod(viewport.zoom, lodNodeCount)
   const lodSelection = lodLevel === 'detail' || lodLevel === 'compact' ? null : selectedIds
   const staticSemanticLodProjection = useMemo(() => {
     if (!lodScene) return null
-    if (playbackActive || architectureScope) {
+    if (architectureScope) {
       return { scene: lodScene, level: 'detail' as const, autoCollapsedGroupIds: [], hiddenNodes: 0, hiddenArrows: 0 }
     }
     return canvasSemanticLodProjection(lodScene, lodLevel, lodSelection ?? [])
-  }, [architectureScope, playbackActive, lodScene, lodLevel, lodSelection])
+  }, [architectureScope, lodScene, lodLevel, lodSelection])
   const sourceBoxes = useMemo(() => parsed.scene?.elements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow') ?? [], [parsed.scene])
   const sourceArrows = useMemo(() => parsed.scene?.elements.filter((item): item is CanvasArrow => item.type === 'arrow') ?? [], [parsed.scene])
   const sourceCollisionIndex = useMemo(() => selectedIds.length > 3 ? new CanvasRectIndex(sourceBoxes) : null, [selectedIds.length > 3, sourceBoxes])
@@ -1428,7 +896,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const staticArchitectureHeader = useMemo(() => parsed.scene ? canvasArchitectureHeader(parsed.scene) : undefined, [parsed.scene])
   const architectureScene = Boolean(parsed.scene?.architecture)
   const staticUnculledScene = useMemo(() => {
-    if (playbackActive || !staticSemanticLodProjection?.scene) return null
+    if (!staticSemanticLodProjection?.scene) return null
     const projected = staticSemanticLodProjection.scene
     if (!architectureScope) {
       const limit = architectureScene ? staticArchitectureProjection?.view === 'detail' ? 100 : Infinity : 180
@@ -1436,7 +904,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (projected.elements.filter((item) => item.type !== 'arrow').length > limit) return null
     }
     return projected
-  }, [architectureScene, architectureScope, playbackActive, staticArchitectureProjection, staticSemanticLodProjection])
+  }, [architectureScene, architectureScope, staticArchitectureProjection, staticSemanticLodProjection])
   const staticRelationshipGeometry = useMemo(() => staticUnculledScene ? {
     connections: canvasCollapsedConnections(staticUnculledScene, staticProjectedGroupBounds),
     trunks: canvasBundleTrunks(staticUnculledScene),
@@ -1547,7 +1015,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const groupBounds = staticGroupBounds
   const hasGeometryDraft = Boolean(gesturePositionOverrides || transformDrafts || arrowPointDraft)
   const projectedGroupBounds = hasGeometryDraft ? canvasGroupFrames(renderScene) : staticProjectedGroupBounds
-  const displayGroupBounds = projectedGroupBounds.map((group) => playback?.groupFrameOverrides?.[group.id] ?? group)
+  const displayGroupBounds = projectedGroupBounds
   // Only an explicitly selected boundary owns the boundary inspector. Nodes that
   // happen to share a group remain a node/multi-selection instead of silently
   // switching the inspector into group-editing mode.
@@ -1597,8 +1065,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }
   })()
   const largeSceneViewportCulling = Boolean(
-    !playback?.active
-    && !architectureScope
+    !architectureScope
     && (
       scene.architecture
         ? architectureProjection.view === 'detail' && renderBoxes.length > 100
@@ -1632,21 +1099,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const viewportGroupBounds = largeSceneViewportCulling
     ? displayGroupBounds.filter((group) => selectedGroupId === group.id || selectedGroupIds.includes(group.id) || intersects(viewportBounds, group))
     : displayGroupBounds
-  const playbackVisibleIds = playback?.active ? new Set(playback.visibleIds) : null
-  const playbackVisibleGroupIds = playback?.active ? new Set(playback.visibleGroupIds ?? []) : null
-  const visibleRenderBoxes = playbackVisibleIds ? viewportRenderBoxes.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderBoxes
-  const visibleRenderArrows = playbackVisibleIds ? viewportRenderArrows.filter((item) => playbackVisibleIds.has(item.id)) : viewportRenderArrows
+  const visibleRenderBoxes = viewportRenderBoxes
+  const visibleRenderArrows = viewportRenderArrows
   const reuseStaticRelationships = staticUnculledScene === renderScene && !largeSceneViewportCulling
-  const collapsedConnections = playback?.active ? [] : reuseStaticRelationships && staticRelationshipGeometry
+  const collapsedConnections = reuseStaticRelationships && staticRelationshipGeometry
     ? staticRelationshipGeometry.connections : canvasCollapsedConnections(renderScene, projectedGroupBounds)
   const relationshipRenderScene = largeSceneViewportCulling
     ? { ...renderScene, elements: [...viewportRenderBoxes, ...viewportRenderArrows] }
     : renderScene
-  const relationBundleTrunks = playback?.active || Boolean(gesturePositionOverrides) && renderArrows.length > 120
+  const relationBundleTrunks = Boolean(gesturePositionOverrides) && renderArrows.length > 120
     ? []
     : reuseStaticRelationships && staticRelationshipGeometry ? staticRelationshipGeometry.trunks : canvasBundleTrunks(relationshipRenderScene)
   const selectedIdSet = new Set(selectedIds)
-  const reusableVisibleLabels = Boolean(largeSceneViewportCulling && staticGeometry && !hasGeometryDraft && !playback?.active && !arrowLabelDraft)
+  const reusableVisibleLabels = Boolean(largeSceneViewportCulling && staticGeometry && !hasGeometryDraft && !arrowLabelDraft)
   const selectedArrowIds = reusableVisibleLabels ? viewportRenderArrows.filter((arrow) => selectedIdSet.has(arrow.id)).map((arrow) => arrow.id) : []
   const previouslyVisible = visibleLabelCache.current
   const cachedVisibleLabels = reusableVisibleLabels && previouslyVisible?.scene === renderScene && previouslyVisible.level === semanticLodLevel
@@ -1658,7 +1123,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     ? previouslyVisible.labels : null
   const savedMoveLabels = moveLabels.current
   const frozenMoveLabels = semanticLodLevel === 'detail' && largeSceneViewportCulling && renderArrows.length > 1000
-    && gesturePositionOverrides && !transformDrafts && !arrowPointDraft && !playback?.active
+    && gesturePositionOverrides && !transformDrafts && !arrowPointDraft
     && savedMoveLabels?.scene === renderSceneBase
     && savedMoveLabels.viewport.x === viewport.x && savedMoveLabels.viewport.y === viewport.y && savedMoveLabels.viewport.zoom === viewport.zoom
     && savedMoveLabels.arrowIds.length === viewportRenderArrows.length
@@ -1685,17 +1150,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     : boxes
   const tracedNodeIds = new Set(traceResult?.nodeIds ?? [])
   const tracedArrowIds = new Set(traceResult?.arrowIds ?? [])
-  const activePlaybackRegionIds = new Set(playback?.activeRegionIds ?? [])
-  const playbackGhostElements = playback?.ghostElements ?? []
-  const playbackGhostBoxes = playbackGhostElements.filter((item): item is CanvasNode | CanvasNote => item.type !== 'arrow')
-  const playbackGhostArrows = playbackGhostElements.filter((item): item is CanvasArrow => item.type === 'arrow')
-  const playbackBoxLookup = new Map<string, CanvasNode | CanvasNote>([...projectedBoxes, ...playbackGhostBoxes].map((item) => [item.id, item]))
+  const projectedBoxLookup = new Map<string, CanvasNode | CanvasNote>(projectedBoxes.map((item) => [item.id, item]))
+  const minimapVisible = minimapOpen ?? largeSceneViewportCulling
   const compactMinimap = renderBoxes.length > 420
   const minimapNodeCloudPath = compactMinimap
     ? staticGeometry ? staticMinimapNodeCloudPath
       : renderBoxes.filter((item) => !selectedIdSet.has(item.id)).map((item) => `M ${item.x} ${item.y} H ${item.x + item.width} V ${item.y + item.height} H ${item.x} Z`).join(' ')
     : ''
-  const playbackBubbleWidth = playback?.intent ? clamp(92 + playback.intent.length * 6.5, 126, 260) : 0
   const connectSourceBox = connectFrom ? boxes.find((item) => item.id === connectFrom) : undefined
   const connectPreviewStart = connectSourceBox && connectPreviewPoint
     ? anchorPoint(connectSourceBox, connectFromAnchor, connectPreviewPoint)
@@ -1718,7 +1179,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     onChange(nextSource)
   }
 
-  function commit(next: CanvasScene, record = true) {
+  function commit(next: CanvasScene, record = true, animate = false) {
+    if (animate) layoutBefore.current = currentScene()
     sceneRef.current = next
     emitSource(serializeCanvasScene(next), record)
   }
@@ -1773,10 +1235,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     })
   }
 
-  function commitGeometry(next: CanvasScene, record = true, changedNodeIds?: Iterable<string>) {
+  function commitGeometry(next: CanvasScene, record = true, changedNodeIds?: Iterable<string>, animate = false) {
     commit(next.architecture
       ? changedNodeIds ? routeArchitectureEdgesIncremental(next, changedNodeIds) : routeArchitectureEdges(next)
-      : next, record)
+      : next, record, animate)
   }
 
   function routeArrowIds(scene: CanvasScene, ids: string[]): CanvasScene {
@@ -1790,10 +1252,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       view: architectureView,
       density: architectureDensity,
     })
-    commit(result.scene)
-    setSelectedIds([])
-    setSelectedGroupTarget(null)
-    setViewport({ x: 0, y: 0, zoom: 1 })
+    commit(result.scene, true, true)
   }
 
   function tidyArchitectureRoutes() {
@@ -1813,8 +1272,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         density: current.architecture?.density ?? architectureDensity,
       },
     })
-    setSelectedIds([])
-    setSelectedGroupTarget(null)
   }
 
   function updateArchitectureAppearance(patch: { view?: CanvasArchitectureView; density?: CanvasArchitectureDensity }) {
@@ -1837,10 +1294,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       density,
     })
     setArchitectureDensity(density)
-    commit(result.scene)
-    setSelectedIds([])
-    setSelectedGroupTarget(null)
-    setViewport({ x: 0, y: 0, zoom: 1 })
+    commit(result.scene, true, true)
   }
 
   function recordGesture(before: string) {
@@ -1939,15 +1393,15 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function alignSelection(axis: 'x' | 'y') {
-    commitGeometry(alignCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds)
+    commitGeometry(alignCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds, true)
   }
 
   function distributeSelection(axis: 'x' | 'y') {
-    commitGeometry(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds)
+    commitGeometry(distributeCanvasSelection(currentScene(), selectedIds, axis, GRID), true, selectedIds, true)
   }
 
   function separateSelection() {
-    commitGeometry(separateCanvasSelection(currentScene(), selectedIds, 24, GRID), true, selectedIds)
+    commitGeometry(separateCanvasSelection(currentScene(), selectedIds, 24, GRID), true, selectedIds, true)
   }
 
   function smartLocalLayout() {
@@ -1956,7 +1410,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const live = currentScene()
     const result = layoutCanvasNeighborhood(live, seeds, 1, live.elements.length > 800 ? 28 : 42, GRID)
     if (!result.movedIds.length) return
-    commitGeometry(result.scene, true, result.movedIds)
+    commitGeometry(result.scene, true, result.movedIds, true)
   }
 
   function reverseSelectedArrow(arrowId: string) {
@@ -2262,8 +1716,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function applyLayout(mode: CanvasLayoutMode) {
-    commitGeometry(layoutCanvasScene(currentScene(), mode, GRID))
-    fit()
+    commitGeometry(layoutCanvasScene(currentScene(), mode, GRID), true, undefined, true)
   }
 
   function applyLocalLayout(mode: CanvasLayoutMode) {
@@ -2271,8 +1724,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       ? groupBounds.find((group) => group.id === selectedGroupId)?.memberIds ?? selectedIds
       : selectedIds
     if (ids.length < 2) return
-    commitGeometry(layoutCanvasSelection(currentScene(), ids, mode, GRID), true, ids)
-    focusBoxes(ids)
+    commitGeometry(layoutCanvasSelection(currentScene(), ids, mode, GRID), true, ids, true)
   }
 
   function selectGroup(groupId: string) {
@@ -2522,6 +1974,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
 
   function startMove(event: React.PointerEvent<SVGGElement>, item: CanvasNode | CanvasNote) {
     if (tool !== 'select' || spacePanning) return
+    moveStartedWithInspector.current = selected.length > 0 && !inspectorCollapsed
     event.stopPropagation()
     setSelectedGroupTarget(null)
     setContextMenu(null)
@@ -3185,15 +2638,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       top: `${clamp((top - viewport.y) / viewHeight * 100, 12, 92)}%`,
     }
   })() : null
-  const playbackBubbleOffsetX = playback?.intent && playback.cursor.x > viewport.x + viewWidth * 0.7
-    ? -playbackBubbleWidth - 24
-    : 26
-  const playbackBubbleOffsetY = playback?.intent && playback.cursor.y < viewport.y + viewHeight * 0.14 ? 40 : -32
+  const insertToolLabel = tool === 'note' ? '备注' : tool === 'pen' ? '画笔' : tool === 'line' ? '直线' : tool === 'arrow' ? '箭头' : '插入'
+  const insertToolActive = ['note', 'pen', 'line', 'arrow'].includes(tool)
   const architectureToolbarLabel = scene.architecture
     ? architectureScope
-      ? `架构 · ${architectureScope.kind === 'node' ? '聚焦' : '下钻'}`
-      : `架构 · ${architectureView === 'overview' ? '总览' : '详情'}`
-    : '架构'
+      ? `布局 · ${architectureScope.kind === 'node' ? '聚焦' : '下钻'}`
+      : `布局 · ${architectureView === 'overview' ? '总览' : '详情'}`
+    : '布局'
   const analysisToolbarLabel = traceDirection
     ? `分析 · ${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}`
     : '分析'
@@ -3203,12 +2654,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
         : '区域'
   const draggedArchitectureTemplate = architectureTemplateDrag ? architectureNodeTemplate(architectureTemplateDrag.templateId) : undefined
   const draggedShape = shapeDrag ? canvasShapeDefinition(shapeDrag.shapeRef) : undefined
-
-  function playbackBoxPosition(item: CanvasNode | CanvasNote): CanvasNode | CanvasNote {
-    const presentation = playback?.boxOverrides?.[item.id] ?? item
-    const position = playback?.positionOverrides?.[item.id]
-    return position ? { ...presentation, x: position.x, y: position.y } : presentation
-  }
 
   function renderArchitectureTemplateTile(asset: ArchitectureNodeTemplate) {
     const favorite = favoriteTemplateIds.includes(asset.id)
@@ -3240,46 +2685,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     )
   }
 
-  return (
-    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}${playback?.active ? ' is-playback-active' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={playback?.active || imageImporting || undefined} onPaste={handleEditorPaste}>
-      <div className="freeform-surface">
-        <input
-          ref={imageInputRef}
-          className="freeform-image-input"
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          tabIndex={-1}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0]
-            event.currentTarget.value = ''
-            if (file) void insertImageFile(file)
-          }}
-        />
-        {imageImportError ? <div className="freeform-image-error" role="alert">{imageImportError}<button type="button" onClick={() => setImageImportError(null)}>关闭</button></div> : null}
-        <div className="freeform-floating-toolbar" aria-label="自由画布工具">
-          {playback?.active ? <span className="freeform-toolbar-playback-lock"><i />AI 绘制中 · 只读</span> : null}
-          <ToolButton active={tool === 'select' || playback?.toolHint === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
-          <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}><ToolbarGlyph icon={Hand} /></ToolButton>
-          <select disabled={Boolean(playback?.active)} className="freeform-visual-style" aria-label="画布样式" value={scene.style ?? ''} onChange={(event) => commit({ ...currentScene(), style: event.target.value ? event.target.value as DiagramVisualStyle : undefined })}>
-            <option value="">原始样式</option>
-            {diagramVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-          </select>
-          {architectureWorkbench ? (
-            <ToolButton active={tool === 'node' || playback?.toolHint === 'node'} title="组件 (N)" onClick={() => { setTool('node'); setConnectFrom(null) }}><ToolbarGlyph icon={Shapes} /></ToolButton>
-          ) : (
-            (flowchartWorkbench ? ['flowchart:process', 'flowchart:decision', 'flowchart:terminator'] : ['basic:rectangle', 'basic:ellipse', 'basic:diamond']).map((ref) => {
-              const shape = canvasShapeDefinition(ref as CanvasShapeRef)
-              return <ToolButton key={ref} active={tool === 'node' && activeShapeRef === ref} title={`${shape.label} (N)`} onClick={() => { setActiveShapeRef(shape.ref); setTool('node'); setConnectFrom(null) }}><span className="freeform-toolbar-shape"><ShapePreview shape={shape} /></span></ToolButton>
-            })
-          )}
-          <ToolButton active={tool === 'note' || playback?.toolHint === 'note'} title="备注 (M)" onClick={() => { setTool('note'); setConnectFrom(null) }}><ToolbarGlyph icon={StickyNote} /></ToolButton>
-          <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton>
-          <ToolButton active={tool === 'pen'} title="画笔 (P)" onClick={() => { setTool('pen'); setConnectFrom(null) }}><ToolbarGlyph icon={Pencil} /></ToolButton>
-          <ToolButton active={false} title="图片 (I)" disabled={imageImporting || !onImportImage} onClick={() => imageInputRef.current?.click()}><ToolbarGlyph icon={ImageIcon} /></ToolButton>
-          <ToolButton active={tool === 'line'} title="直线 (L)" onClick={() => { setTool('line'); setConnectFrom(null) }}><ToolbarGlyph icon={Minus} /></ToolButton>
-          <ToolButton active={tool === 'arrow'} title="箭头 (A)" onClick={() => { setTool('arrow'); setConnectFrom(null) }}><ToolbarGlyph icon={ArrowRight} /></ToolButton>
-          <ToolButton active={tool === 'connect' || playback?.toolHint === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
-          {!architectureWorkbench ? <ToolButton active={shapeLibraryOpen} title="图形库" onClick={() => { setLayersOpen(false); setToolbarMenu(null); setShapeLibraryOpen((value) => !value) }}><ToolbarGlyph icon={Shapes} /></ToolButton> : null}
+  const secondaryTools = <>
           <span className="freeform-toolbar-separator" />
           {architectureWorkbench ? <Popover open={toolbarMenu === 'architecture'} onOpenChange={(open) => {
             setToolbarMenu(open ? 'architecture' : null)
@@ -3293,7 +2699,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               aria-expanded={toolbarMenu === 'architecture'}
               title={scene.architecture ? `${architectureView === 'overview' ? '总览视图' : '详情视图'} · ${architectureDensity === 'auto' ? '自动密度' : architectureDensity}${architectureScope ? ' · 当前处于局部视图' : ''}` : '架构工具'}
             >
-              <span className="freeform-toolbar-state-dot" />{architectureToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
+              {architectureToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
             </button>
             </PopoverTrigger>
             {toolbarMenu === 'architecture' ? (
@@ -3350,17 +2756,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       <button type="button" aria-pressed={architectureView === 'detail'} className={architectureView === 'detail' ? 'is-selected' : ''} onClick={() => { setArchitectureView('detail'); updateArchitectureAppearance({ view: 'detail' }); setSelectedIds([]); setSelectedGroupTarget(null) }}>详情</button>
                     </div>
                   </section>
-                  <section className="freeform-theme-section">
-                    <span>主题</span>
-                    <div className="freeform-theme-grid">
-                      {ARCHITECTURE_THEME_OPTIONS.map((item) => (
-                        <button key={item.value} type="button" title={item.description} aria-pressed={architectureTheme === item.value} className={`freeform-theme-option theme-${item.value}${architectureTheme === item.value ? ' is-selected' : ''}`} onClick={() => applyArchitectureTheme(item.value)}>
-                          <i aria-hidden="true"><b /><b /><b /></i>
-                          <strong>{item.label}</strong>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
+
                   <section className="freeform-compact-control-row">
                     <span>密度</span>
                     <div className="freeform-menu-grid four">
@@ -3441,7 +2837,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 aria-expanded={toolbarMenu === 'flowchart'}
                 title="流程图布局与泳道"
               >
-                <span className="freeform-toolbar-state-dot" />流程<span className="freeform-toolbar-chevron">⌄</span>
+                流程<span className="freeform-toolbar-chevron">⌄</span>
               </button>
               </PopoverTrigger>
               {toolbarMenu === 'flowchart' ? (
@@ -3466,7 +2862,31 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             </div>
             </Popover>
           ) : null}
-          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setShapeLibraryOpen(false); setLayersOpen((value) => !value) }}>层级</button>
+          <Popover open={toolbarMenu === 'style'} onOpenChange={(open) => setToolbarMenu(open ? 'style' : null)}>
+            <PopoverTrigger asChild><button type="button" className={toolbarMenu === 'style' ? 'is-active' : ''}>样式</button></PopoverTrigger>
+            <PopoverContent align="end" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu is-style" aria-label="画布样式设置">
+              <label className="freeform-style-preset"><span>配色</span>
+          <select className="freeform-visual-style" aria-label="画布样式" value={scene.style ?? ''} onChange={(event) => commit({ ...currentScene(), style: event.target.value ? event.target.value as DiagramVisualStyle : undefined })}>
+            <option value="">原始样式</option>
+            {diagramVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+          </select>
+              </label>
+              {scene.architecture ? <>
+                  <section className="freeform-theme-section">
+                    <span>主题</span>
+                    <div className="freeform-theme-grid">
+                      {ARCHITECTURE_THEME_OPTIONS.map((item) => (
+                        <button key={item.value} type="button" title={item.description} aria-pressed={architectureTheme === item.value} className={`freeform-theme-option theme-${item.value}${architectureTheme === item.value ? ' is-selected' : ''}`} onClick={() => applyArchitectureTheme(item.value)}>
+                          <i aria-hidden="true"><b /><b /><b /></i>
+                          <strong>{item.label}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+              </> : null}
+            </PopoverContent>
+          </Popover>
+          <button type="button" className={layersOpen ? 'is-active' : ''} aria-pressed={layersOpen} onClick={() => { setToolbarMenu(null); setMoreToolsOpen(false); setShapeLibraryOpen(false); setLayersOpen((value) => !value) }}>层级</button>
           {architectureWorkbench ? <Popover open={toolbarMenu === 'analysis'} onOpenChange={(open) => {
             setToolbarMenu(open ? 'analysis' : null)
             if (open) setLayersOpen(false)
@@ -3479,7 +2899,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               aria-expanded={toolbarMenu === 'analysis'}
               title={traceDirection ? `正在追踪${traceDirection === 'upstream' ? '上游' : traceDirection === 'downstream' ? '下游' : '上下游'}依赖 · ${traceDepth} 跳` : '架构与代码分析'}
             >
-              <span className="freeform-toolbar-state-dot" />{analysisToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
+              {analysisToolbarLabel}<span className="freeform-toolbar-chevron">⌄</span>
             </button>
             </PopoverTrigger>
             {toolbarMenu === 'analysis' ? (
@@ -3505,9 +2925,60 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             ) : null}
             </div>
           </Popover> : null}
+  </>
+
+  return (
+    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={imageImporting || undefined} onPaste={handleEditorPaste}>
+      <div ref={surfaceRef} className="freeform-surface">
+        <input
+          ref={imageInputRef}
+          className="freeform-image-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          tabIndex={-1}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file) void insertImageFile(file)
+          }}
+        />
+        {imageImportError ? <div className="freeform-image-error" role="alert">{imageImportError}<button type="button" onClick={() => setImageImportError(null)}>关闭</button></div> : null}
+        <div className="freeform-floating-toolbar" role="toolbar" aria-label="画布工具">
+          <div className="freeform-tools">
+          <ToolButton active={tool === 'select'} title="选择 (V)" onClick={() => { setTool('select'); setConnectFrom(null) }}><ToolbarGlyph icon={MousePointer2} /></ToolButton>
+          <ToolButton active={tool === 'hand'} title="抓手 (H)" onClick={() => { setTool('hand'); setConnectFrom(null) }}><ToolbarGlyph icon={Hand} /></ToolButton>
+          <ToolButton active={tool === 'node'} title={architectureWorkbench ? '组件 (N)' : `${canvasShapeDefinition(activeShapeRef).label} (N)`} onClick={() => { setTool('node'); setConnectFrom(null) }}>
+            {architectureWorkbench ? <ToolbarGlyph icon={Shapes} /> : <span className="freeform-toolbar-shape"><ShapePreview shape={canvasShapeDefinition(activeShapeRef)} /></span>}
+          </ToolButton>
+          <ToolButton active={tool === 'text'} title="文字 (T)" onClick={() => { setTool('text'); setConnectFrom(null) }}><ToolbarGlyph icon={Type} /></ToolButton>
+          <ToolButton active={tool === 'connect'} title="节点连接 (C)" onClick={() => { setTool('connect'); setConnectFrom(null) }}><ToolbarGlyph icon={Link2} /></ToolButton>
+          <Popover open={toolbarMenu === 'insert'} onOpenChange={(open) => setToolbarMenu(open ? 'insert' : null)}>
+            <PopoverTrigger asChild><button type="button" aria-label="插入图元" className={toolbarMenu === 'insert' || insertToolActive ? 'is-active' : ''}>{insertToolLabel}</button></PopoverTrigger>
+            <PopoverContent align="start" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu is-insert" aria-label="插入图元">
+              <div className="freeform-menu-grid two">
+                <button type="button" onClick={() => { setTool('note'); setConnectFrom(null); setToolbarMenu(null) }}>备注</button>
+                <button type="button" onClick={() => { setTool('pen'); setConnectFrom(null); setToolbarMenu(null) }}>画笔</button>
+                <button type="button" onClick={() => { setTool('line'); setConnectFrom(null); setToolbarMenu(null) }}>直线</button>
+                <button type="button" onClick={() => { setTool('arrow'); setConnectFrom(null); setToolbarMenu(null) }}>箭头</button>
+                <button type="button" disabled={imageImporting || !onImportImage} onClick={() => { imageInputRef.current?.click(); setToolbarMenu(null) }}>图片</button>
+                {!architectureWorkbench ? <button type="button" onClick={() => { setShapeLibraryOpen(true); setLayersOpen(false); setToolbarMenu(null) }}>更多图形</button> : null}
+                {!architectureWorkbench ? (flowchartWorkbench ? ['flowchart:process', 'flowchart:decision', 'flowchart:terminator'] : ['basic:rectangle', 'basic:ellipse', 'basic:diamond']).map((ref) => {
+                  const shape = canvasShapeDefinition(ref as CanvasShapeRef)
+                  return <button key={ref} type="button" onClick={() => { setActiveShapeRef(shape.ref); setTool('node'); setConnectFrom(null); setToolbarMenu(null) }}>{shape.label}</button>
+                }) : null}
+              </div>
+            </PopoverContent>
+          </Popover>
+          {compactToolbar ? <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
+            <PopoverTrigger asChild><button type="button" aria-label="更多画布工具" className={moreToolsOpen ? 'is-active' : ''}>更多</button></PopoverTrigger>
+            <PopoverContent align="end" sideOffset={8} collisionPadding={12} className="freeform-toolbar-menu freeform-toolbar-overflow" aria-label="更多画布工具">{secondaryTools}</PopoverContent>
+          </Popover> : secondaryTools}
+          </div>
+          <div className="freeform-tool-history">
           <span className="freeform-toolbar-separator" />
           <button type="button" title="撤销 ⌘Z" aria-label="撤销" disabled={undoStack.current.length === 0} onClick={undo}>↶</button>
           <button type="button" title="重做 ⇧⌘Z" aria-label="重做" disabled={redoStack.current.length === 0} onClick={redo}>↷</button>
+          </div>
         </div>
 
         {!architectureWorkbench && shapeLibraryOpen ? (
@@ -3605,7 +3076,498 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </aside>
         ) : null}
 
-        {selected.length > 0 && !playback?.active ? (
+        <svg
+          ref={svgRef}
+          className={`freeform-svg tool-${spacePanning ? 'hand' : tool}`}
+          viewBox={`${viewport.x} ${viewport.y} ${viewWidth} ${viewHeight}`}
+
+          role="img"
+          aria-label="自由画布"
+          onWheel={handleWheel}
+          onDragOver={moveExternalDrag}
+          onDrop={dropExternalDrag}
+          onPointerDown={beginBackgroundPointer}
+          onPointerMove={moveBackgroundPointer}
+          onPointerUp={finishGesture}
+          onPointerCancel={cancelGesture}
+          onClick={(event) => {
+            if (event.target !== event.currentTarget) return
+            if (drag.current) return
+            const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
+            if (connectFrom && completeConnectionOnBlank(point)) return
+            if (tool === 'node' || tool === 'note') addBox(tool, point.x, point.y)
+            if (tool === 'text') addText(point.x, point.y)
+          }}
+        >
+          <defs>
+            <pattern id="canvas-grid" width={GRID * 2} height={GRID * 2} patternUnits="userSpaceOnUse">
+              <path d={`M${GRID * 2} 0H0V${GRID * 2}`} className="freeform-grid-line" fill="none" />
+            </pattern>
+            <marker id="canvas-arrow" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto">
+              <path d="M0,0 L0,8 L10,4 z" fill="context-stroke" />
+            </marker>
+          </defs>
+          <rect width={scene.width} height={scene.height} className="freeform-background" style={visualSkin ? { fill: visualSkin.background } : undefined} pointerEvents="none" />
+          <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
+          {draggedArchitectureTemplate && architectureTemplateDrag?.point ? (() => {
+            const width = draggedArchitectureTemplate.width ?? 188
+            const height = draggedArchitectureTemplate.height ?? 80
+            const x = clamp(architectureTemplateDrag.point.x - width / 2, 0, Math.max(0, scene.width - width))
+            const y = clamp(architectureTemplateDrag.point.y - height / 2, 0, Math.max(0, scene.height - height))
+            return (
+              <g className={`freeform-template-drop-preview${architectureTemplateDrag.groupId ? ' is-in-boundary' : ''}`} transform={`translate(${x} ${y})`} pointerEvents="none">
+                <rect width={width} height={height} rx="8" />
+                <text x={14} y={height / 2 + 4}>{truncate(draggedArchitectureTemplate.label, 24)}</text>
+              </g>
+            )
+          })() : null}
+          {draggedShape && shapeDrag?.point ? (() => {
+            const geometry = canvasShapeGeometry(draggedShape.ref, draggedShape.width, draggedShape.height)
+            const x = clamp(shapeDrag.point.x - draggedShape.width / 2, 0, Math.max(0, scene.width - draggedShape.width))
+            const y = clamp(shapeDrag.point.y - draggedShape.height / 2, 0, Math.max(0, scene.height - draggedShape.height))
+            return (
+              <g className="freeform-shape-drop-preview" transform={`translate(${x} ${y})`} pointerEvents="none">
+                <path d={geometry.bodyPath} />
+                {geometry.detailPaths.map((path, index) => <path key={index} d={path} className="is-detail" />)}
+              </g>
+            )
+          })() : null}
+          {snapGuides.x !== undefined ? <path className="freeform-snap-guide" d={`M ${snapGuides.x} 0 V ${scene.height}`} /> : null}
+          {snapGuides.y !== undefined ? <path className="freeform-snap-guide" d={`M 0 ${snapGuides.y} H ${scene.width}`} /> : null}
+          {snapGuides.spacing?.map((guide, index) => guide.axis === 'x' ? (
+            <g key={`spacing-x-${index}`} className="freeform-spacing-guide" pointerEvents="none">
+              <path d={`M ${guide.from} ${guide.cross} H ${guide.to} M ${guide.from} ${guide.cross - 5} V ${guide.cross + 5} M ${guide.to} ${guide.cross - 5} V ${guide.cross + 5}`} />
+              <text x={(guide.from + guide.to) / 2} y={guide.cross - 7} textAnchor="middle">{guide.distance}</text>
+            </g>
+          ) : (
+            <g key={`spacing-y-${index}`} className="freeform-spacing-guide" pointerEvents="none">
+              <path d={`M ${guide.cross} ${guide.from} V ${guide.to} M ${guide.cross - 5} ${guide.from} H ${guide.cross + 5} M ${guide.cross - 5} ${guide.to} H ${guide.cross + 5}`} />
+              <text x={guide.cross + 8} y={(guide.from + guide.to) / 2 + 4}>{guide.distance}</text>
+            </g>
+          ))}
+          {snapGuides.sizeLabel && snapGuides.sizePoint ? <text className="freeform-size-guide" x={snapGuides.sizePoint.x + 8} y={snapGuides.sizePoint.y} pointerEvents="none">{snapGuides.sizeLabel}</text> : null}
+          {architectureHeader ? (
+            <g className="freeform-architecture-header" pointerEvents="none">
+              <rect width={scene.width} height={architectureHeader.height} />
+              <path className="freeform-architecture-header-rule" d={`M 28 ${architectureHeader.height - 1} H ${scene.width - 28}`} />
+              <text className="freeform-architecture-eyebrow" x="32" y="24">{architectureHeader.eyebrow}</text>
+              <text className="freeform-architecture-title" x="32" y="52">{truncate(architectureHeader.title, 42)}</text>
+              <text className="freeform-architecture-subtitle" x="32" y="72">{architectureHeader.subtitle}</text>
+              {architectureHeader.legend.map((item, index) => {
+                const x = architectureLegendStart + index * 92
+                return (
+                  <g key={item.kind} className={`freeform-architecture-legend kind-${item.kind}`} transform={`translate(${x} 50)`}>
+                    <path d="M 0 0 H 26" />
+                    <text x="34" y="4">{item.label}</text>
+                  </g>
+                )
+              })}
+            </g>
+          ) : null}
+          {(renderScene.lanes ?? []).map((lane) => {
+            const x = lane.axis === 'vertical' ? lane.start : 0
+            const y = lane.axis === 'horizontal' ? lane.start : architectureHeader?.height ?? 0
+            const width = lane.axis === 'vertical' ? lane.size : scene.width
+            const height = lane.axis === 'horizontal' ? lane.size : scene.height - (architectureHeader?.height ?? 0)
+            return (
+              <g key={lane.id} className={`freeform-lane tone-${lane.tone ?? 'muted'}`} pointerEvents="none">
+                <rect className="freeform-lane-body" x={x} y={y} width={width} height={height} rx="14" />
+                <rect
+                  className="freeform-lane-head is-navigable"
+                  x={x}
+                  y={y}
+                  width={width}
+                  height={34}
+                  rx="14"
+                  pointerEvents="all"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    const ids = boxes.filter((item) => item.laneId === lane.id).map((item) => item.id)
+                    setSelectedGroupTarget(null)
+                    setSelectedIds(ids)
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    if (scene.architecture) enterArchitectureScope({ kind: 'lane', id: lane.id })
+                    else focusBoxes(boxes.filter((item) => item.laneId === lane.id).map((item) => item.id))
+                  }}
+                />
+                <text x={x + 14} y={y + 22}>{truncate(lane.label, 32)}</text>
+              </g>
+            )
+          })}
+          {viewportGroupBounds.filter((group) => (
+            !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
+          )).map((group) => (
+            <g
+              key={group.id}
+              className={`freeform-group-frame kind-${group.kind ?? 'group'} c4-${group.c4Type ?? 'none'}${group.parentId ? ' has-parent' : ''}${group.collapsed ? ' is-collapsed' : ''}${autoCollapsedGroupIds.has(group.id) ? ' is-lod-summary' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}`}
+              pointerEvents="none"
+            >
+              {group.description ? <title>{group.description}</title> : null}
+              <rect
+                x={group.x}
+                y={group.y}
+                width={group.width}
+                height={group.height}
+                rx={scene.architecture ? group.c4Type === 'software-system' ? 10 : 8 : 20}
+                pointerEvents={group.collapsed ? 'all' : 'none'}
+                onClick={group.collapsed ? (event) => {
+                  event.stopPropagation()
+                  if (autoCollapsedGroupIds.has(group.id)) {
+                    setSelectedIds([])
+                    setSelectedGroupTarget(group.id)
+                  } else selectGroup(group.id)
+                } : undefined}
+                onDoubleClick={group.collapsed ? (event) => {
+                  event.stopPropagation()
+                  if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
+                  else if (autoCollapsedGroupIds.has(group.id)) revealAndFocus(group.memberIds)
+                  else {
+                    commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false }))
+                    setSelectedGroupTarget(group.id)
+                  }
+                } : undefined}
+              />
+              {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx={scene.architecture ? 10 : 20} /> : null}
+              {!group.collapsed ? (
+                <rect
+                  className={`freeform-group-navigation-hit${scene.architecture ? ' is-drillable' : ''}`}
+                  x={group.x}
+                  y={group.y}
+                  width={group.width}
+                  height="34"
+                  rx="12"
+                  pointerEvents="all"
+                  onClick={(event) => { event.stopPropagation(); selectGroup(group.id) }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
+                  }}
+                />
+              ) : null}
+              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{autoCollapsedGroupIds.has(group.id) ? ` · ${group.memberIds.length} 节点` : !scene.architecture && group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : autoCollapsedGroupIds.has(group.id) ? ' · 双击进入' : ' · 双击展开' : ''}</text> : null}
+            </g>
+          ))}
+          {relationBundleTrunks.map((bundle) => (
+            <path
+              key={bundle.id}
+              d={bundle.path}
+              className={`freeform-bundle-trunk emphasis-${bundle.emphasis ?? 'secondary'}${bundle.id.startsWith('group:') ? ' is-group-bus' : ''}`}
+              pointerEvents="none"
+            />
+          ))}
+          {visibleRenderArrows.map((arrow) => {
+            const gestureArrow = arrowPointDraft?.id === arrow.id ? { ...arrow, points: arrowPointDraft.points } : arrow
+            const displayArrow = gestureArrow
+            const standalone = Boolean(displayArrow.start && displayArrow.end)
+            const fromRaw = standalone ? undefined : projectedBoxLookup.get(displayArrow.from)
+            const toRaw = standalone ? undefined : projectedBoxLookup.get(displayArrow.to)
+            const from = fromRaw ? fromRaw : undefined
+            const to = toRaw ? toRaw : undefined
+            if (!standalone && (!from || !to)) return null
+            const route = standalone
+              ? canvasArrowRoutePoints(displayArrow.start!, displayArrow.end!, displayArrow)
+              : canvasArrowBoxRoute(from!, to!, displayArrow, displayArrow.from === displayArrow.to)
+            const start = route[0]
+            const end = route.at(-1)!
+            const path = canvasArrowRoutePath(route, displayArrow.freehand)
+            const fallbackLabelPoint = displayArrow.labelPosition ?? pathLabelPoint(route[0], route.at(-1)!, route.slice(1, -1))
+            const automaticLabelLayout = relationLabelLayouts.get(arrow.id)
+            const labelLayout = arrowLabelDraft?.id === arrow.id && displayArrow.label
+              ? {
+                  id: arrow.id,
+                  x: arrowLabelDraft.position.x,
+                  y: arrowLabelDraft.position.y,
+                  ...canvasArrowLabelText(displayArrow.label),
+                }
+              : automaticLabelLayout
+            const moveOrigins = frozenMoveLabels && drag.current?.kind === 'move' ? drag.current.positions : null
+            const fromOrigin = moveOrigins?.get(arrow.from)
+            const toOrigin = moveOrigins?.get(arrow.to)
+            const fromMove = fromOrigin && gesturePositionOverrides?.[arrow.from]
+            const toMove = toOrigin && gesturePositionOverrides?.[arrow.to]
+            const movingLabel = !displayArrow.labelPosition && (fromMove || toMove)
+              ? { x: ((fromMove ? fromMove.x - fromOrigin!.x : 0) + (toMove ? toMove.x - toOrigin!.x : 0)) / 2,
+                  y: ((fromMove ? fromMove.y - fromOrigin!.y : 0) + (toMove ? toMove.y - toOrigin!.y : 0)) / 2 }
+              : null
+            return (
+              <g key={arrow.id} data-element-id={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${highlightedIds.has(arrow.id) ? ' is-updated' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
+                <CanvasArrowInk label={displayArrow.label} path={path} markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'} strokeColor={displayArrow.strokeColor || visualSkin ? displayArrow.strokeColor ?? visualSkin?.edge : undefined} strokeWidth={displayArrow.strokeWidth} />
+                {displayArrow.label && labelLayout ? (
+                  <g
+                    className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
+                    transform={movingLabel ? `translate(${movingLabel.x} ${movingLabel.y})` : undefined}
+                    pointerEvents={selectedIds.includes(arrow.id) ? 'all' : 'none'}
+                    onPointerDown={selectedIds.includes(arrow.id) ? (event) => beginArrowLabelDrag(event, arrow) : undefined}
+                    onPointerMove={selectedIds.includes(arrow.id) ? moveArrowLabel : undefined}
+                    onPointerUp={selectedIds.includes(arrow.id) ? finishGesture : undefined}
+                    onPointerCancel={selectedIds.includes(arrow.id) ? cancelGesture : undefined}
+                    onDoubleClick={selectedIds.includes(arrow.id) ? (event) => { event.stopPropagation(); updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item) } : undefined}
+                  >
+                    <rect style={visualSkin ? { fill: visualSkin.background } : undefined} x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={8} />
+                    <text x={labelLayout.x} y={labelLayout.y + 4 - (labelLayout.lines.length - 1) * 8} textAnchor="middle">{labelLayout.lines.map((line, index) => <tspan key={index} x={labelLayout.x} dy={index ? 16 : 0}>{line}</tspan>)}</text>
+                  </g>
+                ) : null}
+                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? displayArrow.points?.map((point, index) => (
+                  <circle
+                    key={`${arrow.id}-point-${index}`}
+                    className="freeform-arrow-point"
+                    cx={point.x}
+                    cy={point.y}
+                    r="8"
+                    onPointerDown={(event) => beginArrowPointDrag(event, arrow, index)}
+                    onPointerMove={moveArrowPoint}
+                    onPointerUp={finishGesture}
+                    onPointerCancel={cancelGesture}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation()
+                      updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, points: item.points?.filter((_, pointIndex) => pointIndex !== index) } : item)
+                    }}
+                  />
+                )) : null}
+                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? <>
+                  <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'from', end, start)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
+                  <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'to', start, end)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
+                </> : null}
+              </g>
+            )
+          })}
+          {collapsedConnections.map((connection) => {
+            const fromCenter = center(connection.fromBox)
+            const toCenter = center(connection.toBox)
+            const start = anchorPoint(connection.fromBox, connection.fromAnchor, toCenter)
+            const end = anchorPoint(connection.toBox, connection.toAnchor, fromCenter)
+            const path = canvasArrowPath(start, end, connection)
+            const label = connection.labels.slice(0, 2).join(' · ')
+            return (
+              <g key={connection.id} className={`freeform-arrow is-collapsed-summary${connection.lineStyle === 'dashed' ? ' is-dashed' : ''}`} pointerEvents="none">
+                <path d={path} markerEnd="url(#canvas-arrow)" />
+                {label || connection.count > 1 ? <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 10} textAnchor="middle">{truncate(`${label}${connection.count > 1 ? ` ×${connection.count}` : ''}`, 36)}</text> : null}
+              </g>
+            )
+          })}
+          {connectPreviewStart && connectPreviewPoint ? (
+            <g className="freeform-connect-preview" pointerEvents="none">
+              <path d={`M ${connectPreviewStart.x} ${connectPreviewStart.y} L ${connectPreviewPoint.x} ${connectPreviewPoint.y}`} />
+              <circle cx={connectPreviewPoint.x} cy={connectPreviewPoint.y} r="6" />
+            </g>
+          ) : null}
+          {lineDraft ? (
+            <g className="freeform-line-draw-preview" pointerEvents="none">
+              <path d={`M ${lineDraft.start.x} ${lineDraft.start.y} L ${lineDraft.end.x} ${lineDraft.end.y}`} markerEnd={lineDraft.markerEnd === 'arrow' ? 'url(#canvas-arrow)' : undefined} />
+            </g>
+          ) : null}
+          {freehandDraft?.points.length ? (
+            <g className="freeform-freehand-preview" pointerEvents="none">
+              <path d={canvasArrowPath(
+                freehandDraft.points[0],
+                freehandDraft.points.at(-1)!,
+                { points: freehandDraft.points.slice(1, -1), freehand: true },
+              )} />
+            </g>
+          ) : null}
+          {arrowEndpointPreview ? (
+            <g className="freeform-arrow-reconnect-preview" pointerEvents="none">
+              <path d={arrowEndpointPreview.endpoint === 'from'
+                ? `M ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y} L ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y}`
+                : `M ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y} L ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y}`} />
+              <circle cx={arrowEndpointPreview.point.x} cy={arrowEndpointPreview.point.y} r="7" />
+            </g>
+          ) : null}
+          {visibleRenderBoxes.map((item) => {
+            const originalItem = item
+            const skin = canvasVisualSkin(originalItem.type === 'note' ? undefined : scene.style, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
+            const displayItem = canvasStyledBox(originalItem, skin)
+            const displayX = displayItem.x
+            const displayY = displayItem.y
+            const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
+            const imageSource = imagePath ? imageSources[imagePath] : undefined
+            const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
+            const cardTemplate = canvasArchitectureCardTemplate(displayItem)
+            const architectureMark = Boolean(scene.architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
+            const selectedForLod = selectedIdSet.has(item.id)
+            const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (selectedForLod || tool === 'connect' || connectFrom === item.id)
+            return (
+            <g
+              key={item.id}
+              data-element-id={item.id}
+              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${imagePath ? ' is-image' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${highlightedIds.has(item.id) ? ' is-updated' : ''}`}
+              style={{ ...canvasBoxVisualStyle(displayItem), ...(skin && displayItem.type === 'node' ? { filter: skin.shadow, ...(selectedIds.includes(item.id) ? { '--canvas-box-stroke': 'var(--accent)' } : {}) } : {}) }}
+              transform={`translate(${displayX} ${displayY})${displayItem.rotation ? ` rotate(${displayItem.rotation} ${displayItem.width / 2} ${displayItem.height / 2})` : ''}`}
+              onContextMenu={(event) => openContextMenu(event, item.id)}
+              onPointerDown={(event) => startMove(event, item)}
+              onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
+              onDoubleClick={(event) => {
+                event.stopPropagation()
+                if (scene.architecture && architectureProjection.view === 'overview') {
+                  enterArchitectureScope({ kind: 'node', id: item.id, depth: 1 })
+                  return
+                }
+                setSelectedGroupTarget(null)
+                setSelectedIds([item.id])
+                if (!item.locked) window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
+              }}
+              onPointerMove={(event) => moveSelection(event, item)}
+              onPointerUp={finishGesture}
+              onPointerCancel={cancelGesture}
+            >
+              <CanvasBoxArtwork item={originalItem} visualStyle={scene.style} darkTheme={darkTheme} architecture={Boolean(scene.architecture)} density={architectureProjection.density} level={semanticLodLevel} selected={selectedForLod} imageSource={imageSource} />
+              {showAnchorPoints ? <g className="freeform-anchor-points">
+                  <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
+                  <circle cx={displayItem.width} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'right')} />
+                  <circle cx={displayItem.width / 2} cy={displayItem.height} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'bottom')} />
+                  <circle cx={0} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'left')} />
+              </g> : null}
+              {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? architectureWorkbench ? (
+                <rect
+                  className="freeform-resize-handle"
+                  data-handle="se"
+                  x={displayItem.width - 7}
+                  y={displayItem.height - 7}
+                  width="14"
+                  height="14"
+                  rx="3"
+                  onPointerDown={(event) => beginResize(event, item, 'se')}
+                  onPointerMove={moveResize}
+                  onPointerUp={finishGesture}
+                  onPointerCancel={cancelGesture}
+                />
+              ) : <>
+                {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((handle) => {
+                  const point = canvasResizeHandlePoint(handle, displayItem.width, displayItem.height)
+                  return <rect
+                    key={handle}
+                    className="freeform-resize-handle"
+                    data-handle={handle}
+                    x={point.x - 6}
+                    y={point.y - 6}
+                    width="12"
+                    height="12"
+                    rx="3"
+                    onPointerDown={(event) => beginResize(event, item, handle)}
+                    onPointerMove={moveResize}
+                    onPointerUp={finishGesture}
+                    onPointerCancel={cancelGesture}
+                  />
+                })}
+                <path className="freeform-rotate-stem" d={`M ${displayItem.width / 2} 0 V -26`} />
+                <circle
+                  className="freeform-rotate-handle"
+                  cx={displayItem.width / 2}
+                  cy={-32}
+                  r="7"
+                  onPointerDown={(event) => beginRotate(event, item)}
+                  onPointerMove={moveRotate}
+                  onPointerUp={finishGesture}
+                  onPointerCancel={cancelGesture}
+                />
+              </> : null}
+            </g>
+          )})}
+          {multiTransformBounds ? (
+            <g className="freeform-multi-transform" pointerEvents="none">
+              <rect x={multiTransformBounds.x} y={multiTransformBounds.y} width={multiTransformBounds.width} height={multiTransformBounds.height} />
+              {(['nw', 'ne', 'se', 'sw'] as const).map((handle) => {
+                const local = canvasResizeHandlePoint(handle, multiTransformBounds.width, multiTransformBounds.height)
+                return <rect
+                  key={handle}
+                  className="freeform-resize-handle"
+                  data-handle={handle}
+                  x={multiTransformBounds.x + local.x - 7}
+                  y={multiTransformBounds.y + local.y - 7}
+                  width="14"
+                  height="14"
+                  rx="3"
+                  pointerEvents="all"
+                  onPointerDown={(event) => beginMultiResize(event, handle)}
+                  onPointerMove={moveResize}
+                  onPointerUp={finishGesture}
+                  onPointerCancel={cancelGesture}
+                />
+              })}
+            </g>
+          ) : null}
+          {insertTarget ? (
+            <g className="freeform-insert-target" transform={`translate(${insertTarget.point.x} ${insertTarget.point.y})`} pointerEvents="none">
+              <circle r="11" />
+              <path d="M -4 0 H 4 M 0 -4 V 4" />
+              <text x="16" y="4">释放插入关系</text>
+            </g>
+          ) : null}
+          {selectionRect ? (() => {
+            const rect = normalizeRect(selectionRect)
+            return <rect className="freeform-marquee" x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
+          })() : null}
+        </svg>
+
+        {multiSelectionToolbarPosition ? (
+          <div className="freeform-selection-toolbar" style={multiSelectionToolbarPosition} aria-label="多选快捷操作">
+            <button type="button" title="保持当前位置，只整理选区及一跳邻域" aria-label="智能整理邻域" onClick={smartLocalLayout}>整理</button>
+            <button type="button" title="垂直对齐" aria-label="垂直对齐" onClick={() => alignSelection('x')}>│</button>
+            <button type="button" title="水平对齐" aria-label="水平对齐" onClick={() => alignSelection('y')}>─</button>
+            <button type="button" title="水平等距分布" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>↔</button>
+            <button type="button" title="垂直等距分布" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>↕</button>
+            {selectedHasOverlap ? <button type="button" title="自动避让重叠节点" aria-label="自动避让" onClick={separateSelection}>避让</button> : null}
+            <span />
+            <button type="button" title="组合选中元素" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
+          </div>
+        ) : null}
+
+        {contextMenu ? (
+          <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            {selectedSingle?.type === 'arrow' ? <>
+              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { insertNodeIntoArrow(selectedSingle); setContextMenu(null) }}>插入中间节点</button>}
+              <button type="button" role="menuitem" onClick={() => { reverseSelectedArrow(selectedSingle.id); setContextMenu(null) }}>反转关系方向</button>
+              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { rerouteSelectedArrow(selectedSingle.id); setContextMenu(null) }}>重新路由</button>}
+              {selectedSingle.labelPosition ? <button type="button" role="menuitem" onClick={() => { updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item); setContextMenu(null) }}>标签恢复自动位置</button> : null}
+              <span />
+            </> : null}
+            {selected.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button> : null}
+            {selectedBox?.sourcePaths?.[0] && onOpenSource ? <button type="button" role="menuitem" onClick={() => { onOpenSource(selectedBox.sourcePaths![0]); setContextMenu(null) }}>打开关联源码</button> : null}
+            {selectedBoxes.length > 1 ? <button type="button" role="menuitem" onClick={() => { groupSelection(); setContextMenu(null) }}>组合</button> : null}
+            {selectedGroupIds.length > 0 ? <button type="button" role="menuitem" onClick={() => { ungroupSelection(); setContextMenu(null) }}>取消组合</button> : null}
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('front')}>移到最前</button> : null}
+            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('back')}>移到最后</button> : null}
+            <span />
+            <button type="button" role="menuitem" className="is-danger" disabled={selectedBoxes.length > 0 && selectedLocked.length === selectedBoxes.length} onClick={deleteSelected}>删除</button>
+          </div>
+        ) : null}
+
+        <div className="freeform-status">
+          <span>{scene.elements.length} 个元素</span>
+          {selected.length > 0 && inspectorCollapsed ? <button type="button" onClick={() => setInspectorCollapsed(false)}>属性</button> : null}
+          {insertTarget ? <span className="is-action">释放后插入关系</span>
+            : arrowEndpointPreview?.targetId ? <span className="is-action">释放后重挂到 {truncate(boxes.find((item) => item.id === arrowEndpointPreview.targetId)?.text ?? arrowEndpointPreview.targetId, 18)}</span>
+              : arrowEndpointPreview ? <span className="is-action">拖到节点锚点以重挂端点</span>
+                : connectFrom ? <span className="is-action">连接中 · 点击节点，或点击空白创建新节点</span>
+                  : gestureAutoReflowCount > 0 ? <span className="is-action">智能腾位 {gestureAutoReflowCount} 节点 · Alt 关闭</span>
+                    : dragCollisionIds.size > 0 ? <span className="is-action">释放后自动腾位 · Alt 保留重叠</span>
+                  : selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span className="freeform-shortcuts">Space 拖动画布 · ⇧ 多选</span>}
+        </div>
+        <div className="freeform-zoom-controls" aria-label="画布缩放">
+          <button type="button" aria-label="缩小画布" onClick={() => zoomAt(viewport.zoom / 1.15)}>−</button>
+          <button type="button" className="zoom-value" aria-label="恢复 100%" onClick={() => setViewport((current) => ({ ...current, zoom: 1 }))}>{Math.round(viewport.zoom * 100)}%</button>
+          <button type="button" aria-label="放大画布" onClick={() => zoomAt(viewport.zoom * 1.15)}>+</button>
+          <span />
+          <button type="button" aria-pressed={minimapVisible} onClick={() => setMinimapOpen(!minimapVisible)}>缩略图</button>
+          <button type="button" aria-label="适配画布" onClick={fit}>适配</button>
+        </div>
+        {minimapVisible ? <svg className={`freeform-minimap${architectureScope ? ' is-scoped' : ''}`} aria-label={architectureScope ? '当前架构范围缩略图' : '画布缩略图'} viewBox={`${minimapViewBounds.x} ${minimapViewBounds.y} ${minimapViewBounds.width} ${minimapViewBounds.height}`} onPointerDown={recenterFromMinimap}>
+          <rect x={minimapViewBounds.x} y={minimapViewBounds.y} width={minimapViewBounds.width} height={minimapViewBounds.height} className="freeform-minimap-bg" />
+          {displayGroupBounds.filter((group) => (
+            group.collapsed
+            && !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
+          )).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
+          {compactMinimap ? <>
+            {minimapNodeCloudPath ? <path d={minimapNodeCloudPath} className="freeform-minimap-node-cloud" /> : null}
+            {renderBoxes.filter((item) => selectedIdSet.has(item.id)).map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className="freeform-minimap-node is-selected" />)}
+          </> : renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIdSet.has(item.id) ? ' is-selected' : ''}`} />)}
+          <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
+        </svg> : null}
+      </div>
+        {selected.length > 0 && !inspectorCollapsed && (drag.current?.kind !== 'move' || moveStartedWithInspector.current) ? (
           <div className={`freeform-inspector${detailsExpanded ? ' is-expanded' : ''}`} aria-label="选中元素属性">
             <div className="freeform-inspector-head">
               <div className="freeform-inspector-title">
@@ -3616,7 +3578,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               <div className="freeform-inspector-actions">
                 {scene.architecture && selectedBox ? <button type="button" title="只查看当前节点及邻域" onClick={() => enterArchitectureScope({ kind: 'node', id: selectedBox.id, depth: 1 })}>聚焦</button> : null}
                 {scene.architecture && selectedGroupId ? <button type="button" title="进入当前边界查看内部结构" onClick={() => enterArchitectureScope({ kind: 'group', id: selectedGroupId })}>下钻</button> : null}
-                {selectedBox || selectedGroup ? <button type="button" aria-pressed={detailsExpanded} onClick={() => setDetailsExpanded((value) => !value)}>{detailsExpanded ? '收起' : '详情'}</button> : null}
+                {selectedBox || selectedGroup ? <button type="button" aria-pressed={detailsExpanded} onClick={() => setDetailsExpanded((value) => !value)}>{detailsExpanded ? '收起详情' : '更多属性'}</button> : null}
                 <div className="freeform-inspector-more">
                   <button type="button" title="更多操作" aria-label="更多操作" aria-expanded={inspectorMenuOpen} onClick={() => setInspectorMenuOpen((value) => !value)}>⋯</button>
                   {inspectorMenuOpen ? (
@@ -3632,6 +3594,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                     </div>
                   ) : null}
                 </div>
+                <button type="button" aria-label="收起属性" title="收起属性" onClick={() => setInspectorCollapsed(true)}>×</button>
               </div>
             </div>
             {traceResult ? <div className="freeform-inspector-trace-status">依赖追踪 · {traceResult.nodeIds.length} 节点 · {traceResult.arrowIds.length} 关系 <button type="button" onClick={() => setTraceDirection(null)}>清除</button></div> : null}
@@ -3684,12 +3647,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 {architectureWorkbench ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
                 {architectureWorkbench ? <>
                   <div className="freeform-section-caption">架构</div>
-                  <label>
-                    <span>C4 语义</span>
-                    <select aria-label="C4 语义" disabled={selectedBox.locked} value={selectedBox.c4Type ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, c4Type: (event.target.value || undefined) as CanvasC4Type | undefined }))}>
-                      <option value="">未指定</option><option value="person">Person</option><option value="software-system">Software System</option><option value="container">Container</option><option value="component">Component</option>
-                    </select>
-                  </label>
+
                   <label>
                     <span>节点角色</span>
                     <select aria-label="节点角色图标" disabled={selectedBox.locked} value={selectedBox.icon ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, icon: (event.target.value || undefined) as CanvasIcon | undefined }))}>
@@ -3702,6 +3660,8 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                       <option value="">无</option><option value="spring">Spring</option><option value="react">React</option><option value="vue">Vue</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="kafka">Kafka</option><option value="rabbitmq">RabbitMQ</option><option value="docker">Docker</option><option value="kubernetes">Kubernetes</option><option value="qdrant">Qdrant</option><option value="opensearch">OpenSearch</option><option value="elasticsearch">Elasticsearch</option><option value="mongodb">MongoDB</option><option value="minio">MinIO / S3</option><option value="nginx">Nginx</option><option value="grpc">gRPC</option><option value="oidc">OIDC</option><option value="openai">LLM / OpenAI-compatible</option><option value="mcp">MCP</option>
                     </select>
                   </label>
+                  <details className="freeform-optional-field">
+                    <summary>图标 <span>{selectedBox.iconRef ? canvasIconRefLabel(selectedBox.iconRef) : '自动'}</span></summary>
                   <div className="freeform-icon-field">
                     <span>显示图标</span>
                     <button
@@ -3743,7 +3703,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                         </div>
                       </div>
                     ) : null}
-                  </div>
+                  </div>                  </details>
                 </> : null}
                 {!architectureWorkbench ? <>
                   <div className="freeform-size-row">
@@ -3789,6 +3749,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                 </> : null}
                 {detailsExpanded ? (
                   <>
+                    {architectureWorkbench ? <>
+                  <label>
+                    <span>C4 语义</span>
+                    <select aria-label="C4 语义" disabled={selectedBox.locked} value={selectedBox.c4Type ?? ''} onChange={(event) => updateSelectedBoxes((item) => ({ ...item, c4Type: (event.target.value || undefined) as CanvasC4Type | undefined }))}>
+                      <option value="">未指定</option><option value="person">Person</option><option value="software-system">Software System</option><option value="container">Container</option><option value="component">Component</option>
+                    </select>
+                  </label>
+                    </> : null}
                     {!architectureWorkbench ? <label><span>副标题</span><input aria-label="节点副标题" disabled={selectedBox.locked} value={selectedBox.subtitle ?? ''} placeholder="例如：Spring Boot 4" onChange={(event) => updateElement(selectedBox.id, (item) => item.type === 'arrow' || item.locked ? item : { ...item, subtitle: event.target.value || undefined })} /></label> : null}
                     <label>
                       <span>说明</span>
@@ -3824,6 +3792,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                           placeholder="搜索当前工作区源码"
                           onChange={(event) => setSourceLinkQuery(event.target.value)}
                         />
+                        {sourceLinkError ? <div className="freeform-source-error" role="alert">{sourceLinkError}</div> : null}
                         {sourceLinkLoading || sourceLinkOptions.length ? (
                           <div className="freeform-source-options">
                             {sourceLinkLoading ? <span>搜索中…</span> : null}
@@ -3963,604 +3932,6 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
           </div>
         ) : null}
 
-        <svg
-          ref={svgRef}
-          className={`freeform-svg tool-${spacePanning ? 'hand' : tool}`}
-          viewBox={`${viewport.x} ${viewport.y} ${viewWidth} ${viewHeight}`}
-          style={playback?.active ? { pointerEvents: 'none' } : undefined}
-          role="img"
-          aria-label="自由画布"
-          onWheel={handleWheel}
-          onDragOver={moveExternalDrag}
-          onDrop={dropExternalDrag}
-          onPointerDown={beginBackgroundPointer}
-          onPointerMove={moveBackgroundPointer}
-          onPointerUp={finishGesture}
-          onPointerCancel={cancelGesture}
-          onClick={(event) => {
-            if (event.target !== event.currentTarget) return
-            if (drag.current) return
-            const point = scenePoint(event.clientX, event.clientY, event.currentTarget, currentScene(), viewport)
-            if (connectFrom && completeConnectionOnBlank(point)) return
-            if (tool === 'node' || tool === 'note') addBox(tool, point.x, point.y)
-            if (tool === 'text') addText(point.x, point.y)
-          }}
-        >
-          <defs>
-            <pattern id="canvas-grid" width={GRID * 2} height={GRID * 2} patternUnits="userSpaceOnUse">
-              <path d={`M${GRID * 2} 0H0V${GRID * 2}`} className="freeform-grid-line" fill="none" />
-            </pattern>
-            <marker id="canvas-arrow" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto">
-              <path d="M0,0 L0,8 L10,4 z" fill="context-stroke" />
-            </marker>
-          </defs>
-          <rect width={scene.width} height={scene.height} className="freeform-background" style={visualSkin ? { fill: visualSkin.background } : undefined} pointerEvents="none" />
-          <rect width={scene.width} height={scene.height} fill="url(#canvas-grid)" pointerEvents="none" />
-          {draggedArchitectureTemplate && architectureTemplateDrag?.point ? (() => {
-            const width = draggedArchitectureTemplate.width ?? 188
-            const height = draggedArchitectureTemplate.height ?? 80
-            const x = clamp(architectureTemplateDrag.point.x - width / 2, 0, Math.max(0, scene.width - width))
-            const y = clamp(architectureTemplateDrag.point.y - height / 2, 0, Math.max(0, scene.height - height))
-            return (
-              <g className={`freeform-template-drop-preview${architectureTemplateDrag.groupId ? ' is-in-boundary' : ''}`} transform={`translate(${x} ${y})`} pointerEvents="none">
-                <rect width={width} height={height} rx="8" />
-                <text x={14} y={height / 2 + 4}>{truncate(draggedArchitectureTemplate.label, 24)}</text>
-              </g>
-            )
-          })() : null}
-          {draggedShape && shapeDrag?.point ? (() => {
-            const geometry = canvasShapeGeometry(draggedShape.ref, draggedShape.width, draggedShape.height)
-            const x = clamp(shapeDrag.point.x - draggedShape.width / 2, 0, Math.max(0, scene.width - draggedShape.width))
-            const y = clamp(shapeDrag.point.y - draggedShape.height / 2, 0, Math.max(0, scene.height - draggedShape.height))
-            return (
-              <g className="freeform-shape-drop-preview" transform={`translate(${x} ${y})`} pointerEvents="none">
-                <path d={geometry.bodyPath} />
-                {geometry.detailPaths.map((path, index) => <path key={index} d={path} className="is-detail" />)}
-              </g>
-            )
-          })() : null}
-          {snapGuides.x !== undefined ? <path className="freeform-snap-guide" d={`M ${snapGuides.x} 0 V ${scene.height}`} /> : null}
-          {snapGuides.y !== undefined ? <path className="freeform-snap-guide" d={`M 0 ${snapGuides.y} H ${scene.width}`} /> : null}
-          {snapGuides.spacing?.map((guide, index) => guide.axis === 'x' ? (
-            <g key={`spacing-x-${index}`} className="freeform-spacing-guide" pointerEvents="none">
-              <path d={`M ${guide.from} ${guide.cross} H ${guide.to} M ${guide.from} ${guide.cross - 5} V ${guide.cross + 5} M ${guide.to} ${guide.cross - 5} V ${guide.cross + 5}`} />
-              <text x={(guide.from + guide.to) / 2} y={guide.cross - 7} textAnchor="middle">{guide.distance}</text>
-            </g>
-          ) : (
-            <g key={`spacing-y-${index}`} className="freeform-spacing-guide" pointerEvents="none">
-              <path d={`M ${guide.cross} ${guide.from} V ${guide.to} M ${guide.cross - 5} ${guide.from} H ${guide.cross + 5} M ${guide.cross - 5} ${guide.to} H ${guide.cross + 5}`} />
-              <text x={guide.cross + 8} y={(guide.from + guide.to) / 2 + 4}>{guide.distance}</text>
-            </g>
-          ))}
-          {snapGuides.sizeLabel && snapGuides.sizePoint ? <text className="freeform-size-guide" x={snapGuides.sizePoint.x + 8} y={snapGuides.sizePoint.y} pointerEvents="none">{snapGuides.sizeLabel}</text> : null}
-          {architectureHeader ? (
-            <g className="freeform-architecture-header" pointerEvents="none">
-              <rect width={scene.width} height={architectureHeader.height} />
-              <path className="freeform-architecture-header-rule" d={`M 28 ${architectureHeader.height - 1} H ${scene.width - 28}`} />
-              <text className="freeform-architecture-eyebrow" x="32" y="24">{architectureHeader.eyebrow}</text>
-              <text className="freeform-architecture-title" x="32" y="52">{truncate(architectureHeader.title, 42)}</text>
-              <text className="freeform-architecture-subtitle" x="32" y="72">{architectureHeader.subtitle}</text>
-              {architectureHeader.legend.map((item, index) => {
-                const x = architectureLegendStart + index * 92
-                return (
-                  <g key={item.kind} className={`freeform-architecture-legend kind-${item.kind}`} transform={`translate(${x} 50)`}>
-                    <path d="M 0 0 H 26" />
-                    <text x="34" y="4">{item.label}</text>
-                  </g>
-                )
-              })}
-            </g>
-          ) : null}
-          {(renderScene.lanes ?? []).map((lane) => {
-            const x = lane.axis === 'vertical' ? lane.start : 0
-            const y = lane.axis === 'horizontal' ? lane.start : architectureHeader?.height ?? 0
-            const width = lane.axis === 'vertical' ? lane.size : scene.width
-            const height = lane.axis === 'horizontal' ? lane.size : scene.height - (architectureHeader?.height ?? 0)
-            return (
-              <g key={lane.id} className={`freeform-lane tone-${lane.tone ?? 'muted'}`} pointerEvents="none">
-                <rect className="freeform-lane-body" x={x} y={y} width={width} height={height} rx="14" />
-                <rect
-                  className="freeform-lane-head is-navigable"
-                  x={x}
-                  y={y}
-                  width={width}
-                  height={34}
-                  rx="14"
-                  pointerEvents="all"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    const ids = boxes.filter((item) => item.laneId === lane.id).map((item) => item.id)
-                    setSelectedGroupTarget(null)
-                    setSelectedIds(ids)
-                  }}
-                  onDoubleClick={(event) => {
-                    event.stopPropagation()
-                    if (scene.architecture) enterArchitectureScope({ kind: 'lane', id: lane.id })
-                    else focusBoxes(boxes.filter((item) => item.laneId === lane.id).map((item) => item.id))
-                  }}
-                />
-                <text x={x + 14} y={y + 22}>{truncate(lane.label, 32)}</text>
-              </g>
-            )
-          })}
-          {viewportGroupBounds.filter((group) => (
-            !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
-            && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
-          )).map((group) => (
-            <g
-              key={group.id}
-              className={`freeform-group-frame kind-${group.kind ?? 'group'} c4-${group.c4Type ?? 'none'}${group.parentId ? ' has-parent' : ''}${group.collapsed ? ' is-collapsed' : ''}${autoCollapsedGroupIds.has(group.id) ? ' is-lod-summary' : ''} tone-${group.tone ?? 'muted'}${selectedGroupId === group.id || selectedGroupIds.includes(group.id) ? ' is-selected' : ''}${traceResult ? group.memberIds.some((id) => tracedNodeIds.has(id)) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.active && group.memberIds.some((id) => activePlaybackRegionIds.has(id)) ? ' is-ai-region-active' : ''}`}
-              pointerEvents="none"
-            >
-              {group.description ? <title>{group.description}</title> : null}
-              <rect
-                x={group.x}
-                y={group.y}
-                width={group.width}
-                height={group.height}
-                rx={scene.architecture ? group.c4Type === 'software-system' ? 10 : 8 : 20}
-                pointerEvents={group.collapsed ? 'all' : 'none'}
-                onClick={group.collapsed ? (event) => {
-                  event.stopPropagation()
-                  if (autoCollapsedGroupIds.has(group.id)) {
-                    setSelectedIds([])
-                    setSelectedGroupTarget(group.id)
-                  } else selectGroup(group.id)
-                } : undefined}
-                onDoubleClick={group.collapsed ? (event) => {
-                  event.stopPropagation()
-                  if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
-                  else if (autoCollapsedGroupIds.has(group.id)) revealAndFocus(group.memberIds)
-                  else {
-                    commit(updateCanvasGroup(currentScene(), group.id, { collapsed: false }))
-                    setSelectedGroupTarget(group.id)
-                  }
-                } : undefined}
-              />
-              {group.c4Type === 'software-system' && !group.collapsed ? <rect className="freeform-group-header" x={group.x} y={group.y} width={group.width} height="34" rx={scene.architecture ? 10 : 20} /> : null}
-              {!group.collapsed ? (
-                <rect
-                  className={`freeform-group-navigation-hit${scene.architecture ? ' is-drillable' : ''}`}
-                  x={group.x}
-                  y={group.y}
-                  width={group.width}
-                  height="34"
-                  rx="12"
-                  pointerEvents="all"
-                  onClick={(event) => { event.stopPropagation(); selectGroup(group.id) }}
-                  onDoubleClick={(event) => {
-                    event.stopPropagation()
-                    if (scene.architecture) enterArchitectureScope({ kind: 'group', id: group.id })
-                  }}
-                />
-              ) : null}
-              {group.label ? <text x={group.x + 14} y={group.y + 22}>{truncate(group.label, 28)}{autoCollapsedGroupIds.has(group.id) ? ` · ${group.memberIds.length} 节点` : !scene.architecture && group.c4Type ? ` · ${c4Label(group.c4Type)}` : ''}{group.collapsed ? scene.architecture ? ' · 双击下钻' : autoCollapsedGroupIds.has(group.id) ? ' · 双击进入' : ' · 双击展开' : ''}</text> : null}
-            </g>
-          ))}
-          {relationBundleTrunks.map((bundle) => (
-            <path
-              key={bundle.id}
-              d={bundle.path}
-              className={`freeform-bundle-trunk emphasis-${bundle.emphasis ?? 'secondary'}${bundle.id.startsWith('group:') ? ' is-group-bus' : ''}`}
-              pointerEvents="none"
-            />
-          ))}
-          {playbackGhostArrows.map((arrow) => {
-            const from = playbackBoxLookup.get(arrow.from)
-            const to = playbackBoxLookup.get(arrow.to)
-            if (!from || !to) return null
-            const route = canvasArrowBoxRoute(from, to, arrow, arrow.from === arrow.to)
-            return (
-              <g key={`ghost-${arrow.id}`} className={`freeform-arrow freeform-ai-ghost${playback?.deletingIds?.includes(arrow.id) ? ' is-deleting' : ''}`} pointerEvents="none">
-                <path d={canvasArrowRoutePath(route, arrow.freehand)} markerEnd="url(#canvas-arrow)" />
-              </g>
-            )
-          })}
-          {visibleRenderArrows.map((arrow) => {
-            const gestureArrow = arrowPointDraft?.id === arrow.id ? { ...arrow, points: arrowPointDraft.points } : arrow
-            const displayArrow = playback?.arrowOverrides?.[arrow.id] ?? gestureArrow
-            const standalone = Boolean(displayArrow.start && displayArrow.end)
-            const fromRaw = standalone ? undefined : playbackBoxLookup.get(displayArrow.from)
-            const toRaw = standalone ? undefined : playbackBoxLookup.get(displayArrow.to)
-            const from = fromRaw ? playbackBoxPosition(fromRaw) : undefined
-            const to = toRaw ? playbackBoxPosition(toRaw) : undefined
-            if (!standalone && (!from || !to)) return null
-            const route = standalone
-              ? canvasArrowRoutePoints(displayArrow.start!, displayArrow.end!, displayArrow)
-              : canvasArrowBoxRoute(from!, to!, displayArrow, displayArrow.from === displayArrow.to)
-            const start = route[0]
-            const end = route.at(-1)!
-            const path = canvasArrowRoutePath(route, displayArrow.freehand)
-            const overridden = Boolean(playback?.arrowOverrides?.[arrow.id])
-            const fallbackLabelPoint = displayArrow.labelPosition ?? pathLabelPoint(route[0], route.at(-1)!, route.slice(1, -1))
-            const automaticLabelLayout = overridden && displayArrow.label
-              ? { x: fallbackLabelPoint.x, y: fallbackLabelPoint.y - (displayArrow.labelPosition ? 0 : 10), ...canvasArrowLabelText(displayArrow.label) }
-              : relationLabelLayouts.get(arrow.id)
-            const labelLayout = arrowLabelDraft?.id === arrow.id && displayArrow.label
-              ? {
-                  id: arrow.id,
-                  x: arrowLabelDraft.position.x,
-                  y: arrowLabelDraft.position.y,
-                  ...canvasArrowLabelText(displayArrow.label),
-                }
-              : automaticLabelLayout
-            const moveOrigins = frozenMoveLabels && drag.current?.kind === 'move' ? drag.current.positions : null
-            const fromOrigin = moveOrigins?.get(arrow.from)
-            const toOrigin = moveOrigins?.get(arrow.to)
-            const fromMove = fromOrigin && gesturePositionOverrides?.[arrow.from]
-            const toMove = toOrigin && gesturePositionOverrides?.[arrow.to]
-            const movingLabel = !displayArrow.labelPosition && (fromMove || toMove)
-              ? { x: ((fromMove ? fromMove.x - fromOrigin!.x : 0) + (toMove ? toMove.x - toOrigin!.x : 0)) / 2,
-                  y: ((fromMove ? fromMove.y - fromOrigin!.y : 0) + (toMove ? toMove.y - toOrigin!.y : 0)) / 2 }
-              : null
-            return (
-              <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
-                <CanvasArrowInk label={displayArrow.label} path={path} markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'} strokeColor={displayArrow.strokeColor || visualSkin ? displayArrow.strokeColor ?? visualSkin?.edge : undefined} strokeWidth={displayArrow.strokeWidth} />
-                {displayArrow.label && labelLayout ? (
-                  <g
-                    className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
-                    transform={movingLabel ? `translate(${movingLabel.x} ${movingLabel.y})` : undefined}
-                    pointerEvents={selectedIds.includes(arrow.id) ? 'all' : 'none'}
-                    onPointerDown={selectedIds.includes(arrow.id) ? (event) => beginArrowLabelDrag(event, arrow) : undefined}
-                    onPointerMove={selectedIds.includes(arrow.id) ? moveArrowLabel : undefined}
-                    onPointerUp={selectedIds.includes(arrow.id) ? finishGesture : undefined}
-                    onPointerCancel={selectedIds.includes(arrow.id) ? cancelGesture : undefined}
-                    onDoubleClick={selectedIds.includes(arrow.id) ? (event) => { event.stopPropagation(); updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item) } : undefined}
-                  >
-                    <rect style={visualSkin ? { fill: visualSkin.background } : undefined} x={labelLayout.x - labelLayout.width / 2} y={labelLayout.y - labelLayout.height / 2} width={labelLayout.width} height={labelLayout.height} rx={8} />
-                    <text x={labelLayout.x} y={labelLayout.y + 4 - (labelLayout.lines.length - 1) * 8} textAnchor="middle">{labelLayout.lines.map((line, index) => <tspan key={index} x={labelLayout.x} dy={index ? 16 : 0}>{line}</tspan>)}</text>
-                  </g>
-                ) : null}
-                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? displayArrow.points?.map((point, index) => (
-                  <circle
-                    key={`${arrow.id}-point-${index}`}
-                    className="freeform-arrow-point"
-                    cx={point.x}
-                    cy={point.y}
-                    r="8"
-                    onPointerDown={(event) => beginArrowPointDrag(event, arrow, index)}
-                    onPointerMove={moveArrowPoint}
-                    onPointerUp={finishGesture}
-                    onPointerCancel={cancelGesture}
-                    onDoubleClick={(event) => {
-                      event.stopPropagation()
-                      updateElement(arrow.id, (item) => item.type === 'arrow' ? { ...item, points: item.points?.filter((_, pointIndex) => pointIndex !== index) } : item)
-                    }}
-                  />
-                )) : null}
-                {selectedIds.includes(arrow.id) && !displayArrow.freehand ? <>
-                  <circle className="freeform-arrow-endpoint" cx={start.x} cy={start.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'from', end, start)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
-                  <circle className="freeform-arrow-endpoint" cx={end.x} cy={end.y} r="7" onPointerDown={(event) => beginArrowEndpointDrag(event, arrow, 'to', start, end)} onPointerMove={moveArrowEndpoint} onPointerUp={finishGesture} onPointerCancel={cancelGesture} />
-                </> : null}
-              </g>
-            )
-          })}
-          {collapsedConnections.map((connection) => {
-            const fromCenter = center(connection.fromBox)
-            const toCenter = center(connection.toBox)
-            const start = anchorPoint(connection.fromBox, connection.fromAnchor, toCenter)
-            const end = anchorPoint(connection.toBox, connection.toAnchor, fromCenter)
-            const path = canvasArrowPath(start, end, connection)
-            const label = connection.labels.slice(0, 2).join(' · ')
-            return (
-              <g key={connection.id} className={`freeform-arrow is-collapsed-summary${connection.lineStyle === 'dashed' ? ' is-dashed' : ''}`} pointerEvents="none">
-                <path d={path} markerEnd="url(#canvas-arrow)" />
-                {label || connection.count > 1 ? <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 10} textAnchor="middle">{truncate(`${label}${connection.count > 1 ? ` ×${connection.count}` : ''}`, 36)}</text> : null}
-              </g>
-            )
-          })}
-          {connectPreviewStart && connectPreviewPoint ? (
-            <g className="freeform-connect-preview" pointerEvents="none">
-              <path d={`M ${connectPreviewStart.x} ${connectPreviewStart.y} L ${connectPreviewPoint.x} ${connectPreviewPoint.y}`} />
-              <circle cx={connectPreviewPoint.x} cy={connectPreviewPoint.y} r="6" />
-            </g>
-          ) : null}
-          {lineDraft ? (
-            <g className="freeform-line-draw-preview" pointerEvents="none">
-              <path d={`M ${lineDraft.start.x} ${lineDraft.start.y} L ${lineDraft.end.x} ${lineDraft.end.y}`} markerEnd={lineDraft.markerEnd === 'arrow' ? 'url(#canvas-arrow)' : undefined} />
-            </g>
-          ) : null}
-          {freehandDraft?.points.length ? (
-            <g className="freeform-freehand-preview" pointerEvents="none">
-              <path d={canvasArrowPath(
-                freehandDraft.points[0],
-                freehandDraft.points.at(-1)!,
-                { points: freehandDraft.points.slice(1, -1), freehand: true },
-              )} />
-            </g>
-          ) : null}
-          {arrowEndpointPreview ? (
-            <g className="freeform-arrow-reconnect-preview" pointerEvents="none">
-              <path d={arrowEndpointPreview.endpoint === 'from'
-                ? `M ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y} L ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y}`
-                : `M ${arrowEndpointPreview.fixedPoint.x} ${arrowEndpointPreview.fixedPoint.y} L ${arrowEndpointPreview.point.x} ${arrowEndpointPreview.point.y}`} />
-              <circle cx={arrowEndpointPreview.point.x} cy={arrowEndpointPreview.point.y} r="7" />
-            </g>
-          ) : null}
-          {playbackGhostBoxes.map((item) => (
-            <g
-              key={`ghost-${item.id}`}
-              className={`freeform-box freeform-${item.type} freeform-ai-ghost tone-${item.tone ?? 'default'} shape-${item.shape ?? 'rounded'}${playback?.deletingIds?.includes(item.id) ? ' is-deleting' : ''}`}
-              transform={`translate(${item.x} ${item.y})`}
-              pointerEvents="none"
-            >
-              <CanvasBoxShape item={item} />
-              <text x={item.width / 2} y={item.height / 2} textAnchor="middle" dominantBaseline="middle">{truncate(item.text, 28)}</text>
-            </g>
-          ))}
-          {visibleRenderBoxes.map((item) => {
-            const playbackPosition = playback?.positionOverrides?.[item.id]
-            const originalItem = playbackBoxPosition(item)
-            const skin = canvasVisualSkin(originalItem.type === 'note' ? undefined : scene.style, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
-            const displayItem = canvasStyledBox(originalItem, skin)
-            const displayX = displayItem.x
-            const displayY = displayItem.y
-            const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
-            const imageSource = imagePath ? imageSources[imagePath] : undefined
-            const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
-            const cardTemplate = canvasArchitectureCardTemplate(displayItem)
-            const architectureMark = Boolean(scene.architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
-            const selectedForLod = selectedIdSet.has(item.id)
-            const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (selectedForLod || tool === 'connect' || connectFrom === item.id)
-            return (
-            <g
-              key={item.id}
-              className={`freeform-box freeform-${displayItem.type} tone-${displayItem.tone ?? 'default'} shape-${displayItem.shape ?? 'rounded'} emphasis-${displayItem.emphasis ?? 'secondary'}${displayItem.type === 'note' && displayItem.textOnly ? ' is-text-only' : ''}${imagePath ? ' is-image' : ''}${architectureCard ? ` is-architecture-card card-kind-${cardTemplate.kind}` : ''}${architectureMark ? ' is-architecture-mark' : ''}${displayItem.iconRef ? ' has-icon-ref' : displayItem.stencil ? ' has-stencil-logo' : ''}${displayItem.fillColor ? ' has-custom-fill' : ''}${displayItem.strokeColor ? ' has-custom-stroke' : ''}${displayItem.strokeWidth ? ' has-custom-stroke-width' : ''}${displayItem.locked ? ' is-locked' : ''}${selectedIds.includes(item.id) ? ' is-selected' : ''}${dragCollisionIds.has(item.id) ? ' is-collision' : ''}${connectFrom === item.id ? ' is-connect-source' : ''}${arrowEndpointPreview?.targetId === item.id ? ' is-reconnect-target' : ''}${traceResult ? tracedNodeIds.has(item.id) ? ` is-traced trace-depth-${Math.min(3, traceResult.distanceById[item.id] ?? 0)}` : ' is-trace-dimmed' : ''}${playback?.currentElementId === item.id ? ' is-ai-drawing-target' : ''}${playback?.finalHighlightIds?.includes(item.id) ? ' is-ai-final-highlight' : ''}${playbackPosition ? ' is-ai-dragging' : ''}${playback?.active && activePlaybackRegionIds.has(item.id) ? ' is-ai-region-active' : ''}`}
-              style={{ ...canvasBoxVisualStyle(displayItem), ...(skin && displayItem.type === 'node' ? { filter: skin.shadow, ...(selectedIds.includes(item.id) ? { '--canvas-box-stroke': 'var(--accent)' } : {}) } : {}) }}
-              transform={`translate(${displayX} ${displayY})${displayItem.rotation ? ` rotate(${displayItem.rotation} ${displayItem.width / 2} ${displayItem.height / 2})` : ''}`}
-              onContextMenu={(event) => openContextMenu(event, item.id)}
-              onPointerDown={(event) => startMove(event, item)}
-              onClick={(event) => { event.stopPropagation(); handleBoxClick(item.id, event) }}
-              onDoubleClick={(event) => {
-                event.stopPropagation()
-                if (scene.architecture && architectureProjection.view === 'overview') {
-                  enterArchitectureScope({ kind: 'node', id: item.id, depth: 1 })
-                  return
-                }
-                setSelectedGroupTarget(null)
-                setSelectedIds([item.id])
-                if (!item.locked) window.setTimeout(() => { textInputRef.current?.focus(); textInputRef.current?.select() }, 0)
-              }}
-              onPointerMove={(event) => moveSelection(event, item)}
-              onPointerUp={finishGesture}
-              onPointerCancel={cancelGesture}
-            >
-              <CanvasBoxArtwork item={originalItem} visualStyle={scene.style} darkTheme={darkTheme} architecture={Boolean(scene.architecture)} density={architectureProjection.density} level={semanticLodLevel} selected={selectedForLod} imageSource={imageSource} typingText={playback?.typing?.id === item.id ? playback.typing.text : undefined} />
-              {showAnchorPoints ? <g className="freeform-anchor-points">
-                  <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
-                  <circle cx={displayItem.width} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'right')} />
-                  <circle cx={displayItem.width / 2} cy={displayItem.height} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'bottom')} />
-                  <circle cx={0} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'left')} />
-              </g> : null}
-              {selectedIds.length === 1 && selectedIds[0] === item.id && !item.locked ? architectureWorkbench ? (
-                <rect
-                  className="freeform-resize-handle"
-                  data-handle="se"
-                  x={displayItem.width - 7}
-                  y={displayItem.height - 7}
-                  width="14"
-                  height="14"
-                  rx="3"
-                  onPointerDown={(event) => beginResize(event, item, 'se')}
-                  onPointerMove={moveResize}
-                  onPointerUp={finishGesture}
-                  onPointerCancel={cancelGesture}
-                />
-              ) : <>
-                {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((handle) => {
-                  const point = canvasResizeHandlePoint(handle, displayItem.width, displayItem.height)
-                  return <rect
-                    key={handle}
-                    className="freeform-resize-handle"
-                    data-handle={handle}
-                    x={point.x - 6}
-                    y={point.y - 6}
-                    width="12"
-                    height="12"
-                    rx="3"
-                    onPointerDown={(event) => beginResize(event, item, handle)}
-                    onPointerMove={moveResize}
-                    onPointerUp={finishGesture}
-                    onPointerCancel={cancelGesture}
-                  />
-                })}
-                <path className="freeform-rotate-stem" d={`M ${displayItem.width / 2} 0 V -26`} />
-                <circle
-                  className="freeform-rotate-handle"
-                  cx={displayItem.width / 2}
-                  cy={-32}
-                  r="7"
-                  onPointerDown={(event) => beginRotate(event, item)}
-                  onPointerMove={moveRotate}
-                  onPointerUp={finishGesture}
-                  onPointerCancel={cancelGesture}
-                />
-              </> : null}
-            </g>
-          )})}
-          {multiTransformBounds ? (
-            <g className="freeform-multi-transform" pointerEvents="none">
-              <rect x={multiTransformBounds.x} y={multiTransformBounds.y} width={multiTransformBounds.width} height={multiTransformBounds.height} />
-              {(['nw', 'ne', 'se', 'sw'] as const).map((handle) => {
-                const local = canvasResizeHandlePoint(handle, multiTransformBounds.width, multiTransformBounds.height)
-                return <rect
-                  key={handle}
-                  className="freeform-resize-handle"
-                  data-handle={handle}
-                  x={multiTransformBounds.x + local.x - 7}
-                  y={multiTransformBounds.y + local.y - 7}
-                  width="14"
-                  height="14"
-                  rx="3"
-                  pointerEvents="all"
-                  onPointerDown={(event) => beginMultiResize(event, handle)}
-                  onPointerMove={moveResize}
-                  onPointerUp={finishGesture}
-                  onPointerCancel={cancelGesture}
-                />
-              })}
-            </g>
-          ) : null}
-          {insertTarget ? (
-            <g className="freeform-insert-target" transform={`translate(${insertTarget.point.x} ${insertTarget.point.y})`} pointerEvents="none">
-              <circle r="11" />
-              <path d="M -4 0 H 4 M 0 -4 V 4" />
-              <text x="16" y="4">释放插入关系</text>
-            </g>
-          ) : null}
-          {selectionRect ? (() => {
-            const rect = normalizeRect(selectionRect)
-            return <rect className="freeform-marquee" x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
-          })() : null}
-          {playback?.selectionBox ? (
-            <rect
-              className="freeform-ai-selection-box"
-              x={playback.selectionBox.x}
-              y={playback.selectionBox.y}
-              width={playback.selectionBox.width}
-              height={playback.selectionBox.height}
-              rx="10"
-              pointerEvents="none"
-            />
-          ) : null}
-          {playback?.boundaryDraft ? (
-            <g className="freeform-ai-boundary-draft" pointerEvents="none">
-              <rect
-                x={playback.boundaryDraft.x}
-                y={playback.boundaryDraft.y}
-                width={playback.boundaryDraft.width}
-                height={playback.boundaryDraft.height}
-                rx="20"
-              />
-              {playback.boundaryDraft.label && playback.boundaryDraft.width > 120 ? (
-                <text x={playback.boundaryDraft.x + 14} y={playback.boundaryDraft.y + 22}>{truncate(playback.boundaryDraft.label, 28)}</text>
-              ) : null}
-            </g>
-          ) : null}
-          {playback?.anchorPreview ? (
-            <g className="freeform-ai-anchor-preview" pointerEvents="none">
-              <path d={playback.anchorPreview.path ?? `M ${playback.anchorPreview.from.x} ${playback.anchorPreview.from.y} L ${playback.anchorPreview.to.x} ${playback.anchorPreview.to.y}`} />
-              <circle className={playback.anchorPreview.active === 'from' ? 'is-active' : ''} cx={playback.anchorPreview.from.x} cy={playback.anchorPreview.from.y} r="9" />
-              <circle className={playback.anchorPreview.active === 'to' ? 'is-active' : ''} cx={playback.anchorPreview.to.x} cy={playback.anchorPreview.to.y} r="9" />
-            </g>
-          ) : null}
-          {playback?.active && playback.cursorVisible ? (
-            <g
-              className={`freeform-ai-cursor${playback.clicking ? ' is-clicking' : ''}`}
-              transform={`translate(${playback.cursor.x} ${playback.cursor.y}) scale(${1 / viewport.zoom})`}
-              pointerEvents="none"
-            >
-              <circle className="freeform-ai-cursor-ring" cx="3" cy="4" r="16" />
-              <path className="freeform-ai-cursor-pointer" d="M0 0 L0 24 L6 18 L11 29 L17 26 L12 15 L22 15 Z" />
-              <circle className="freeform-ai-cursor-dot" cx="3" cy="4" r="3" />
-              {playback.intent ? (
-                <g className="freeform-ai-intent-bubble" transform={`translate(${playbackBubbleOffsetX} ${playbackBubbleOffsetY})`}>
-                  <rect x="0" y="-22" width={playbackBubbleWidth} height="30" rx="9" />
-                  <text x="10" y="-3">{truncate(playback.intent, 34)}</text>
-                </g>
-              ) : null}
-            </g>
-          ) : null}
-        </svg>
-
-        {multiSelectionToolbarPosition && !playback?.active ? (
-          <div className="freeform-selection-toolbar" style={multiSelectionToolbarPosition} aria-label="多选快捷操作">
-            <button type="button" title="保持当前位置，只整理选区及一跳邻域" aria-label="智能整理邻域" onClick={smartLocalLayout}>整理</button>
-            <button type="button" title="垂直对齐" aria-label="垂直对齐" onClick={() => alignSelection('x')}>│</button>
-            <button type="button" title="水平对齐" aria-label="水平对齐" onClick={() => alignSelection('y')}>─</button>
-            <button type="button" title="水平等距分布" aria-label="水平等距分布" onClick={() => distributeSelection('x')}>↔</button>
-            <button type="button" title="垂直等距分布" aria-label="垂直等距分布" onClick={() => distributeSelection('y')}>↕</button>
-            {selectedHasOverlap ? <button type="button" title="自动避让重叠节点" aria-label="自动避让" onClick={separateSelection}>避让</button> : null}
-            <span />
-            <button type="button" title="组合选中元素" disabled={selectedBoxes.length < 2} onClick={groupSelection}>组合</button>
-          </div>
-        ) : null}
-
-        {playback?.active ? (
-          <div className="freeform-playback-status" role="status" aria-live="polite">
-            <span className="freeform-playback-pulse" />
-            <div>
-              <strong>{playback.label}</strong>
-              <span>{playback.regionIndex && playback.totalRegions ? `区域 ${playback.regionIndex}/${playback.totalRegions} · ` : ''}{playbackPhaseLabel(playback.phase)} · {playback.step}/{playback.total}</span>
-            </div>
-            <button type="button" onClick={() => { playbackRun.current += 1; setPlayback(null); onPlaybackComplete?.(playbackRequest?.key ?? '') }}>跳过</button>
-          </div>
-        ) : null}
-
-        {playback?.inspectorPreview ? (
-          <aside className="freeform-ai-inspector" aria-label="AI 正在调整属性">
-            <div className="freeform-ai-inspector-head">
-              <span>INSPECTOR</span>
-              <strong>{truncate(playback.inspectorPreview.title, 22)}</strong>
-            </div>
-            {playback.inspectorPreview.rows.map((row, index) => (
-              <div key={`${row.label}-${index}`} className={`freeform-ai-inspector-row${index === playback.inspectorPreview!.activeIndex ? ' is-active' : ''}`}>
-                <span>{row.label}</span>
-                <strong>{truncate(row.value, 24)}</strong>
-                {index === playback.inspectorPreview!.activeIndex && playback.inspectorDropdownOpen ? (
-                  <div className="freeform-ai-inspector-menu">
-                    {playbackInspectorOptions(row.label, row.value).map((option) => (
-                      <span key={option} className={option === row.value ? 'is-selected' : ''}>{option === row.value ? '✓ ' : ''}{truncate(option, 22)}</span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </aside>
-        ) : null}
-
-        {contextMenu ? (
-          <div className="freeform-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-            {selectedSingle?.type === 'arrow' ? <>
-              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { insertNodeIntoArrow(selectedSingle); setContextMenu(null) }}>插入中间节点</button>}
-              <button type="button" role="menuitem" onClick={() => { reverseSelectedArrow(selectedSingle.id); setContextMenu(null) }}>反转关系方向</button>
-              {selectedSingle.start && selectedSingle.end ? null : <button type="button" role="menuitem" onClick={() => { rerouteSelectedArrow(selectedSingle.id); setContextMenu(null) }}>重新路由</button>}
-              {selectedSingle.labelPosition ? <button type="button" role="menuitem" onClick={() => { updateElement(selectedSingle.id, (item) => item.type === 'arrow' ? { ...item, labelPosition: undefined } : item); setContextMenu(null) }}>标签恢复自动位置</button> : null}
-              <span />
-            </> : null}
-            {selected.length ? <button type="button" role="menuitem" onClick={() => { copySelection(); pasteSelection(); setContextMenu(null) }}>复制一份</button> : null}
-            {selectedBox?.sourcePaths?.[0] && onOpenSource ? <button type="button" role="menuitem" onClick={() => { onOpenSource(selectedBox.sourcePaths![0]); setContextMenu(null) }}>打开关联源码</button> : null}
-            {selectedBoxes.length > 1 ? <button type="button" role="menuitem" onClick={() => { groupSelection(); setContextMenu(null) }}>组合</button> : null}
-            {selectedGroupIds.length > 0 ? <button type="button" role="menuitem" onClick={() => { ungroupSelection(); setContextMenu(null) }}>取消组合</button> : null}
-            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={toggleSelectionLock}>{selectedLocked.length === selectedBoxes.length ? '解锁' : '锁定'}</button> : null}
-            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('front')}>移到最前</button> : null}
-            {selectedBoxes.length > 0 ? <button type="button" role="menuitem" onClick={() => reorderSelection('back')}>移到最后</button> : null}
-            <span />
-            <button type="button" role="menuitem" className="is-danger" disabled={selectedBoxes.length > 0 && selectedLocked.length === selectedBoxes.length} onClick={deleteSelected}>删除</button>
-          </div>
-        ) : null}
-
-        <div className="freeform-status">
-          <span>{scene.elements.length} 个元素</span>
-          {insertTarget ? <span className="is-action">释放后插入关系</span>
-            : arrowEndpointPreview?.targetId ? <span className="is-action">释放后重挂到 {truncate(boxes.find((item) => item.id === arrowEndpointPreview.targetId)?.text ?? arrowEndpointPreview.targetId, 18)}</span>
-              : arrowEndpointPreview ? <span className="is-action">拖到节点锚点以重挂端点</span>
-                : connectFrom ? <span className="is-action">连接中 · 点击节点，或点击空白创建新节点</span>
-                  : gestureAutoReflowCount > 0 ? <span className="is-action">智能腾位 {gestureAutoReflowCount} 节点 · Alt 关闭</span>
-                    : dragCollisionIds.size > 0 ? <span className="is-action">释放后自动腾位 · Alt 保留重叠</span>
-                  : selectedIds.length > 0 ? <span>已选 {selectedIds.length}</span> : <span>Space 拖动画布 · ⇧ 多选</span>}
-        </div>
-        <div className="freeform-zoom-controls" aria-label="画布缩放">
-          <button type="button" aria-label="缩小画布" onClick={() => zoomAt(viewport.zoom / 1.15)}>−</button>
-          <button type="button" className="zoom-value" aria-label="恢复 100%" onClick={() => setViewport((current) => ({ ...current, zoom: 1 }))}>{Math.round(viewport.zoom * 100)}%</button>
-          <button type="button" aria-label="放大画布" onClick={() => zoomAt(viewport.zoom * 1.15)}>+</button>
-          <span />
-          <button type="button" aria-label="适配画布" onClick={fit}>适配</button>
-        </div>
-        <svg className={`freeform-minimap${architectureScope ? ' is-scoped' : ''}`} aria-label={architectureScope ? '当前架构范围缩略图' : '画布缩略图'} viewBox={`${minimapViewBounds.x} ${minimapViewBounds.y} ${minimapViewBounds.width} ${minimapViewBounds.height}`} onPointerDown={recenterFromMinimap}>
-          <rect x={minimapViewBounds.x} y={minimapViewBounds.y} width={minimapViewBounds.width} height={minimapViewBounds.height} className="freeform-minimap-bg" />
-          {displayGroupBounds.filter((group) => (
-            group.collapsed
-            && !groupHiddenByCollapsedAncestor(group.id, renderScene.groups ?? [])
-            && (!playbackVisibleGroupIds || playbackVisibleGroupIds.has(group.id))
-          )).map((group) => <rect key={`group-${group.id}`} x={group.x} y={group.y} width={group.width} height={group.height} rx="12" className="freeform-minimap-group" />)}
-          {compactMinimap ? <>
-            {minimapNodeCloudPath ? <path d={minimapNodeCloudPath} className="freeform-minimap-node-cloud" /> : null}
-            {renderBoxes.filter((item) => selectedIdSet.has(item.id)).map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className="freeform-minimap-node is-selected" />)}
-          </> : renderBoxes.map((item) => <rect key={item.id} x={item.x} y={item.y} width={item.width} height={item.height} rx="10" className={`freeform-minimap-node${selectedIdSet.has(item.id) ? ' is-selected' : ''}`} />)}
-          <rect x={viewport.x} y={viewport.y} width={viewWidth} height={viewHeight} className="freeform-minimap-viewport" />
-        </svg>
-      </div>
     </div>
   )
 }
@@ -4784,13 +4155,6 @@ function clamp(value: number, min: number, max: number) {
 
 function toggleId(ids: string[], id: string) {
   return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]
-}
-
-function removeRecordKey<T>(record: Record<string, T> | undefined, key: string): Record<string, T> {
-  if (!record || !(key in record)) return record ?? {}
-  const next = { ...record }
-  delete next[key]
-  return next
 }
 
 function truncate(value: string, max: number) {

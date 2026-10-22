@@ -1,6 +1,6 @@
 import { fitMermaidSvgToContent } from './mermaidSvg.js'
 import { diagramVisualStyles } from './diagramVisualStyles.js'
-import React, { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Component, type CSSProperties, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { PatchHistoryPanel, GitImpactPanel, ChangeReviewPanel, ProposalReviewPanel } from './ReviewPanels.js'
 import type { DiagramProposalSummary, DiagramPatchHistoryEntry, DiagramGitImpactResult } from './reviewTypes.js'
@@ -14,7 +14,7 @@ import {
 import { createCodexHost } from './hosts/codex.js'
 import { createDeepSeekHost } from './hosts/deepseek.js'
 import type { HostContext } from './hosts/types.js'
-import { ChevronDownIcon, MessageSquareMoreIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, MoreHorizontalIcon, XIcon } from 'lucide-react'
 import { AiPanel } from './AiPanel.js'
 import { buildGenerationPrompt, buildModificationPrompt, buildSubgraphModificationPrompt, type DiagramGenerationRequest } from './aiPrompts.js'
 import { CanvasEditor, type CanvasPlaybackRequest, type CanvasSelection } from './CanvasEditor.js'
@@ -54,6 +54,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -352,6 +357,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [diagramQuery, setDiagramQuery] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
+  const [aiMode, setAiMode] = useState<'generate' | 'modify'>('generate')
+  const aiReturnFocus = useRef<HTMLElement | null>(null)
+  const threadMoreButton = useRef<HTMLButtonElement>(null)
   const [generationPreset, setGenerationPreset] = useState<{ key: number; scope?: string; title?: string; instructions?: string } | undefined>()
   const [aiSending, setAiSending] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -393,6 +401,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   >(null)
   const aiWatch = useRef<{ until: number; existingPaths: Set<string> } | null>(null)
   const editorWorkspace = useRef<HTMLDivElement>(null)
+  const threadTabsElement = useRef<HTMLDivElement>(null)
   const splitDrag = useRef<{ pointerId: number; left: number; width: number } | null>(null)
   const lastThreadStateAt = useRef<string | undefined>(undefined)
   const lastPlaybackActivity = useRef<string | undefined>(undefined)
@@ -435,6 +444,16 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       projectTotal: project.length,
     }
   }, [snapshot.diagrams, threadDiagramQuery, threadTabs])
+
+  useEffect(() => {
+    const tabs = threadTabsElement.current
+    if (!tabs) return
+    const revealActive = () => tabs.querySelector('.thread-diagram-tab.is-active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    revealActive()
+    const observer = new ResizeObserver(revealActive)
+    observer.observe(tabs)
+    return () => observer.disconnect()
+  }, [selected?.path, threadTabs.length])
 
   function backgroundSyncSucceeded(kind: 'thread' | 'revision') {
     backgroundFailures.current[kind] = 0
@@ -696,7 +715,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
           if (disposed || dirty) return
           if (latest.diagram.source !== selected.source) {
             setChangeReview({ before: selected, after: latest.diagram })
-            if (isThread && selected.type === 'canvas' && latest.diagram.type === 'canvas') {
+            if (selected.type === 'canvas' && latest.diagram.type === 'canvas') {
               const activity = pendingPlaybackActivity.current
               const matchingActivity = activity?.path === selected.path
                 && (!activity.modifiedAt || activity.modifiedAt === latest.diagram.modifiedAt)
@@ -1444,10 +1463,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
-  async function searchSourceFiles(query: string): Promise<string[]> {
+  const searchSourceFiles = useCallback(async (query: string): Promise<string[]> => {
     const result = await callTool<SourceFilesResult>('diagram.sources', { workspacePath, query, limit: 40 })
     return result.files
-  }
+  }, [workspacePath])
 
   async function analyzeGitImpact(baseRef?: string) {
     if (!selected || selected.type !== 'canvas') return
@@ -1614,7 +1633,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   async function sendGeneration(request: DiagramGenerationRequest) {
     if (!host.sendMessage) {
       setError('当前宿主没有提供对话消息能力。')
-      return
+      return false
     }
     setAiSending(true)
     setError(null)
@@ -1626,23 +1645,25 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       await sendHostMessage(buildGenerationPrompt(workspacePath, request))
       setAiOpen(false)
       setNotice('已发送到当前 对话，生成后会自动刷新')
+      return true
     } catch (cause) {
       aiWatch.current = null
       setError(errorMessage(cause))
+      return false
     } finally {
       setAiSending(false)
     }
   }
 
   async function sendModification(instruction: string) {
-    if (!selected) return
+    if (!selected) return false
     if (!host.sendMessage) {
       setError('当前宿主没有提供对话消息能力。')
-      return
+      return false
     }
     if (dirty) {
       setError('先保存当前修改，再让 AI 继续编辑这张图。')
-      return
+      return false
     }
     setAiSending(true)
     setError(null)
@@ -1650,8 +1671,10 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       await sendHostMessage(buildModificationPrompt(workspacePath, selected, instruction))
       setAiOpen(false)
       setNotice('已发送到当前 对话；AI 返回候选修改后会先进入 Proposal 审查')
+      return true
     } catch (cause) {
       setError(errorMessage(cause))
+      return false
     } finally {
       setAiSending(false)
     }
@@ -1807,6 +1830,13 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     }
   }
 
+  function openAiPanel(mode: 'generate' | 'modify') {
+    const focused = document.activeElement as HTMLElement | null
+    aiReturnFocus.current = focused?.closest('[role="menu"]') ? threadMoreButton.current : focused
+    setAiMode(mode)
+    setAiOpen(true)
+  }
+
   function openWorkspaceGeneration() {
     setGenerationPreset({
       key: Date.now(),
@@ -1814,7 +1844,7 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       title: '',
       instructions: '先识别核心模块和边界，再画主要依赖或调用关系；不要把所有文件都展开。',
     })
-    setAiOpen(true)
+    openAiPanel('generate')
   }
 
   async function explainInConversation() {
@@ -1906,7 +1936,96 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
       <section className="diagram-main">
         {isThread ? (
           <div className="thread-companion-head">
-            <div className="thread-companion-primary">
+            <div className="thread-diagram-menu">
+              <Popover
+                open={threadDiagramMenuOpen}
+                onOpenChange={(open) => {
+                  setThreadDiagramMenuOpen(open)
+                  if (!open) setThreadDiagramQuery('')
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between" aria-label="选择图表">
+                    <span>图表</span>
+                    <ChevronDownIcon data-icon="inline-end" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-[min(420px,calc(100vw-28px))] p-0">
+                  <div className="flex h-9 items-center justify-between border-b px-3">
+                    <strong className="text-sm font-medium">选择图表</strong>
+                    <span className="text-xs text-muted-foreground">{threadMenuGroups.currentTotal} 当前对话 · {threadMenuGroups.projectTotal} 其他</span>
+                  </div>
+                  {snapshot.diagrams.length > 6 ? (
+                    <div className="border-b p-2">
+                      <Input
+                        value={threadDiagramQuery}
+                        onChange={(event) => setThreadDiagramQuery(event.target.value)}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        placeholder="搜索名称、类型或路径"
+                        aria-label="搜索图表"
+                        className="h-8"
+                      />
+                    </div>
+                  ) : null}
+                  <ScrollArea className="h-[min(340px,48vh)]">
+                    <div className="flex flex-col gap-1 p-1">
+                      {([
+                        { key: 'current', label: '当前对话', items: threadMenuGroups.current },
+                        { key: 'project', label: '项目中的其他图表', items: threadMenuGroups.project },
+                      ] as const).map((section) => section.items.length ? (
+                        <section className="flex flex-col gap-1" key={section.key} aria-label={section.label}>
+                          <div className="flex h-7 items-center justify-between px-2 text-xs text-muted-foreground">
+                            <strong className="font-medium">{section.label}</strong>
+                            <span>{section.items.length}</span>
+                          </div>
+                          {section.items.map((diagram) => (
+                            <Button
+                              key={diagram.path}
+                              variant={selected?.path === diagram.path ? 'secondary' : 'ghost'}
+                              className="h-auto w-full justify-between gap-3 px-2 py-2 text-left"
+                              type="button"
+                              onClick={() => {
+                                setThreadDiagramMenuOpen(false)
+                                setThreadDiagramQuery('')
+                                void selectDiagram(diagram.path)
+                              }}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <strong className="block truncate font-medium">{diagram.name}</strong>
+                                <small className="block truncate text-xs text-muted-foreground">{shortPath(diagram.path)}</small>
+                              </span>
+                              <Badge variant="outline">{selected?.path === diagram.path ? selectedTypeLabel : diagramLabel(diagram.type)}</Badge>
+                            </Button>
+                          ))}
+                        </section>
+                      ) : null)}
+                      {threadMenuGroups.current.length === 0 && threadMenuGroups.project.length === 0 ? (
+                        <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                          {threadDiagramQuery.trim() ? '没有匹配的图表' : '当前项目还没有图表'}
+                        </div>
+                      ) : null}
+                    </div>
+                  </ScrollArea>
+                </PopoverContent>
+              </Popover>
+            </div>
+            {threadTabs.length > 0 ? (
+              <div ref={threadTabsElement} className="thread-diagram-tabs" role="group" aria-label="当前对话图表">
+                {threadTabs.map((path) => {
+                  const diagram = snapshot.diagrams.find((item) => item.path === path)
+                  if (!diagram) return null
+                  return (
+                    <div key={path} className={`thread-diagram-tab${selected?.path === path ? ' is-active' : ''}`}>
+                      <button type="button" className="thread-diagram-tab-main" onClick={() => void selectDiagram(path)} title={path}>
+                        <span>{diagram.name}</span>
+                      </button>
+                      <button type="button" className="thread-diagram-tab-close" aria-label={`关闭 ${diagram.name}`} onClick={() => closeThreadTab(path)}>×</button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+            <div className="thread-document-actions">
               <button
                 className={`thread-follow-toggle${followConversation ? ' is-active' : ''}`}
                 type="button"
@@ -1917,100 +2036,46 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <span className="thread-link-status" />
                 跟随
               </button>
-              <div className="thread-diagram-menu">
-                <Popover
-                  open={threadDiagramMenuOpen}
-                  onOpenChange={(open) => {
-                    setThreadDiagramMenuOpen(open)
-                    if (!open) setThreadDiagramQuery('')
-                  }}
-                >
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="w-full justify-between">
-                      <span className="truncate">{selected?.name ?? '选择图表'}</span>
-                      <ChevronDownIcon data-icon="inline-end" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-[min(420px,calc(100vw-28px))] p-0">
-                    <div className="flex h-9 items-center justify-between border-b px-3">
-                      <strong className="text-sm font-medium">选择图表</strong>
-                      <span className="text-xs text-muted-foreground">{threadMenuGroups.currentTotal} 当前对话 · {threadMenuGroups.projectTotal} 其他</span>
-                    </div>
-                    {snapshot.diagrams.length > 6 ? (
-                      <div className="border-b p-2">
-                        <Input
-                          value={threadDiagramQuery}
-                          onChange={(event) => setThreadDiagramQuery(event.target.value)}
-                          onKeyDown={(event) => event.stopPropagation()}
-                          placeholder="搜索名称、类型或路径"
-                          aria-label="搜索图表"
-                          className="h-8"
-                        />
-                      </div>
-                    ) : null}
-                    <ScrollArea className="h-[min(340px,48vh)]">
-                      <div className="flex flex-col gap-1 p-1">
-                        {([
-                          { key: 'current', label: '当前对话', items: threadMenuGroups.current },
-                          { key: 'project', label: '项目中的其他图表', items: threadMenuGroups.project },
-                        ] as const).map((section) => section.items.length ? (
-                          <section className="flex flex-col gap-1" key={section.key} aria-label={section.label}>
-                            <div className="flex h-7 items-center justify-between px-2 text-xs text-muted-foreground">
-                              <strong className="font-medium">{section.label}</strong>
-                              <span>{section.items.length}</span>
-                            </div>
-                            {section.items.map((diagram) => (
-                              <Button
-                                key={diagram.path}
-                                variant={selected?.path === diagram.path ? 'secondary' : 'ghost'}
-                                className="h-auto w-full justify-between gap-3 px-2 py-2 text-left"
-                                type="button"
-                                onClick={() => {
-                                  setThreadDiagramMenuOpen(false)
-                                  setThreadDiagramQuery('')
-                                  void selectDiagram(diagram.path)
-                                }}
-                              >
-                                <span className="min-w-0 flex-1">
-                                  <strong className="block truncate font-medium">{diagram.name}</strong>
-                                  <small className="block truncate text-xs text-muted-foreground">{shortPath(diagram.path)}</small>
-                                </span>
-                                <Badge variant="outline">{selected?.path === diagram.path ? selectedTypeLabel : diagramLabel(diagram.type)}</Badge>
-                              </Button>
-                            ))}
-                          </section>
-                        ) : null)}
-                        {threadMenuGroups.current.length === 0 && threadMenuGroups.project.length === 0 ? (
-                          <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                            {threadDiagramQuery.trim() ? '没有匹配的图表' : '当前项目还没有图表'}
-                          </div>
-                        ) : null}
-                      </div>
-                    </ScrollArea>
-                  </PopoverContent>
-                </Popover>
-              </div>
               {selected ? (
-                <Badge variant="secondary" className="h-7 shrink-0 px-2 font-normal">{selectedTypeLabel}</Badge>
+                <Button variant="ghost" size="sm" aria-pressed={mode === 'source'} title={mode === 'source' ? '切换到画布' : '查看源码'} onClick={() => setMode(mode === 'source' ? 'preview' : 'source')}>源码</Button>
               ) : null}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button ref={threadMoreButton} variant="ghost" size="icon-sm" aria-label="更多图表操作"><MoreHorizontalIcon /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={(event) => { if (aiOpen) event.preventDefault() }}>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => setCreating(true)}>新建图表</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => openAiPanel('generate')}>从代码生成</DropdownMenuItem>
+                    {selected ? <DropdownMenuItem disabled={dirty || aiSending} onSelect={() => openAiPanel('modify')}>修改当前图</DropdownMenuItem> : null}
+                  </DropdownMenuGroup>
+                  {selected ? <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateFromConversation()}>按对话更新</DropdownMenuItem>
+                      {selected.type === 'canvas' && canvasSelection?.elements.length ? <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateSelectedCanvasFromConversation()}>调整选中</DropdownMenuItem> : null}
+                      <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>补异常路径</DropdownMenuItem>
+                      <DropdownMenuItem disabled={aiSending} onSelect={() => void explainInConversation()}>解释图表</DropdownMenuItem>
+                    </DropdownMenuGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      {selected.type === 'canvas' ? <DropdownMenuItem onSelect={openPatchHistory}>修改记录</DropdownMenuItem> : <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>图表样式</DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="max-h-80 overflow-auto">
+                          <DropdownMenuRadioGroup value={resolveMermaidVisualStyle(source)} onValueChange={(value) => setSource((current) => setMermaidVisualStyle(current, value as MermaidVisualStyle))}>
+                            {diagramVisualStyles.map((style) => <DropdownMenuRadioItem key={style.id} value={style.id}>{style.label}</DropdownMenuRadioItem>)}
+                            {[['technical', '工程文档'], ['minimal', '极简'], ['editorial', '叙事'], ['presentation', '汇报']].map(([value, label]) => <DropdownMenuRadioItem key={value} value={value}>{label}</DropdownMenuRadioItem>)}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>}
+                      {aiProposal ? <DropdownMenuItem onSelect={() => setProposalReviewOpen(true)}>候选修改</DropdownMenuItem> : null}
+                      {changeReview ? <DropdownMenuItem onSelect={() => setChangeReviewOpen(true)}>查看变更</DropdownMenuItem> : null}
+                      <DropdownMenuItem disabled={exporting} onSelect={() => void exportSvg()}>导出 SVG</DropdownMenuItem>
+                      <DropdownMenuItem disabled={exporting} onSelect={() => void exportPng()}>导出 PNG</DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </> : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {selected ? dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>{saving ? '保存中…' : '保存'}</button> : <span className="save-state">已保存</span> : null}
             </div>
-            {threadTabs.length > 0 ? (
-              <div className="thread-diagram-tabs" aria-label="当前对话图表">
-                {threadTabs.map((path) => {
-                  const diagram = snapshot.diagrams.find((item) => item.path === path)
-                  if (!diagram) return null
-                  return (
-                    <div key={path} className={`thread-diagram-tab${selected?.path === path ? ' is-active' : ''}`}>
-                      <button type="button" className="thread-diagram-tab-main" onClick={() => void selectDiagram(path)} title={path}>
-                        <span>{diagram.name}</span>
-                        <small>{selected?.path === path ? selectedTypeLabel : diagramLabel(diagram.type)}</small>
-                      </button>
-                      <button type="button" className="thread-diagram-tab-close" aria-label={`关闭 ${diagram.name}`} onClick={() => closeThreadTab(path)}>×</button>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : null}
           </div>
         ) : null}
         {isThread && syncIssue ? (
@@ -2058,22 +2123,20 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
             <button type="button" onClick={() => void reloadSelected()}>重新载入</button>
           </div>
         ) : null}
-        {error ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
+        {error && !aiOpen ? <div className="error-banner">{error}<button type="button" onClick={() => setError(null)}>关闭</button></div> : null}
         {selected ? (
           <>
-            <header className={`editor-toolbar${isThread ? ' thread-editor-toolbar' : ''}`}>
-              {!isThread ? <div className="document-identity">
+            {!isThread ? <header className="editor-toolbar">
+              <div className="document-identity">
                 <strong>{selected.name}</strong>
                 <span>{selected.path}</span>
-              </div> : null}
+              </div>
               <div className="toolbar-actions">
-                {!isThread ? <button type="button" onClick={() => setAiOpen(true)}>AI</button> : null}
-                {!isThread ? (
-                  <div className="export-actions" aria-label="导出图表">
-                    <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
-                    <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
-                  </div>
-                ) : null}
+                <button type="button" onClick={() => openAiPanel('generate')}>生成</button>
+                <div className="export-actions" aria-label="导出图表">
+                  <button type="button" disabled={exporting} onClick={() => void exportSvg()}>{exporting ? '导出中…' : 'SVG'}</button>
+                  <button type="button" disabled={exporting} onClick={() => void exportPng()}>PNG</button>
+                </div>
                 {selected.type !== 'canvas' ? <select className="freeform-visual-style" aria-label="图表样式" value={resolveMermaidVisualStyle(source)} onChange={(event) => setSource((current) => setMermaidVisualStyle(current, event.target.value as MermaidVisualStyle))}>
                   <optgroup label="共享样式">{diagramVisualStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}</optgroup>
                   <optgroup label="经典排版"><option value="technical">工程文档</option><option value="minimal">极简</option><option value="editorial">叙事</option><option value="presentation">汇报</option></optgroup>
@@ -2081,86 +2144,56 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                 <div className="mode-switch" aria-label="视图模式">
                   <ModeButton value="preview" mode={mode} onChange={setMode}>预览</ModeButton>
                   <ModeButton value="source" mode={mode} onChange={setMode}>源码</ModeButton>
-                  {!isThread ? <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton> : null}
+                  <ModeButton value="split" mode={mode} onChange={setMode}>分屏</ModeButton>
                 </div>
                 {changeReview ? (
                   <button className="change-review-trigger" type="button" onClick={() => setChangeReviewOpen(true)}>变更</button>
                 ) : null}
-                {aiProposal ? <button className="proposal-review-trigger" type="button" onClick={() => setProposalReviewOpen(true)}>Proposal</button> : null}
+                {aiProposal ? <button className="proposal-review-trigger" type="button" onClick={() => setProposalReviewOpen(true)}>候选修改</button> : null}
                 {selected.type === 'canvas' ? <button className={`patch-history-trigger${patchHistoryOpen ? ' is-active' : ''}`} type="button" onClick={openPatchHistory}>历史</button> : null}
-                {isThread ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" aria-label="对话联动操作">
-                        <MessageSquareMoreIcon data-icon="inline-start" />
-                        对话
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuGroup>
-                        <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateFromConversation()}>
-                          按对话更新
-                        </DropdownMenuItem>
-                        {selected.type === 'canvas' && canvasSelection?.elements.length ? (
-                          <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void updateSelectedCanvasFromConversation()}>
-                            调整选中
-                          </DropdownMenuItem>
-                        ) : null}
-                        <DropdownMenuItem disabled={aiSending || dirty} onSelect={() => void sendModification('结合当前代码事实，为这张图补充真正重要的失败路径、异常分支或回退路径；不要机械增加无关节点。')}>
-                          补异常
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled={aiSending} onSelect={() => void explainInConversation()}>
-                          解释
-                        </DropdownMenuItem>
-                      </DropdownMenuGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
                 <span className={`save-state${dirty ? ' is-dirty' : ''}`}>{saving ? '保存中…' : dirty ? '未保存' : '已保存'}</span>
                 {dirty || saving ? <button className="primary-button compact" type="button" disabled={saving} onClick={() => void saveDiagram()}>保存</button> : null}
-                {!isThread ? (
-                  <DropdownMenu
-                    open={documentMenuOpen}
-                    onOpenChange={(open) => {
-                      setDocumentMenuOpen(open)
-                      if (open) setRenameTitle(selected.name)
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label="更多图表操作">
-                        <MoreHorizontalIcon />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuGroup>
-                        <DropdownMenuItem
-                          disabled={dirty}
-                          onSelect={() => {
-                            setRenameTitle(selected.name)
-                            setRenaming(true)
-                          }}
-                        >
-                          重命名
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled={dirty} onSelect={() => void duplicateDiagram()}>
-                          复制图表
-                        </DropdownMenuItem>
-                      </DropdownMenuGroup>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuGroup>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          disabled={dirty}
-                          onSelect={() => setDeleteConfirmOpen(true)}
-                        >
-                          删除图表
-                        </DropdownMenuItem>
-                      </DropdownMenuGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
+                <DropdownMenu
+                  open={documentMenuOpen}
+                  onOpenChange={(open) => {
+                    setDocumentMenuOpen(open)
+                    if (open) setRenameTitle(selected.name)
+                  }}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="更多图表操作">
+                      <MoreHorizontalIcon />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        disabled={dirty}
+                        onSelect={() => {
+                          setRenameTitle(selected.name)
+                          setRenaming(true)
+                        }}
+                      >
+                        重命名
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={dirty} onSelect={() => void duplicateDiagram()}>
+                        复制图表
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        disabled={dirty}
+                        onSelect={() => setDeleteConfirmOpen(true)}
+                      >
+                        删除图表
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
-            </header>
+            </header> : null}
             <div
               ref={editorWorkspace}
               className={`editor-workspace mode-${mode}`}
@@ -2246,28 +2279,30 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
               {isThread ? (
                 <>
                   <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
-                  <button type="button" onClick={() => setAiOpen(true)}>AI 生成</button>
+                  <button type="button" onClick={() => openAiPanel('generate')}>生成图表</button>
                 </>
               ) : (
                 <>
                   <button className="primary-button" type="button" onClick={() => setCreating(true)}>新建图表</button>
-                  <button type="button" onClick={() => setAiOpen(true)}>从代码生成</button>
+                  <button type="button" onClick={() => openAiPanel('generate')}>从代码生成</button>
                 </>
               )}
             </div>
           </div>
         )}
-        {aiOpen ? (
-          <AiPanel
-            selected={selected}
-            sending={aiSending}
-            generationPreset={generationPreset}
-            onSearchSources={searchSourceFiles}
-            onClose={() => setAiOpen(false)}
-            onGenerate={sendGeneration}
-            onModify={sendModification}
-          />
-        ) : null}
+        <AiPanel
+          open={aiOpen}
+          returnFocusElement={aiReturnFocus.current}
+          selected={selected}
+          initialMode={aiMode}
+          error={error}
+          sending={aiSending}
+          generationPreset={generationPreset}
+          onSearchSources={searchSourceFiles}
+          onClose={() => setAiOpen(false)}
+          onGenerate={sendGeneration}
+          onModify={sendModification}
+        />
         {changeReview && changeReviewOpen ? (
           <ChangeReviewPanel
             before={changeReview.before}

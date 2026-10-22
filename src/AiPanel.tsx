@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react'
+import { Dialog as DialogPrimitive } from 'radix-ui'
+import { Dialog, DialogTitle } from '@/components/ui/dialog'
 import { diagramTypeGroups, type DiagramDocument, type DiagramType } from './types.js'
 import type { DiagramGenerationRequest } from './aiPrompts.js'
 import type { CanvasWorkbenchMode } from './canvas.js'
@@ -9,13 +11,17 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Textarea } from '@/components/ui/textarea'
 
 interface AiPanelProps {
+  open: boolean
+  returnFocusElement: HTMLElement | null
   selected: DiagramDocument | null
+  initialMode?: 'generate' | 'modify'
+  error?: string | null
   sending: boolean
   generationPreset?: { key: number; scope?: string; title?: string; instructions?: string }
   onSearchSources: (query: string) => Promise<string[]>
   onClose: () => void
-  onGenerate: (request: DiagramGenerationRequest) => Promise<void>
-  onModify: (instruction: string) => Promise<void>
+  onGenerate: (request: DiagramGenerationRequest) => Promise<boolean>
+  onModify: (instruction: string) => Promise<boolean>
 }
 
 const quickModifications = [
@@ -45,7 +51,11 @@ const generationTemplates: Array<{ label: string; type: DiagramType; canvasWorkb
   { label: '事件/数据流', type: 'canvas', canvasWorkbench: 'architecture', title: '事件与数据流', instructions: '展示事件产生者、Topic/Queue、消费者、数据存储和下游系统，优先从 Kafka/MQ/任务代码和配置还原真实流向；用 queue/database/service 角色和正交连线。' },
 ]
 
-export function AiPanel({ selected, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
+export function AiPanel({ open, returnFocusElement, selected, initialMode = 'generate', error, sending, generationPreset, onSearchSources, onClose, onGenerate, onModify }: AiPanelProps) {
+  const [mode, setMode] = useState(initialMode)
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 620px)').matches)
+  const [activeTemplate, setActiveTemplate] = useState<(typeof generationTemplates)[number] | null>(null)
+  const [sourceError, setSourceError] = useState<string | null>(null)
   const [type, setType] = useState<DiagramType>('canvas')
   const [canvasWorkbench, setCanvasWorkbench] = useState<CanvasWorkbenchMode>('architecture')
   const [title, setTitle] = useState('')
@@ -57,23 +67,50 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
   const [sourceLoading, setSourceLoading] = useState(false)
 
   useEffect(() => {
+    const media = window.matchMedia('(max-width: 620px)')
+    const update = () => setNarrow(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
     if (!generationPreset) return
+    setMode('generate')
+    setActiveTemplate(null)
     if (generationPreset.scope !== undefined) setScope(generationPreset.scope)
     if (generationPreset.title !== undefined) setTitle(generationPreset.title)
     if (generationPreset.instructions !== undefined) setGenerationInstructions(generationPreset.instructions)
   }, [generationPreset?.key])
 
+  useEffect(() => { if (open) setMode(initialMode) }, [initialMode, open])
+
   useEffect(() => {
-    if (!scopeFocused || scope.trim() === '.') {
+    if (!selected && mode === 'modify') setMode('generate')
+  }, [selected, mode])
+
+  useEffect(() => { setModification('') }, [selected?.path])
+
+  useEffect(() => {
+    if (!open || !scopeFocused || scope.trim() === '.') {
+      if (!open) setScopeFocused(false)
+      setSourceLoading(false)
       setSourceOptions([])
+      if (scope.trim() === '.') setSourceError(null)
       return
     }
     let cancelled = false
     const handle = window.setTimeout(() => {
       setSourceLoading(true)
+      setSourceError(null)
       void onSearchSources(scope)
         .then((files) => {
           if (!cancelled) setSourceOptions(files)
+        })
+        .catch((cause) => {
+          if (!cancelled) {
+            setSourceOptions([])
+            setSourceError(cause instanceof Error ? cause.message : '读取源码列表失败')
+          }
         })
         .finally(() => {
           if (!cancelled) setSourceLoading(false)
@@ -83,155 +120,135 @@ export function AiPanel({ selected, sending, generationPreset, onSearchSources, 
       cancelled = true
       window.clearTimeout(handle)
     }
-  }, [onSearchSources, scope, scopeFocused])
+  }, [onSearchSources, open, scope, scopeFocused])
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  async function generate() {
+    if (!await onGenerate({
+      type, ...(type === 'canvas' ? { canvasWorkbench } : {}), title, scope,
+      instructions: [activeTemplate?.instructions, generationInstructions].filter(Boolean).join('\n'),
+    })) return
+    setActiveTemplate(null)
+    setTitle('')
+    setScope('')
+    setGenerationInstructions('')
+    setSourceError(null)
+    setScopeFocused(false)
+  }
+
+  async function modify(instruction: string) {
+    if (await onModify(instruction)) setModification('')
+  }
+
+  function chooseTemplate(template: (typeof generationTemplates)[number]) {
+    setActiveTemplate(template)
+    setType(template.type)
+    if (template.canvasWorkbench) setCanvasWorkbench(template.canvasWorkbench)
+    setTitle(template.title)
+  }
+
+  function templateButton(template: (typeof generationTemplates)[number]) {
+    return <Button key={template.label} variant={activeTemplate?.label === template.label ? 'secondary' : 'ghost'} size="sm" type="button" aria-pressed={activeTemplate?.label === template.label} onClick={() => chooseTemplate(template)}>{template.label}</Button>
+  }
 
   return (
-    <aside className="ai-panel" aria-label="AI 图表操作">
+    <Dialog open={open} modal={narrow} onOpenChange={(next) => { if (!next) onClose() }}>
+    <DialogPrimitive.Content
+      className="ai-panel"
+      aria-modal={narrow || undefined}
+      aria-describedby={undefined}
+      onInteractOutside={(event) => event.preventDefault()}
+      onCloseAutoFocus={(event) => { event.preventDefault(); returnFocusElement?.focus() }}
+    >
       <div className="ai-panel-head">
-        <div>
-          <div className="eyebrow">CODEX</div>
-          <strong>图表操作</strong>
-        </div>
+        <DialogTitle asChild><strong>图表操作</strong></DialogTitle>
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>关闭</Button>
       </div>
-
-      <section className="ai-panel-section">
-        <div className="ai-section-title-row">
-          <div className="ai-section-title">从代码生成</div>
-          <Button
-            variant="outline"
-            size="sm"
-            type="button"
-            onClick={() => {
-              setScope('.')
-              if (!generationInstructions.trim()) setGenerationInstructions('先识别核心模块和边界，再画主要依赖或调用关系；不要把所有文件都展开。')
-            }}
-          >分析整个工作区</Button>
-        </div>
-        <div className="generation-templates" aria-label="生成预设">
-          {generationTemplates.map((template) => (
-            <Button
-              key={template.label}
-              variant="outline"
-              size="sm"
-              type="button"
-              onClick={() => {
-                setType(template.type)
-                if (template.canvasWorkbench) setCanvasWorkbench(template.canvasWorkbench)
-                setTitle(template.title)
-                setGenerationInstructions(template.instructions)
-              }}
-            >{template.label}</Button>
-          ))}
-        </div>
+      <div className="ai-mode-switch" role="group" aria-label="图表操作模式">
+        <Button type="button" variant={mode === 'generate' ? 'secondary' : 'ghost'} size="sm" aria-pressed={mode === 'generate'} onClick={() => setMode('generate')}>新建图表</Button>
+        {selected ? <Button type="button" variant={mode === 'modify' ? 'secondary' : 'ghost'} size="sm" aria-pressed={mode === 'modify'} onClick={() => setMode('modify')}>修改当前图</Button> : null}
+      </div>
+      {error ? <div className="ai-panel-error" role="alert">{error}</div> : null}
+      {mode === 'generate' ? <section className="ai-panel-section">
+        <div className="generation-templates" aria-label="常用预设">{generationTemplates.slice(0, 4).map(templateButton)}</div>
+        <details className="ai-more-presets">
+          <summary>更多预设 <span>{generationTemplates.length - 4}</span></summary>
+          <div className="generation-templates" aria-label="更多生成预设">{generationTemplates.slice(4).map(templateButton)}</div>
+        </details>
         <FieldGroup className="gap-3">
           <Field>
-            <FieldLabel>类型</FieldLabel>
-            <Select value={type} onValueChange={(value) => setType(value as DiagramType)}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="选择图表类型" />
-              </SelectTrigger>
-              <SelectContent>
-                {diagramTypeGroups.map((group) => (
-                  <SelectGroup key={group.category}>
-                    <SelectLabel>{group.label}</SelectLabel>
-                    {group.items.map((item) => <SelectItem key={item.type} value={item.type}>{item.label}</SelectItem>)}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
+            <FieldLabel>图表类型</FieldLabel>
+            <Select value={type} onValueChange={(value) => { setType(value as DiagramType); setActiveTemplate(null) }}>
+              <SelectTrigger className="w-full" aria-label="图表类型"><SelectValue placeholder="选择图表类型" /></SelectTrigger>
+              <SelectContent>{diagramTypeGroups.map((group) => <SelectGroup key={group.category}>
+                <SelectLabel>{group.label}</SelectLabel>
+                {group.items.map((item) => <SelectItem key={item.type} value={item.type}>{item.type === 'canvas' ? 'Canvas 画布' : item.label}</SelectItem>)}
+              </SelectGroup>)}</SelectContent>
             </Select>
           </Field>
-          {type === 'canvas' ? (
-            <Field>
-              <FieldLabel>工作台</FieldLabel>
-              <Select value={canvasWorkbench} onValueChange={(value) => setCanvasWorkbench(value as CanvasWorkbenchMode)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="选择工作台" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="architecture">系统架构</SelectItem>
-                    <SelectItem value="flowchart">流程画布</SelectItem>
-                    <SelectItem value="freeform">自由画布</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
           <Field>
             <FieldLabel htmlFor="ai-diagram-title">标题</FieldLabel>
-            <Input id="ai-diagram-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：登录调用链" />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="ai-diagram-scope">文件或目录</FieldLabel>
-            <div className="source-picker">
-              <Input
-                id="ai-diagram-scope"
-                value={scope}
-                onChange={(event) => setScope(event.target.value)}
-                onFocus={() => setScopeFocused(true)}
-                onBlur={() => window.setTimeout(() => setScopeFocused(false), 120)}
-                placeholder="搜索或输入源码路径（可选）"
-                aria-label="文件或目录"
-                autoComplete="off"
-              />
-              {scopeFocused && (sourceLoading || sourceOptions.length > 0) ? (
-                <div className="source-picker-popover" role="listbox" aria-label="源码文件">
-                  {sourceLoading ? <div className="source-picker-status">正在扫描工作区…</div> : null}
-                  {!sourceLoading ? sourceOptions.map((file) => (
-                    <Button key={file} variant="ghost" size="sm" type="button" role="option" className="w-full justify-start font-mono text-xs" onMouseDown={(event) => event.preventDefault()} onClick={() => { setScope(file); setScopeFocused(false) }}>
-                      {file}
-                    </Button>
-                  )) : null}
-                </div>
-              ) : null}
-            </div>
+            <Input id="ai-diagram-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="图表名称" />
           </Field>
           <Field>
             <FieldLabel htmlFor="ai-diagram-instructions">要求</FieldLabel>
-            <Textarea id="ai-diagram-instructions" value={generationInstructions} onChange={(event) => setGenerationInstructions(event.target.value)} placeholder="例如：重点展示鉴权失败与 token 刷新" />
+            <Textarea id="ai-diagram-instructions" value={generationInstructions} onChange={(event) => setGenerationInstructions(event.target.value)} placeholder="描述要表达的内容" />
           </Field>
         </FieldGroup>
-        <Button
-          className="mt-3 w-full"
-          type="button"
-          disabled={sending || !title.trim()}
-          onClick={() => void onGenerate({ type, ...(type === 'canvas' ? { canvasWorkbench } : {}), title, scope, instructions: generationInstructions })}
-        >
-          {sending ? '发送中…' : '交给 AI'}
-        </Button>
-      </section>
+        <details className="ai-advanced-options">
+          <summary>来源与高级选项</summary>
+          <FieldGroup className="gap-3">
+            <Field>
+              <FieldLabel htmlFor="ai-diagram-scope">文件或目录</FieldLabel>
+              <div className="source-picker">
+                <Input
+                  id="ai-diagram-scope"
+                  value={scope}
+                  onChange={(event) => setScope(event.target.value)}
+                  onFocus={() => setScopeFocused(true)}
+                  onBlur={() => window.setTimeout(() => setScopeFocused(false), 120)}
+                  placeholder="搜索或输入源码路径（可选）"
+                  aria-label="文件或目录"
+                  autoComplete="off"
+                />
+                {scopeFocused && (sourceLoading || sourceOptions.length > 0) ? (
+                  <div className="source-picker-popover" role="listbox" aria-label="源码文件">
+                    {sourceLoading ? <div className="source-picker-status">正在扫描工作区…</div> : null}
+                    {!sourceLoading ? sourceOptions.map((file) => (
+                      <Button key={file} variant="ghost" size="sm" type="button" role="option" className="w-full justify-start font-mono text-xs" onMouseDown={(event) => event.preventDefault()} onClick={() => { setScope(file); setScopeFocused(false) }}>
+                        {file}
+                      </Button>
+                    )) : null}
+                  </div>
+                ) : null}
+              </div>
+              {sourceError ? <div className="ai-field-error" role="alert">{sourceError}</div> : null}
+            </Field>
 
-      {selected ? (
-        <section className="ai-panel-section">
-          <div className="ai-section-title">修改当前图</div>
-          <div className="ai-current-diagram">{selected.path}</div>
-          <div className="ai-quick-actions">
-            {quickModifications.map((instruction, index) => (
-              <Button key={instruction} variant="outline" size="sm" type="button" disabled={sending} onClick={() => void onModify(instruction)}>
-                {index === 0 ? '补异常路径' : index === 1 ? '简化结构' : '整理布局'}
-              </Button>
-            ))}
-          </div>
-          <Textarea value={modification} onChange={(event) => setModification(event.target.value)} placeholder="描述需要怎么改" />
-          <Button
-            className="mt-3 w-full"
-            type="button"
-            disabled={sending || !modification.trim()}
-            onClick={() => void onModify(modification)}
-          >
-            {sending ? '发送中…' : '修改当前图'}
-          </Button>
-        </section>
-      ) : null}
-    </aside>
+            <Button variant="outline" size="sm" type="button" onClick={() => setScope('.')}>使用整个工作区</Button>
+            {type === 'canvas' ? <Field>
+              <FieldLabel>画布用途</FieldLabel>
+              <Select value={canvasWorkbench} onValueChange={(value) => { setCanvasWorkbench(value as CanvasWorkbenchMode); setActiveTemplate(null) }}>
+                <SelectTrigger className="w-full" aria-label="画布用途"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>
+                  <SelectItem value="architecture">系统架构</SelectItem>
+                  <SelectItem value="flowchart">流程画布</SelectItem>
+                  <SelectItem value="freeform">自由画布</SelectItem>
+                </SelectGroup></SelectContent>
+              </Select>
+            </Field> : null}
+          </FieldGroup>
+        </details>
+        <Button className="mt-3 w-full" type="button" disabled={sending || !title.trim()} onClick={() => void generate()}>{sending ? '发送中…' : '生成图表'}</Button>
+      </section> : null}
+      {mode === 'modify' && selected ? <section className="ai-panel-section">
+        <div className="ai-current-diagram">{selected.name}</div>
+        <div className="ai-quick-actions">{quickModifications.map((instruction, index) => (
+          <Button key={instruction} variant="outline" size="sm" type="button" disabled={sending} onClick={() => void modify(instruction)}>{index === 0 ? '补异常路径' : index === 1 ? '简化结构' : '整理布局'}</Button>
+        ))}</div>
+        <Textarea aria-label="修改要求" value={modification} onChange={(event) => setModification(event.target.value)} placeholder="描述需要怎么改" />
+        <Button className="mt-3 w-full" type="button" disabled={sending || !modification.trim()} onClick={() => void modify(modification)}>{sending ? '发送中…' : '应用修改'}</Button>
+      </section> : null}
+    </DialogPrimitive.Content>
+    </Dialog>
   )
 }
