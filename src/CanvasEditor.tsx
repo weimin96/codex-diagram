@@ -1,6 +1,7 @@
 import { canvasVisualSkin, canvasStyledBox, diagramVisualStyles, type DiagramVisualStyle } from './diagramVisualStyles.js'
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { CanvasRectIndex } from './canvasRectIndex.js'
+import { canvasArrowCrossesViewport } from './canvasViewport.js'
 import { buildCanvasPlaybackPlan, playbackActionTarget, playbackBoundsForIds, playbackInspectorOptions, playbackActionIntent, commonPrefixLength, playbackPhaseLabel, type CanvasPlaybackPhase } from './canvasPlayback.js'
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
@@ -1396,6 +1397,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       byId: index ? new Map(boxes.map((item) => [item.id, item])) : null,
     }
   }, [staticSemanticLodProjection])
+  const staticViewportCrossings = useMemo(() => {
+    if (!staticRenderItems || staticRenderItems.boxes.length <= 180 || !parsed.scene) return null
+    const sceneBoxes = new Map(staticRenderItems.projectedBoxes.map((item) => [item.id, item]))
+    const margin = 220 / Math.max(0.45, viewport.zoom)
+    const view = {
+      x: viewport.x - margin, y: viewport.y - margin,
+      width: parsed.scene.width / viewport.zoom + margin * 2,
+      height: parsed.scene.height / viewport.zoom + margin * 2,
+    }
+    return new Set(staticRenderItems.arrows.filter((arrow) => canvasArrowCrossesViewport(arrow, sceneBoxes, view)).map((arrow) => arrow.id))
+  }, [parsed.scene, staticRenderItems, viewport.x, viewport.y, viewport.zoom])
   const staticMinimapNodeCloudPath = useMemo(() => {
     if (!staticRenderItems || staticRenderItems.boxes.length <= 420) return ''
     const selected = new Set(selectedIds)
@@ -1603,8 +1615,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       : renderBoxes.filter((item) => selectedIds.includes(item.id) || selectedArrowEndpointIds.has(item.id) || intersects(viewportBounds, item))
     : renderBoxes
   const viewportNodeIds = new Set(viewportRenderBoxes.map((item) => item.id))
+  const viewportArrowBoxes = largeSceneViewportCulling && (!staticViewportCrossings || gesturePositionOverrides || transformDrafts || arrowPointDraft)
+    ? new Map(projectedBoxes.map((item) => [item.id, item])) : null
   const viewportRenderArrows = largeSceneViewportCulling
-    ? renderArrows.filter((arrow) => selectedIds.includes(arrow.id) || viewportNodeIds.has(arrow.from) || viewportNodeIds.has(arrow.to))
+    ? renderArrows.filter((arrow) => selectedIds.includes(arrow.id) || viewportNodeIds.has(arrow.from) || viewportNodeIds.has(arrow.to)
+      || (staticViewportCrossings && !gesturePositionOverrides?.[arrow.from] && !gesturePositionOverrides?.[arrow.to]
+        && !transformDrafts?.[arrow.from] && !transformDrafts?.[arrow.to] && arrowPointDraft?.id !== arrow.id
+        ? staticViewportCrossings.has(arrow.id)
+        : canvasArrowCrossesViewport(arrow, viewportArrowBoxes!, viewportBounds)))
     : renderArrows
   const viewportGroupBounds = largeSceneViewportCulling
     ? displayGroupBounds.filter((group) => selectedGroupId === group.id || selectedGroupIds.includes(group.id) || intersects(viewportBounds, group))
