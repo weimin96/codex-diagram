@@ -8,6 +8,9 @@
 src/                图表服务、React 编辑器与共享领域逻辑
   hosts/            Codex / DeepSeek 宿主适配层
   diagramSkills/    19 种 Mermaid 图表的生成与修改规则
+  canvasPlayback.ts Canvas 绘制回放的纯计划算法
+  ReviewPanels.tsx  候选修改、历史、Git 影响审查面板
+  reviewTypes.ts    审查面板与主工作台共享的结果类型
 integrations/deepseek/  DeepSeek 插件入口、客户端与 locale
 manifest/           Codex 插件清单与 MCP 配置
 scripts/            构建、安装、冒烟与视觉回归脚本
@@ -18,6 +21,8 @@ docs/               维护者文档与 README 截图
 核心约定：
 
 - 模型与图表面板共享同一个图表服务实例，面板不复制编辑器、存储或 Proposal 实现。
+- 画布回放计划独立于 React 编辑器，可单独测试；审查面板从主工作台拆分，仍共享原有状态和请求。
+- 面板在浏览器后台或被宿主隐藏时暂停会话跟随、图表发现和 revision 轮询；重新可见时恢复同步，正在进行的 AI 新图表监听不受影响。
 - Mermaid 直接读写 `.mmd` / `.mermaid`；Canvas 保存为 `.diagram.json`，两者共用保存、revision 与导出链路。
 - 服务端写入采用进程内队列、跨进程工作区锁与 revision 检查；锁位于系统临时目录，只保证同机同用户下的多宿主互斥。
 - 会话选择、未确认的 Proposal 等状态只在当前服务进程保留；超过 24 小时不访问或进程内活跃会话超过 512 个时进行惰性清理，不影响已经保存的图表文件。

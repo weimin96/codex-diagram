@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { canvasGroupFrames, type CanvasScene } from '../src/canvas.js'
-import { buildCanvasPlaybackPlan } from '../src/CanvasEditor.js'
+import { buildCanvasPlaybackPlan } from '../src/canvasPlayback.js'
 
 test('schedules a reverse cross-region arrow only after both endpoint nodes are placed', () => {
   const scene: CanvasScene = {
