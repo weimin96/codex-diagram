@@ -2,7 +2,7 @@ import { canvasVisualSkin, canvasStyledBox, diagramVisualStyles, type DiagramVis
 import { canvasArrowLabelText } from './canvasLabelText.js'
 import { CanvasRectIndex } from './canvasRectIndex.js'
 import { buildCanvasPlaybackPlan, playbackActionTarget, playbackBoundsForIds, playbackInspectorOptions, playbackActionIntent, commonPrefixLength, playbackPhaseLabel, type CanvasPlaybackPhase } from './canvasPlayback.js'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowRight, Hand, Image as ImageIcon, Link2, Minus, MousePointer2, Pencil, Shapes, StickyNote, Type, type IconNode } from 'lucide'
 import { applyArchitectureTheme as applyArchitectureThemeToScene, beautifyArchitectureScene, routeArchitectureArrowIds, routeArchitectureEdges, routeArchitectureEdgesIncremental, type ArchitectureTheme } from './architectureDesign.js'
 import { ARCHITECTURE_NODE_TEMPLATES, architectureNodeTemplate, type ArchitectureNodeTemplate, type ArchitectureNodeTemplateProvider } from './architectureNodeTemplates.js'
@@ -273,6 +273,98 @@ function relationLabelScene(scene: CanvasScene, architecture: boolean, level: Ca
     }),
   }
 }
+
+const CanvasBoxArtwork = memo(function CanvasBoxArtwork({ item, visualStyle, darkTheme, architecture, density, level, selected, imageSource, typingText }: {
+  item: CanvasNode | CanvasNote
+  visualStyle?: DiagramVisualStyle
+  darkTheme: boolean
+  architecture: boolean
+  density: CanvasArchitectureDensity
+  level: CanvasSemanticLodLevel
+  selected: boolean
+  imageSource?: string
+  typingText?: string
+}) {
+  const originalItem = item
+  const skin = canvasVisualSkin(originalItem.type === 'note' ? undefined : visualStyle, darkTheme, originalItem.tone, originalItem.emphasis === 'primary')
+  const displayItem = canvasStyledBox(originalItem, skin)
+  const displayText = typingText ?? displayItem.text
+  const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
+  const imageFit = displayItem.type === 'note' ? displayItem.imageFit : undefined
+  const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
+  const cardTemplate = canvasArchitectureCardTemplate(displayItem)
+  const cardMeta = displayItem.iconRef ? canvasIconRefLabel(displayItem.iconRef) : displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
+  const architectureMark = Boolean(architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
+  const stencilVisual = displayItem.stencil ? canvasStencilVisual(displayItem.stencil) : undefined
+  const iconRefMarkup = displayItem.iconRef ? canvasIconRefMarkup(displayItem.iconRef, false, 'currentColor') : undefined
+  const showNodeTitle = !imagePath && (level !== 'regions' || selected || displayItem.emphasis === 'primary')
+  const showRoleIcon = level === 'detail' || level === 'compact' || selected || displayItem.emphasis === 'primary'
+  const showCardMeta = !architecture && (level === 'detail' || (level === 'compact' && architectureCard) || selected)
+  const showC4Badge = !architecture && (level === 'detail' || level === 'compact' || selected)
+  const showCardSubtitle = level === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || density !== 'dense'))
+  const showSourceBadge = architecture ? selected : level === 'detail' || selected
+  const cardTitleLimit = density === 'dense' ? 22 : density === 'compact' ? 26 : 30
+  const architectureMarkSize = density === 'dense' ? 30 : density === 'compact' ? 34 : 38
+  const architectureMarkX = 14
+  const architectureMarkY = (displayItem.height - architectureMarkSize) / 2
+  const architectureTextX = architectureMark ? architectureMarkX + architectureMarkSize + 12 : architectureCard ? 16 : displayItem.width / 2
+  const architectureTitleY = architectureMark ? displayItem.height / 2 + (showCardSubtitle ? -4 : 4) : architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2
+  return <>
+              {displayItem.description ? <title>{displayItem.description}</title> : null}
+              {imagePath ? <>
+                <defs><clipPath id={`canvas-image-${displayItem.id}`}><rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} /></clipPath></defs>
+                <rect className="freeform-image-frame" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
+                {imageSource
+                  ? <image href={imageSource} width={displayItem.width} height={displayItem.height} preserveAspectRatio={imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#canvas-image-${displayItem.id})`} />
+                  : <text className="freeform-image-placeholder" x={displayItem.width / 2} y={displayItem.height / 2} textAnchor="middle" dominantBaseline="middle">图片加载中</text>}
+                <rect className="freeform-image-outline" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
+              </> : displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : architecture && architectureMark ? 9 : 14)} />}
+              {!architecture && !visualStyle && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
+              {!architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
+              {architectureMark && iconRefMarkup && showRoleIcon ? (
+                <g className="freeform-icon-ref" transform={`translate(${architectureMarkX} ${architectureMarkY}) scale(${architectureMarkSize / 24})`} dangerouslySetInnerHTML={{ __html: iconRefMarkup }} />
+              ) : architectureMark && stencilVisual && showRoleIcon ? (
+                <g className="freeform-stencil-logo" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
+                  {stencilVisual.path
+                    ? <path d={stencilVisual.path} fill={stencilVisual.color} data-stencil={displayItem.stencil} transform={`scale(${architectureMarkSize / 24})`} />
+                    : <><rect width={architectureMarkSize} height={architectureMarkSize} rx={7} /><text x={architectureMarkSize / 2} y={architectureMarkSize / 2 + 4} textAnchor="middle">{stencilVisual.label}</text></>}
+                </g>
+              ) : architectureMark && displayItem.icon && showRoleIcon ? (
+                <g className="freeform-node-role is-architecture-role" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
+                  <rect width={architectureMarkSize} height={architectureMarkSize} rx={7} />
+                  <g className="freeform-node-role-symbol" transform={`translate(${architectureMarkSize * .18} ${architectureMarkSize * .18}) scale(${architectureMarkSize * .64 / 24})`}>
+                    {canvasIconPaths(displayItem.icon).map((path, index) => <path key={`${displayItem.icon}-${index}`} d={path} />)}
+                  </g>
+                </g>
+              ) : displayItem.iconRef && iconRefMarkup && showRoleIcon ? (
+                <g className="freeform-icon-ref" transform="translate(8 8) scale(.8333)" dangerouslySetInnerHTML={{ __html: iconRefMarkup }} />
+              ) : displayItem.icon && showRoleIcon ? (
+                <g className="freeform-node-role" transform="translate(18 18)">
+                  <circle r="10" />
+                  <g className="freeform-node-role-symbol" transform="translate(-7 -7) scale(.5833)">
+                    {canvasIconPaths(displayItem.icon).map((path, index) => <path key={`${displayItem.icon}-${index}`} d={path} />)}
+                  </g>
+                </g>
+              ) : null}
+              {cardMeta && showCardMeta ? <text className="freeform-node-icon" x={(displayItem.iconRef || displayItem.icon) && showRoleIcon ? 34 : 13} y="19">{cardMeta}</text> : null}
+              {displayItem.c4Type && showC4Badge ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
+              {showNodeTitle ? displayItem.type === 'note' && displayItem.textOnly ? (
+                <text
+                  className="freeform-plain-text"
+                  x="0"
+                  y={displayItem.fontSize ?? 20}
+                  style={{ fontSize: displayItem.fontSize ?? 20, fontWeight: displayItem.fontWeight ?? 500, fill: displayItem.textColor ?? undefined }}
+                >
+                  {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
+                  {typingText !== undefined ? <tspan className="freeform-ai-caret">│</tspan> : null}
+                </text>
+              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : architecture ? darkTheme ? '#f8fafc' : '#243247' : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
+                {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{typingText !== undefined ? <tspan className="freeform-ai-caret">│</tspan> : null}
+              </text> : null}
+              {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
+              {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
+  </>
+})
 
 export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, onImportImage, onResolveImage, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
   const parsed = useMemo(() => {
@@ -4109,30 +4201,13 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
             const displayItem = canvasStyledBox(originalItem, skin)
             const displayX = displayItem.x
             const displayY = displayItem.y
-            const displayText = playback?.typing?.id === item.id ? playback.typing.text : displayItem.text
             const imagePath = displayItem.type === 'note' ? displayItem.imagePath : undefined
             const imageSource = imagePath ? imageSources[imagePath] : undefined
-            const imageFit = displayItem.type === 'note' ? displayItem.imageFit : undefined
             const architectureCard = displayItem.type === 'node' && Boolean(displayItem.iconRef || displayItem.icon || displayItem.stencil || displayItem.c4Type)
             const cardTemplate = canvasArchitectureCardTemplate(displayItem)
-            const cardMeta = displayItem.iconRef ? canvasIconRefLabel(displayItem.iconRef) : displayItem.stencil ? canvasStencilLabel(displayItem.stencil) : architectureCard ? cardTemplate.label : displayItem.icon ? canvasIconLabel(displayItem.icon) : undefined
             const architectureMark = Boolean(scene.architecture && architectureCard && (displayItem.iconRef || displayItem.stencil || (displayItem.icon && displayItem.icon !== 'user' && displayItem.icon !== 'external')))
-            const stencilVisual = displayItem.stencil ? canvasStencilVisual(displayItem.stencil) : undefined
-            const iconRefMarkup = displayItem.iconRef ? canvasIconRefMarkup(displayItem.iconRef, false, 'currentColor') : undefined
             const selectedForLod = selectedIdSet.has(item.id)
-            const showNodeTitle = !imagePath && (semanticLodLevel !== 'regions' || selectedForLod || displayItem.emphasis === 'primary')
-            const showRoleIcon = semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || displayItem.emphasis === 'primary'
-            const showCardMeta = !scene.architecture && (semanticLodLevel === 'detail' || (semanticLodLevel === 'compact' && architectureCard) || selectedForLod)
-            const showC4Badge = !scene.architecture && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod)
-            const showCardSubtitle = semanticLodLevel === 'detail' && Boolean(displayItem.subtitle && (!architectureCard || architectureProjection.density !== 'dense'))
-            const showSourceBadge = scene.architecture ? selectedForLod : semanticLodLevel === 'detail' || selectedForLod
             const showAnchorPoints = !imagePath && !(displayItem.type === 'note' && displayItem.textOnly) && (semanticLodLevel === 'detail' || semanticLodLevel === 'compact' || selectedForLod || tool === 'connect' || connectFrom === item.id)
-            const cardTitleLimit = architectureProjection.density === 'dense' ? 22 : architectureProjection.density === 'compact' ? 26 : 30
-            const architectureMarkSize = architectureProjection.density === 'dense' ? 30 : architectureProjection.density === 'compact' ? 34 : 38
-            const architectureMarkX = 14
-            const architectureMarkY = (displayItem.height - architectureMarkSize) / 2
-            const architectureTextX = architectureMark ? architectureMarkX + architectureMarkSize + 12 : architectureCard ? 16 : displayItem.width / 2
-            const architectureTitleY = architectureMark ? displayItem.height / 2 + (showCardSubtitle ? -4 : 4) : architectureCard ? (showCardSubtitle ? 55 : Math.max(54, displayItem.height / 2 + 5)) : displayItem.height / 2
             return (
             <g
               key={item.id}
@@ -4156,59 +4231,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
               onPointerUp={finishGesture}
               onPointerCancel={cancelGesture}
             >
-              {displayItem.description ? <title>{displayItem.description}</title> : null}
-              {imagePath ? <>
-                <defs><clipPath id={`canvas-image-${displayItem.id}`}><rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} /></clipPath></defs>
-                <rect className="freeform-image-frame" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
-                {imageSource
-                  ? <image href={imageSource} width={displayItem.width} height={displayItem.height} preserveAspectRatio={imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'} clipPath={`url(#canvas-image-${displayItem.id})`} />
-                  : <text className="freeform-image-placeholder" x={displayItem.width / 2} y={displayItem.height / 2} textAnchor="middle" dominantBaseline="middle">图片加载中</text>}
-                <rect className="freeform-image-outline" width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? 8} />
-              </> : displayItem.shapeRef ? <CanvasBoxShape item={displayItem} /> : <rect width={displayItem.width} height={displayItem.height} rx={displayItem.cornerRadius ?? (displayItem.shape === 'square' ? 3 : displayItem.shape === 'pill' ? displayItem.height / 2 : scene.architecture && architectureMark ? 9 : 14)} />}
-              {!scene.architecture && !visualSkin && displayItem.emphasis === 'primary' ? <rect className="freeform-card-accent" width="5" height={displayItem.height} rx="3" /> : null}
-              {!scene.architecture && architectureCard ? <rect className="freeform-card-kind-band" x="12" y={displayItem.height - 4} width={Math.max(24, displayItem.width - 24)} height="2" rx="1" /> : null}
-              {architectureMark && iconRefMarkup && showRoleIcon ? (
-                <g className="freeform-icon-ref" transform={`translate(${architectureMarkX} ${architectureMarkY}) scale(${architectureMarkSize / 24})`} dangerouslySetInnerHTML={{ __html: iconRefMarkup }} />
-              ) : architectureMark && stencilVisual && showRoleIcon ? (
-                <g className="freeform-stencil-logo" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
-                  {stencilVisual.path
-                    ? <path d={stencilVisual.path} fill={stencilVisual.color} data-stencil={displayItem.stencil} transform={`scale(${architectureMarkSize / 24})`} />
-                    : <><rect width={architectureMarkSize} height={architectureMarkSize} rx={7} /><text x={architectureMarkSize / 2} y={architectureMarkSize / 2 + 4} textAnchor="middle">{stencilVisual.label}</text></>}
-                </g>
-              ) : architectureMark && displayItem.icon && showRoleIcon ? (
-                <g className="freeform-node-role is-architecture-role" transform={`translate(${architectureMarkX} ${architectureMarkY})`}>
-                  <rect width={architectureMarkSize} height={architectureMarkSize} rx={7} />
-                  <g className="freeform-node-role-symbol" transform={`translate(${architectureMarkSize * .18} ${architectureMarkSize * .18}) scale(${architectureMarkSize * .64 / 24})`}>
-                    {canvasIconPaths(displayItem.icon).map((path, index) => <path key={`${displayItem.icon}-${index}`} d={path} />)}
-                  </g>
-                </g>
-              ) : displayItem.iconRef && iconRefMarkup && showRoleIcon ? (
-                <g className="freeform-icon-ref" transform="translate(8 8) scale(.8333)" dangerouslySetInnerHTML={{ __html: iconRefMarkup }} />
-              ) : displayItem.icon && showRoleIcon ? (
-                <g className="freeform-node-role" transform="translate(18 18)">
-                  <circle r="10" />
-                  <g className="freeform-node-role-symbol" transform="translate(-7 -7) scale(.5833)">
-                    {canvasIconPaths(displayItem.icon).map((path, index) => <path key={`${displayItem.icon}-${index}`} d={path} />)}
-                  </g>
-                </g>
-              ) : null}
-              {cardMeta && showCardMeta ? <text className="freeform-node-icon" x={(displayItem.iconRef || displayItem.icon) && showRoleIcon ? 34 : 13} y="19">{cardMeta}</text> : null}
-              {displayItem.c4Type && showC4Badge ? <text className="freeform-c4-badge" x={displayItem.width - 10} y={19} textAnchor="end">{c4Label(displayItem.c4Type)}</text> : null}
-              {showNodeTitle ? displayItem.type === 'note' && displayItem.textOnly ? (
-                <text
-                  className="freeform-plain-text"
-                  x="0"
-                  y={displayItem.fontSize ?? 20}
-                  style={{ fontSize: displayItem.fontSize ?? 20, fontWeight: displayItem.fontWeight ?? 500, fill: displayItem.textColor ?? undefined }}
-                >
-                  {displayText.split('\n').slice(0, 8).map((line, index) => <tspan key={index} x="0" dy={index === 0 ? 0 : (displayItem.fontSize ?? 20) * 1.35}>{line}</tspan>)}
-                  {playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
-                </text>
-              ) : <text style={skin && displayItem.type === 'node' ? { fill: originalItem.fillColor ? undefined : scene.architecture ? darkTheme ? '#f8fafc' : '#243247' : skin.text, fontFamily: skin.font, fontWeight: 600 } : undefined} className={architectureCard ? 'freeform-node-title' : undefined} x={architectureTextX} y={architectureTitleY} textAnchor={architectureCard ? 'start' : 'middle'} dominantBaseline={architectureCard ? undefined : 'middle'}>
-                {truncate(displayText, architectureCard ? cardTitleLimit : 28)}{playback?.typing?.id === item.id ? <tspan className="freeform-ai-caret">│</tspan> : null}
-              </text> : null}
-              {showCardSubtitle ? <text className="freeform-node-subtitle" x={architectureTextX} y={architectureMark ? architectureTitleY + 17 : displayItem.height - 12} textAnchor={architectureCard ? 'start' : 'middle'}>{truncate(displayItem.subtitle!, architectureCard ? 34 : 32)}</text> : null}
-              {displayItem.sourcePaths?.length && showSourceBadge ? <text className="freeform-source-badge" x={displayItem.width - 10} y={displayItem.c4Type ? 34 : 18} textAnchor="end">⌘ {displayItem.sourcePaths.length}</text> : null}
+              <CanvasBoxArtwork item={originalItem} visualStyle={scene.style} darkTheme={darkTheme} architecture={Boolean(scene.architecture)} density={architectureProjection.density} level={semanticLodLevel} selected={selectedForLod} imageSource={imageSource} typingText={playback?.typing?.id === item.id ? playback.typing.text : undefined} />
               {showAnchorPoints ? <g className="freeform-anchor-points">
                   <circle cx={displayItem.width / 2} cy={0} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'top')} />
                   <circle cx={displayItem.width} cy={displayItem.height / 2} r="7" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => handleAnchorClick(event, item.id, 'right')} />
