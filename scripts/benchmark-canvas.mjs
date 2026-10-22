@@ -11,6 +11,7 @@ const nodesArg = process.argv.indexOf('--nodes')
 const nodeCount = nodesArg < 0 ? 360 : Number(process.argv[nodesArg + 1])
 if (!Number.isInteger(nodeCount) || nodeCount < 1 || nodeCount > 10000) throw new Error('--nodes expects an integer between 1 and 10000')
 const dragMode = process.argv.includes('--drag')
+const detailMode = process.argv.includes('--detail')
 const traceArg = process.argv.indexOf('--trace')
 if (traceArg >= 0 && !process.argv[traceArg + 1]) throw new Error('--trace requires an output filename')
 const traceFile = traceArg >= 0 ? path.resolve(process.argv[traceArg + 1]) : null
@@ -69,6 +70,16 @@ try {
     return result.result?.value === true
   }, 'Canvas benchmark mounted')
 
+  if (detailMode) {
+    const detail = await client.send('Runtime.evaluate', {
+      expression: 'window.__canvasBench.enterDetail()', awaitPromise: true, returnByValue: true,
+    })
+    if (detail.exceptionDetails) throw new Error(detail.exceptionDetails.text)
+    if (nodeCount >= 3000 && !detail.result?.value?.level?.includes('细节')) {
+      throw new Error(`Did not enter Canvas detail view: ${JSON.stringify(detail.result?.value)}`)
+    }
+  }
+
   const before = await client.send('Performance.getMetrics')
   const events = []
   const complete = new Promise((resolve) => client.on('Tracing.tracingComplete', resolve))
@@ -80,15 +91,24 @@ try {
     const target = position.result?.value
     if (!target) throw new Error('No visible drag target')
     const { x, y } = target
+    const labelBefore = detailMode ? (await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.sampleConnectedLabel()', returnByValue: true })).result?.value : null
     await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
     await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1 })
+    let labelDuring = null
     for (let step = 1; step <= 16; step += 1) {
       await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + step * 3, y: y + step * 2, button: 'left', buttons: 1 })
       await new Promise((resolve) => setTimeout(resolve, 35))
+      if (step === 8 && detailMode) {
+        labelDuring = (await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.sampleConnectedLabel()', returnByValue: true })).result?.value
+      }
     }
     await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x + 48, y: y + 32, button: 'left', buttons: 0, clickCount: 1 })
     await new Promise((resolve) => setTimeout(resolve, 250))
     response = await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.dragResult()', returnByValue: true })
+    if (detailMode && nodeCount >= 3000 && (!labelBefore || !labelDuring
+      || Math.hypot(labelDuring.x - labelBefore.x, labelDuring.y - labelBefore.y) < 0.1)) {
+      throw new Error(`Connected arrow label did not follow the moving node: ${JSON.stringify({ labelBefore, labelDuring })}`)
+    }
   } else {
     response = await client.send('Runtime.evaluate', {
       expression: 'window.__canvasBench.run()', awaitPromise: true, returnByValue: true,
@@ -130,7 +150,7 @@ try {
     const times = events.filter((event) => event.ph === 'X' && event.name === name).map((event) => event.dur / 1000)
     return [name, { count: times.length, totalMs: +times.reduce((sum, time) => sum + time, 0).toFixed(1), maxMs: +Math.max(0, ...times).toFixed(1) }]
   }))
-  console.log(JSON.stringify({ mode: 'production', interaction: dragMode ? 'drag' : 'zoom', configuredNodes: nodeCount, ...result, metrics,
+  console.log(JSON.stringify({ mode: 'production', view: detailMode ? 'detail' : 'default', interaction: dragMode ? 'drag' : 'zoom', configuredNodes: nodeCount, ...result, metrics,
     heapMB: { before: +(heap(before) / 1048576).toFixed(1), after: +(heap(after) / 1048576).toFixed(1) },
     ...(traceFile ? { traceFile } : {}) }, null, 2))
 } finally {
@@ -207,6 +227,18 @@ function browserSource(nodeCount) {
     createRoot(document.getElementById('root')).render(React.createElement(CanvasEditor, { source: JSON.stringify(scene), onChange: next => { committed = JSON.parse(next) } }))
     window.__canvasBench = {
       ready: false,
+      async enterDetail() {
+        const zoom = [...document.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === '放大画布')
+        if (!zoom) throw new Error('Zoom button missing')
+        for (let i = 0; i < 3; i += 1) {
+          zoom.click()
+          await new Promise(resolve => setTimeout(resolve, 160))
+        }
+        return { level: document.querySelector('.freeform-large-scene-hint')?.textContent,
+          nodes: document.querySelectorAll('g.freeform-box').length,
+          arrows: document.querySelectorAll('g.freeform-arrow').length,
+          svgElements: document.querySelectorAll('svg *').length }
+      },
       dragTarget() {
         const box = [...document.querySelectorAll('g.freeform-box')].find(node => {
           const r = node.getBoundingClientRect()
@@ -216,6 +248,13 @@ function browserSource(nodeCount) {
         const r = box.getBoundingClientRect()
         this.dragId = box.textContent?.match(/Service\\s*(\\d+)/i)?.[1]
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      },
+      sampleConnectedLabel() {
+        const arrow = [...document.querySelectorAll('g.freeform-arrow')].find(item => item.querySelector('title')?.textContent === 'service route 1')
+        const label = arrow?.querySelector('.freeform-arrow-label')
+        if (!label) return null
+        const rect = label.getBoundingClientRect()
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
       },
       dragResult() {
         const boxes = document.querySelectorAll('g.freeform-box')

@@ -454,6 +454,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const svgRef = useRef<SVGSVGElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
   const drag = useRef<DragState | null>(null)
+  const moveLabels = useRef<{
+    scene: CanvasScene
+    viewport: Viewport
+    arrowIds: string[]
+    labels: ReturnType<typeof canvasArrowLabelLayouts>
+  } | null>(null)
   const sourceRef = useRef(source)
   const sceneRef = useRef<CanvasScene | null>(parsed.scene)
   const undoStack = useRef<string[]>([])
@@ -1617,8 +1623,17 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     ? []
     : reuseStaticRelationships && staticRelationshipGeometry ? staticRelationshipGeometry.trunks : canvasBundleTrunks(relationshipRenderScene)
   const selectedIdSet = new Set(selectedIds)
-  const relationLabelLayouts = reuseStaticRelationships && staticRelationshipLabels
+  const savedMoveLabels = moveLabels.current
+  const frozenMoveLabels = semanticLodLevel === 'detail' && largeSceneViewportCulling && renderArrows.length > 1000
+    && gesturePositionOverrides && !transformDrafts && !arrowPointDraft && !playback?.active
+    && savedMoveLabels?.scene === renderSceneBase
+    && savedMoveLabels.viewport.x === viewport.x && savedMoveLabels.viewport.y === viewport.y && savedMoveLabels.viewport.zoom === viewport.zoom
+    && savedMoveLabels.arrowIds.length === viewportRenderArrows.length
+    && savedMoveLabels.arrowIds.every((id, index) => id === viewportRenderArrows[index].id)
+    ? savedMoveLabels.labels : null
+  const relationLabelLayouts = frozenMoveLabels ?? (reuseStaticRelationships && staticRelationshipLabels
     ? staticRelationshipLabels : canvasArrowLabelLayouts(relationLabelScene(relationshipRenderScene, architectureScene, semanticLodLevel, selectedIdSet))
+  )
   const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
     ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)
@@ -2495,6 +2510,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       if (candidate.type !== 'arrow' && ids.includes(candidate.id) && !candidate.locked) positions.set(candidate.id, { x: candidate.x, y: candidate.y })
     })
     if (positions.size === 0) return
+    moveLabels.current = semanticLodLevel === 'detail' && largeSceneViewportCulling && renderArrows.length > 1000
+      ? { scene: renderSceneBase, viewport, arrowIds: viewportRenderArrows.map((arrow) => arrow.id), labels: relationLabelLayouts }
+      : null
     drag.current = { kind: 'move', pointerId: event.pointerId, startX: point.x, startY: point.y, before: sourceRef.current, positions }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -2645,6 +2663,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       setLineDraft(null)
       setTool('select')
     } else if (active.kind === 'move') {
+      moveLabels.current = null
       let next = currentScene()
       const changedNodeIds = new Set<string>(active.positions.keys())
       const overrides = gesturePositionOverridesRef.current
@@ -2751,6 +2770,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   function cancelGesture() {
+    moveLabels.current = null
     const active = drag.current
     if (!active) {
       clearGestureVisual()
@@ -4113,12 +4133,22 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
                   ...canvasArrowLabelText(displayArrow.label),
                 }
               : automaticLabelLayout
+            const moveOrigins = frozenMoveLabels && drag.current?.kind === 'move' ? drag.current.positions : null
+            const fromOrigin = moveOrigins?.get(arrow.from)
+            const toOrigin = moveOrigins?.get(arrow.to)
+            const fromMove = fromOrigin && gesturePositionOverrides?.[arrow.from]
+            const toMove = toOrigin && gesturePositionOverrides?.[arrow.to]
+            const movingLabel = !displayArrow.labelPosition && (fromMove || toMove)
+              ? { x: ((fromMove ? fromMove.x - fromOrigin!.x : 0) + (toMove ? toMove.x - toOrigin!.x : 0)) / 2,
+                  y: ((fromMove ? fromMove.y - fromOrigin!.y : 0) + (toMove ? toMove.y - toOrigin!.y : 0)) / 2 }
+              : null
             return (
               <g key={arrow.id} className={`freeform-arrow emphasis-${displayArrow.emphasis ?? 'secondary'}${standalone ? ' is-free-line' : ''}${displayArrow.freehand ? ' is-freehand' : ''}${displayArrow.bundleKey ? ' is-bundled' : ''}${displayArrow.bundleKey?.startsWith('group:') ? ' is-group-bundle' : ''}${selectedIds.includes(arrow.id) ? ' is-selected' : ''}${insertTarget?.arrowId === arrow.id ? ' is-insert-target' : ''}${displayArrow.lineStyle === 'dashed' ? ' is-dashed' : displayArrow.lineStyle === 'dotted' ? ' is-dotted' : ''}${traceResult ? tracedArrowIds.has(arrow.id) ? ' is-traced' : ' is-trace-dimmed' : ''}${playback?.drawingArrowId === arrow.id ? ' is-ai-drawing' : ''}${playback?.finalHighlightIds?.includes(arrow.id) ? ' is-ai-final-highlight' : ''}${playback?.active && (activePlaybackRegionIds.has(displayArrow.from) || activePlaybackRegionIds.has(displayArrow.to)) ? ' is-ai-region-active' : ''}`} style={displayArrow.opacity !== undefined ? { opacity: displayArrow.opacity } : undefined} onContextMenu={(event) => openContextMenu(event, arrow.id)} onPointerDown={(event) => { event.stopPropagation(); setContextMenu(null); setSelectedGroupTarget(null); editorRef.current?.focus({ preventScroll: true }); setSelectedIds(event.shiftKey ? toggleId(selectedIds, arrow.id) : [arrow.id]) }}>
                 <CanvasArrowInk label={displayArrow.label} path={path} markerEnd={displayArrow.markerEnd === 'none' ? undefined : 'url(#canvas-arrow)'} strokeColor={displayArrow.strokeColor || visualSkin ? displayArrow.strokeColor ?? visualSkin?.edge : undefined} strokeWidth={displayArrow.strokeWidth} />
                 {displayArrow.label && labelLayout ? (
                   <g
                     className={`freeform-arrow-label${displayArrow.labelPosition || arrowLabelDraft?.id === arrow.id ? ' is-manual' : ''}`}
+                    transform={movingLabel ? `translate(${movingLabel.x} ${movingLabel.y})` : undefined}
                     pointerEvents={selectedIds.includes(arrow.id) ? 'all' : 'none'}
                     onPointerDown={selectedIds.includes(arrow.id) ? (event) => beginArrowLabelDrag(event, arrow) : undefined}
                     onPointerMove={selectedIds.includes(arrow.id) ? moveArrowLabel : undefined}
