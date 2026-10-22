@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/icon-dark.svg">
-    <img src="assets/icon.svg" width="72" height="72" alt="Diagram Plugin">
-  </picture>
+  <img src="docs/images/readme-banner.png" width="1200" alt="Diagram Plugin — Mermaid 与 Canvas 图表工作台">
 </p>
 
 <h1 align="center">Diagram Plugin</h1>
@@ -19,7 +16,8 @@
   <a href="https://www.npmjs.com/package/@weimin96/diagram-plugin"><img alt="npm" src="https://img.shields.io/npm/v/@weimin96/diagram-plugin?color=cb3837&logo=npm&logoColor=white"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <a href="package.json"><img alt="Node.js >= 22" src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white"></a>
-  <a href="https://github.com/weimin96/diagram-plugin"><img alt="DeepSeek Harness" src="https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-4D6BFE"></a>
+  <a href="#codex"><img alt="支持 Codex" src="https://img.shields.io/badge/Codex-%E6%94%AF%E6%8C%81-087F73"></a>
+  <a href="#deepseek-harness"><img alt="支持 DeepSeek Harness" src="https://img.shields.io/badge/DeepSeek%20Harness-%E6%94%AF%E6%8C%81-4D6BFE"></a>
   <a href="https://github.com/weimin96/diagram-plugin/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/weimin96/diagram-plugin?style=social"></a>
 </p>
 
