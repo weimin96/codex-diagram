@@ -6,7 +6,7 @@ on:
       version:
         description: 发布版本，必须与 package.json 一致
         required: true
-        default: '0.20.0'
+        default: '0.20.1'
   push:
     tags:
       - 'diagram-plugin-v*'
@@ -49,9 +49,11 @@ jobs:
         run: |
           npm install --global npm@11.21.0 pnpm@11.22.0
           pnpm install --frozen-lockfile
+          npm install --global @openai/codex@0.163.0
       - name: 验证并构建
         run: |
           pnpm typecheck
+          pnpm test
           pnpm build
           pnpm smoke
           pnpm check:hosts
@@ -61,7 +63,9 @@ jobs:
           mkdir -p ../release
           npm pack --ignore-scripts --pack-destination ../release
       - name: 验证发布包
-        run: node scripts/check-deepseek-package.mjs release/*.tgz
+        run: |
+          node scripts/check-deepseek-package.mjs release/*.tgz
+          node scripts/check-codex-package.mjs release/*.tgz
       - name: 保存发布产物
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

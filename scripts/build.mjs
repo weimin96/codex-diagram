@@ -13,6 +13,8 @@ const version = String(packageJson.version)
 
 await rm(packageRoot, { recursive: true, force: true })
 await mkdir(path.join(packageRoot, '.codex-plugin'), { recursive: true })
+await mkdir(path.join(packageRoot, '.agents/plugins'), { recursive: true })
+await mkdir(path.join(packageRoot, 'bin'), { recursive: true })
 await mkdir(path.join(packageRoot, 'assets'), { recursive: true })
 await mkdir(dist, { recursive: true })
 
@@ -56,6 +58,16 @@ const pluginManifest = JSON.parse(await readFile(path.join(root, 'manifest/plugi
 pluginManifest.version = version
 await writeFile(path.join(packageRoot, '.codex-plugin/plugin.json'), `${JSON.stringify(pluginManifest, null, 2)}\n`)
 await cp(path.join(root, 'manifest/mcp.json'), path.join(packageRoot, '.mcp.json'))
+await writeFile(path.join(packageRoot, '.agents/plugins/marketplace.json'), `${JSON.stringify({
+  name: 'diagram-plugin-npm',
+  interface: { displayName: 'Diagram Plugin (npm)' },
+  plugins: [{
+    name: 'diagram-plugin', source: { source: 'local', path: '.' },
+    policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL', products: ['CODEX'] },
+    category: 'Developer Tools',
+  }],
+}, null, 2)}\n`)
+await cp(path.join(root, 'scripts/install-codex-cli.mjs'), path.join(packageRoot, 'bin/diagram-plugin.mjs'))
 await cp(path.join(root, 'assets/icon.svg'), path.join(packageRoot, 'assets/icon.svg'))
 await cp(path.join(root, 'assets/icon-dark.svg'), path.join(packageRoot, 'assets/icon-dark.svg'))
 
@@ -87,17 +99,18 @@ await cp(path.join(root, 'integrations/deepseek/locale/en.json'), path.join(pack
 await cp(path.join(root, 'integrations/deepseek/locale/zh.json'), path.join(packageRoot, 'locale/zh.json'))
 await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
   name: '@weimin96/diagram-plugin', version, type: 'module',
-  description: '在 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
+  description: '在 Codex 与 DeepSeek Harness 中编辑 Mermaid 与 Canvas 图表。',
+  bin: { 'diagram-plugin': './bin/diagram-plugin.mjs' },
   keywords: [
     'dsh-plugin', 'deepseek', 'deepseek-harness', 'dsh', 'diagram', 'mermaid',
-    'canvas', 'architecture', 'visualization', 'mcp', 'cordis',
+    'canvas', 'architecture', 'visualization', 'mcp', 'cordis', 'codex', 'codex-plugin',
   ],
   license: packageJson.license,
   repository: { type: 'git', url: 'git+https://github.com/weimin96/diagram-plugin.git' },
   engines: { node: '>=22', dsh: '>=0.2.0-rc.1 <0.3.0-0' },
   publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
   icon: './assets/icon.svg',
-  files: ['dist/*.mjs', 'dist/*.js', 'dist/*.css', 'assets/*.svg', 'locale/*.json', 'cordis.patch.yml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
+  files: ['bin/*.mjs', '.agents/plugins/marketplace.json', '.codex-plugin/plugin.json', '.mcp.json', 'dist/*.mjs', 'dist/*.js', 'dist/*.css', 'assets/*.svg', 'locale/*.json', 'cordis.patch.yml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
   main: './dist/deepseek-host.mjs',
   exports: {
     '.': './dist/deepseek-host.mjs',
@@ -120,6 +133,12 @@ await writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
     '@deepseek-ai/dsh-system-prompt': '0.2.1-rc.2',
     '@deepseek-ai/dsh-tools': '0.2.1-rc.2',
   },
+  // Codex users run this package through npx; DSH provides its own peers.
+  peerDependenciesMeta: Object.fromEntries([
+    '@deepseek-ai/cordis', '@deepseek-ai/dsh-mcp-client', '@deepseek-ai/dsh-api-session-controller',
+    '@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-working-directory',
+    '@deepseek-ai/dsh-system-prompt', '@deepseek-ai/dsh-tools',
+  ].map((name) => [name, { optional: true }])),
 }, null, 2)}\n`)
 await cp(path.join(root, 'integrations/deepseek/cordis.patch.yml'), path.join(packageRoot, 'cordis.patch.yml'))
 await cp(path.join(root, 'integrations/deepseek/README.md'), path.join(packageRoot, 'README.md'))

@@ -122,7 +122,7 @@ DeepSeek 模型工具注册为 `diagram_create` 等名字，内部工具只供�
 
 1. 更新根目录 `package.json` 的版本号并提交。
 2. 推送 `diagram-plugin-v<版本>` 标签，或手动触发 `publish-plugin.yml` 并填写相同版本。
-3. 工作流执行类型检查、构建、冒烟、宿主集成测试与产物校验，然后发布 tarball。
+3. 工作流执行类型检查、构建、冒烟、宿主集成测试与 DeepSeek、Codex 双宿主 npm tarball 验收，然后发布 tarball。
 
 本地验包：
 
@@ -132,7 +132,10 @@ mkdir -p release
 npm pack ./package --ignore-scripts --pack-destination release
 # 文件名中的版本号来自根目录 package.json，例如 0.20.0
 node scripts/check-deepseek-package.mjs release/weimin96-diagram-plugin-<version>.tgz
+node scripts/check-codex-package.mjs release/weimin96-diagram-plugin-<version>.tgz
 ```
+
+同一个包包含 DeepSeek Harness 的 `dsh` 元数据和 Codex 的 `.agents/plugins/marketplace.json`、`.codex-plugin/plugin.json`、`.mcp.json` 及 `bin/diagram-plugin.mjs`。Codex 安装器使用 `CODEX_HOME`（默认 `~/.codex`），将发布产物持久化后注册本地 marketplace；CI 在临时 `CODEX_HOME` 内真实运行 Codex CLI，验证首次安装、重复安装和插件启用状态，绝不操作维护者的正式 Codex 配置。发布后用户执行 `npx @weimin96/diagram-plugin@latest install --codex`。
 
 发布使用 npm Trusted Publishing（OIDC），不配置长期 `NPM_TOKEN`。新包需要先通过交互式 `npm login` 完成首次建包，再执行 `npm trust github` 绑定仓库 `weimin96/diagram-plugin`、工作流 `publish-plugin.yml`，权限为 `publish`。工作流当前显式关闭 npm provenance（`--provenance=false`）。
 

@@ -1,8 +1,20 @@
 # Diagram Plugin
 
-在 DeepSeek Harness 的聊天右侧创建、查看和编辑 Mermaid 图表与 Canvas 画板。图表以纯文本保存在项目的 `docs/diagrams/` 中，可读、可 diff、可版本控制。
+在 Codex 与 DeepSeek Harness 的聊天右侧创建、查看和编辑 Mermaid 图表与 Canvas 画板。图表以纯文本保存在项目的 `docs/diagrams/` 中，可读、可 diff、可版本控制。
 
 ## 安装
+
+### Codex Desktop / CLI
+
+安装 Codex CLI 与 Node.js 22+ 后运行（npm 包 `0.20.1` 及以上）：
+
+```sh
+npx @weimin96/diagram-plugin@latest install --codex
+```
+
+安装器自动注册 Codex marketplace 和 MCP 服务，无需拉取源码或安装 pnpm。完成后重新打开 Codex Desktop。
+
+### DeepSeek Harness
 
 在 DeepSeek Desktop 的「插件 → 添加插件」中输入：
 

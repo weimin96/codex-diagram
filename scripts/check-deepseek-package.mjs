@@ -27,7 +27,7 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-release-'))
 let client
 try {
   const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n')
-  assert.ok(entries.every((entry) => /^package\/(?:dist\/[^/]+\.(?:mjs|js|css)|assets\/[^/]+\.svg|locale\/[a-z]{2}(?:-[a-z0-9]+)*\.json|package\.json|cordis\.patch\.yml|README\.md|LICENSE|THIRD_PARTY_NOTICES\.md)$/.test(entry)), '发布包包含非运行时文件。')
+  assert.ok(entries.every((entry) => /^package\/(?:dist\/[^/]+\.(?:mjs|js|css)|assets\/[^/]+\.svg|locale\/[a-z]{2}(?:-[a-z0-9]+)*\.json|bin\/diagram-plugin\.mjs|\.agents\/plugins\/marketplace\.json|\.codex-plugin\/plugin\.json|\.mcp\.json|package\.json|cordis\.patch\.yml|README\.md|LICENSE|THIRD_PARTY_NOTICES\.md)$/.test(entry)), '发布包包含非运行时文件。')
   execFileSync('tar', ['-xzf', archive, '-C', root])
   const packageRoot = path.join(root, 'package')
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))

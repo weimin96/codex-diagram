@@ -30,7 +30,7 @@
 | 宿主 | 当前安装方式 | 环境要求 |
 | --- | --- | --- |
 | [DeepSeek Harness](#deepseek-harness) | 插件管理中安装 npm 成品包，无需下载源码 | Desktop `0.2.1-rc.2`，使用宿主自带运行时 |
-| [Codex](#codex) | 本地构建安装，暂未提供免构建安装包 | Codex Desktop、Codex CLI、Node.js 22+、pnpm 11 |
+| [Codex](#codex) | npm 一条命令安装（从 `0.20.1` 版本开始） | Codex Desktop、Codex CLI `0.163.0` 或兼容版本、Node.js 22+ |
 
 ### DeepSeek Harness
 
@@ -57,12 +57,22 @@ dsh plugin --profile desktop add @weimin96/diagram-plugin
 
 ### Codex
 
-支持 Codex Desktop 的对话侧边面板。目前需从源码构建安装；已发布的 npm 包尚未包含完整的 Codex 插件配置，不能直接用于 Codex 安装。
+支持 Codex Desktop 的对话侧边面板。`0.20.1` 及以上版本的 npm 包已内置 Codex marketplace、MCP 服务和安装器。**该版本发布到 npm 后**，安装了 Codex CLI 和 Node.js 22+ 的用户可以运行：
+
+```sh
+npx @weimin96/diagram-plugin@latest install --codex
+```
+
+安装器将 npm 包中的构建产物复制到 `~/.codex/diagram-plugin-npm/`，注册 `diagram-plugin-npm` marketplace，再安装 `diagram-plugin@diagram-plugin-npm`。无需克隆源码或安装 pnpm。完成后重新打开 Codex Desktop。重复执行同一命令可更新插件；不会删除其他 marketplace。
+
+如果此前已经从源码安装了 `diagram-plugin@diagram-plugin-local`，需先运行 `codex plugin remove diagram-plugin@diagram-plugin-local`，再安装 npm 版，避免两个来源重复注册同一套工具。
+
+版本 `0.20.0` 仅支持 DeepSeek Harness 的 npm 安装，不包含上述 Codex 命令。
 
 <details>
 <summary>从源码安装</summary>
 
-准备好 Codex CLI、Node.js 22+ 和 pnpm 11，然后执行：
+如需安装未发布的开发版本，准备好 Codex CLI、Node.js 22+ 和 pnpm 11，然后执行：
 
 ```sh
 git clone https://github.com/weimin96/diagram-plugin.git
