@@ -5,12 +5,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
+import postcss from 'postcss'
+import tailwindcss from '@tailwindcss/postcss'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const nodesArg = process.argv.indexOf('--nodes')
 const nodeCount = nodesArg < 0 ? 360 : Number(process.argv[nodesArg + 1])
 if (!Number.isInteger(nodeCount) || nodeCount < 1 || nodeCount > 10000) throw new Error('--nodes expects an integer between 1 and 10000')
 const dragMode = process.argv.includes('--drag')
+const panMode = process.argv.includes('--pan')
+const selectMode = process.argv.includes('--select')
+if (Number(dragMode) + Number(panMode) + Number(selectMode) > 1) throw new Error('Choose one of --drag, --pan or --select')
 const detailMode = process.argv.includes('--detail')
 const traceArg = process.argv.indexOf('--trace')
 if (traceArg >= 0 && !process.argv[traceArg + 1]) throw new Error('--trace requires an output filename')
@@ -31,11 +36,21 @@ try {
     // Benchmark the actual production React runtime, never the JSX development instrumentation.
     define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent',
   })
-  const html = '<!doctype html><html><body><div id="root"></div><script type="module" src="/bench.js"></script></body></html>'
+  // Use the same compiled stylesheet as the actual plugin. Without it the selection
+  // inspector overlays the entire canvas and the benchmark clicks only one node.
+  const stylesheetPath = path.join(root, 'src/styles.css')
+  const compiledStylesheet = await postcss([tailwindcss()]).process(await readFile(stylesheetPath, 'utf8'), {
+    from: stylesheetPath, to: path.join(temp, 'bench.css'),
+  })
+  const css = compiledStylesheet.css
+  const html = '<!doctype html><html><head><link rel="stylesheet" href="/bench.css"></head><body><div id="root" style="display:flex"></div><script type="module" src="/bench.js"></script></body></html>'
   server = createServer(async (req, res) => {
     if (req.url === '/bench.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' })
       res.end(await readFile(script))
+    } else if (req.url === '/bench.css') {
+      res.writeHead(200, { 'content-type': 'text/css' })
+      res.end(css)
     } else {
       res.writeHead(200, { 'content-type': 'text/html' })
       res.end(html)
@@ -86,7 +101,40 @@ try {
   client.on('Tracing.dataCollected', (message) => events.push(...message.value))
   await client.send('Tracing.start', { categories: 'devtools.timeline,blink,v8,cc', transferMode: 'ReportEvents' })
   let response
-  if (dragMode) {
+  if (panMode) {
+    const target = (await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.panTarget()', returnByValue: true })).result?.value
+    if (!target) throw new Error('No available Canvas background pan target')
+    const { x, y } = target
+    await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'middle', buttons: 4, clickCount: 1 })
+    for (let step = 1; step <= 20; step += 1) {
+      await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x - step * 10, y: y - step * 5, button: 'middle', buttons: 4 })
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    }
+    await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x - 200, y: y - 100, button: 'middle', buttons: 0, clickCount: 1 })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    response = await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.panResult()', returnByValue: true })
+  } else if (selectMode) {
+    const targets = (await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.selectionTargets()', returnByValue: true })).result?.value
+    if (!targets?.length) throw new Error('No visible nodes for Canvas selection benchmark')
+    const selections = []
+    for (let step = 0; step < 16; step += 1) {
+      const { x, y } = targets[step % targets.length]
+      await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 })
+      await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 })
+      await new Promise((resolve) => setTimeout(resolve, 65))
+      selections.push((await client.send('Runtime.evaluate', {
+        expression: 'document.querySelector("g.freeform-box.is-selected")?.textContent', returnByValue: true,
+      })).result?.value)
+    }
+    response = await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.selectionResult()', returnByValue: true })
+    const distinctSelections = new Set(selections.filter(Boolean)).size
+    if (distinctSelections < 8) {
+      throw new Error(`Canvas selection benchmark did not exercise 8 distinct nodes: ${JSON.stringify({ selections, targets: targets.slice(0, 16) })}`)
+    }
+    response.result.value.distinctSelections = distinctSelections
+  } else if (dragMode) {
     const position = await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.dragTarget()', returnByValue: true })
     const target = position.result?.value
     if (!target) throw new Error('No visible drag target')
@@ -107,7 +155,7 @@ try {
     response = await client.send('Runtime.evaluate', { expression: 'window.__canvasBench.dragResult()', returnByValue: true })
     if (detailMode && nodeCount >= 3000 && (!labelBefore || !labelDuring
       || Math.hypot(labelDuring.x - labelBefore.x, labelDuring.y - labelBefore.y) < 0.1)) {
-      throw new Error(`Connected arrow label did not follow the moving node: ${JSON.stringify({ labelBefore, labelDuring })}`)
+      throw new Error(`Connected arrow label did not follow the moving node: ${JSON.stringify({ labelBefore, labelDuring, drag: response.result?.value, target })}`)
     }
   } else {
     response = await client.send('Runtime.evaluate', {
@@ -116,18 +164,20 @@ try {
   }
   if (response.exceptionDetails) throw new Error(response.exceptionDetails.text)
   const result = response.result?.value
-  if (!dragMode && (!result?.zooms || !result.visibleNodesStable)) {
+  if (!dragMode && !panMode && !selectMode && (!result?.zooms || !result.visibleNodesStable)) {
     throw new Error('Canvas zoom fixture did not render consistently')
   }
   if (dragMode && (!result?.moved || !result.committed)) {
     throw new Error(`Canvas drag did not update and commit a node: ${JSON.stringify(result)}`)
   }
+  if (panMode && !result?.moved) throw new Error(`Canvas pan did not move viewport: ${JSON.stringify(result)}`)
+  if (selectMode && (!result?.changed || !result?.labelsStable)) throw new Error(`Canvas selection or unchanged label positions failed: ${JSON.stringify(result)}`)
   await client.send('Tracing.end')
   await Promise.race([complete, new Promise((_, reject) => setTimeout(() => reject(new Error('Chrome trace timeout')), 15000))])
   if (traceFile) await writeFile(traceFile, JSON.stringify({ traceEvents: events }))
   const after = await client.send('Performance.getMetrics')
   const heap = (metrics) => metrics.metrics.find((item) => item.name === 'JSHeapUsedSize')?.value ?? 0
-  if (!dragMode) {
+  if (!dragMode && !panMode && !selectMode) {
     const anchorCheck = await client.send('Runtime.evaluate', {
       expression: 'window.__canvasBench.checkAnchors()', awaitPromise: true, returnByValue: true,
     })
@@ -150,7 +200,7 @@ try {
     const times = events.filter((event) => event.ph === 'X' && event.name === name).map((event) => event.dur / 1000)
     return [name, { count: times.length, totalMs: +times.reduce((sum, time) => sum + time, 0).toFixed(1), maxMs: +Math.max(0, ...times).toFixed(1) }]
   }))
-  console.log(JSON.stringify({ mode: 'production', view: detailMode ? 'detail' : 'default', interaction: dragMode ? 'drag' : 'zoom', configuredNodes: nodeCount, ...result, metrics,
+  console.log(JSON.stringify({ mode: 'production', view: detailMode ? 'detail' : 'default', interaction: dragMode ? 'drag' : panMode ? 'pan' : selectMode ? 'select' : 'zoom', configuredNodes: nodeCount, ...result, metrics,
     heapMB: { before: +(heap(before) / 1048576).toFixed(1), after: +(heap(after) / 1048576).toFixed(1) },
     ...(traceFile ? { traceFile } : {}) }, null, 2))
 } finally {
@@ -227,6 +277,48 @@ function browserSource(nodeCount) {
     createRoot(document.getElementById('root')).render(React.createElement(CanvasEditor, { source: JSON.stringify(scene), onChange: next => { committed = JSON.parse(next) } }))
     window.__canvasBench = {
       ready: false,
+      panTarget() {
+        const svg = document.querySelector('svg.freeform-svg')
+        if (!svg) return null
+        this.startView = svg.getAttribute('viewBox')
+        const bounds = svg.getBoundingClientRect()
+        for (let y = bounds.top + 220; y < bounds.bottom - 20; y += 29) {
+          for (let x = bounds.left + 310; x < bounds.right - 20; x += 37) {
+            if (document.elementFromPoint(x, y) === svg) return { x: Math.round(x), y: Math.round(y) }
+          }
+        }
+        return null
+      },
+      panResult() {
+        const svg = document.querySelector('svg.freeform-svg')
+        return { moved: Boolean(this.startView && svg?.getAttribute('viewBox') !== this.startView),
+          startView: this.startView, endView: svg?.getAttribute('viewBox'),
+          nodes: document.querySelectorAll('g.freeform-box').length,
+          arrows: document.querySelectorAll('g.freeform-arrow').length,
+          svgElements: document.querySelectorAll('svg *').length }
+      },
+      selectionTargets() {
+        const nodes = [...document.querySelectorAll('g.freeform-box')].filter(item => {
+          const rect = item.getBoundingClientRect()
+          return rect.width > 6 && rect.height > 6 && rect.x > 0 && rect.y > 0
+            && rect.right < window.innerWidth && rect.bottom < window.innerHeight
+            && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('g.freeform-box') === item
+        })
+        this.initialSelected = document.querySelector('g.freeform-box.is-selected')?.textContent
+        this.labelPositionsBefore = [...document.querySelectorAll('.freeform-arrow-label')].slice(0, 16).map(item => item.outerHTML)
+        return nodes.filter((_, index) => index % Math.max(1, Math.floor(nodes.length / 32)) === 0).slice(0, 24).map(item => {
+          const bounds = item.getBoundingClientRect()
+          return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) }
+        })
+      },
+      selectionResult() {
+        const selected = [...document.querySelectorAll('g.freeform-box.is-selected')].map(item => item.textContent)
+        return { changed: selected.length > 0 && selected[0] !== this.initialSelected,
+          labelsStable: JSON.stringify(this.labelPositionsBefore) === JSON.stringify([...document.querySelectorAll('.freeform-arrow-label')].slice(0, 16).map(item => item.outerHTML)),
+          selectionCount: selected.length, steps: 16, nodes: document.querySelectorAll('g.freeform-box').length,
+          arrows: document.querySelectorAll('g.freeform-arrow').length,
+          svgElements: document.querySelectorAll('svg *').length }
+      },
       async enterDetail() {
         const zoom = [...document.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === '放大画布')
         if (!zoom) throw new Error('Zoom button missing')
@@ -243,6 +335,7 @@ function browserSource(nodeCount) {
         const box = [...document.querySelectorAll('g.freeform-box')].find(node => {
           const r = node.getBoundingClientRect()
           return r.width > 5 && r.height > 5 && r.left > 0 && r.top > 0 && r.right < window.innerWidth - 2 && r.bottom < window.innerHeight - 2
+            && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('g.freeform-box') === node
         })
         if (!box) return null
         const r = box.getBoundingClientRect()
@@ -250,7 +343,9 @@ function browserSource(nodeCount) {
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
       },
       sampleConnectedLabel() {
-        const arrow = [...document.querySelectorAll('g.freeform-arrow')].find(item => item.querySelector('title')?.textContent === 'service route 1')
+        const index = Number(this.dragId)
+        const connectedRoute = 'service route ' + (index % cols === 0 ? index + 1 : index)
+        const arrow = [...document.querySelectorAll('g.freeform-arrow')].find(item => item.querySelector('title')?.textContent === connectedRoute)
         const label = arrow?.querySelector('.freeform-arrow-label')
         if (!label) return null
         const rect = label.getBoundingClientRect()

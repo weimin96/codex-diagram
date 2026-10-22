@@ -461,6 +461,14 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     arrowIds: string[]
     labels: ReturnType<typeof canvasArrowLabelLayouts>
   } | null>(null)
+  const visibleLabelCache = useRef<{
+    scene: CanvasScene
+    level: CanvasSemanticLodLevel
+    boxes: readonly (CanvasNode | CanvasNote)[]
+    arrows: readonly CanvasArrow[]
+    selectedArrowIds: string[]
+    labels: ReturnType<typeof canvasArrowLabelLayouts>
+  } | null>(null)
   const sourceRef = useRef(source)
   const sceneRef = useRef<CanvasScene | null>(parsed.scene)
   const undoStack = useRef<string[]>([])
@@ -1397,17 +1405,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       byId: index ? new Map(boxes.map((item) => [item.id, item])) : null,
     }
   }, [staticSemanticLodProjection])
-  const staticViewportCrossings = useMemo(() => {
-    if (!staticRenderItems || staticRenderItems.boxes.length <= 180 || !parsed.scene) return null
-    const sceneBoxes = new Map(staticRenderItems.projectedBoxes.map((item) => [item.id, item]))
-    const margin = 220 / Math.max(0.45, viewport.zoom)
-    const view = {
-      x: viewport.x - margin, y: viewport.y - margin,
-      width: parsed.scene.width / viewport.zoom + margin * 2,
-      height: parsed.scene.height / viewport.zoom + margin * 2,
-    }
-    return new Set(staticRenderItems.arrows.filter((arrow) => canvasArrowCrossesViewport(arrow, sceneBoxes, view)).map((arrow) => arrow.id))
-  }, [parsed.scene, staticRenderItems, viewport.x, viewport.y, viewport.zoom])
+  const staticArrowBoxes = useMemo(() => staticRenderItems
+    ? new Map(staticRenderItems.projectedBoxes.map((item) => [item.id, item]))
+    : null, [staticRenderItems])
   const staticMinimapNodeCloudPath = useMemo(() => {
     if (!staticRenderItems || staticRenderItems.boxes.length <= 420) return ''
     const selected = new Set(selectedIds)
@@ -1615,14 +1615,12 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       : renderBoxes.filter((item) => selectedIds.includes(item.id) || selectedArrowEndpointIds.has(item.id) || intersects(viewportBounds, item))
     : renderBoxes
   const viewportNodeIds = new Set(viewportRenderBoxes.map((item) => item.id))
-  const viewportArrowBoxes = largeSceneViewportCulling && (!staticViewportCrossings || gesturePositionOverrides || transformDrafts || arrowPointDraft)
-    ? new Map(projectedBoxes.map((item) => [item.id, item])) : null
+  const viewportArrowBoxes = largeSceneViewportCulling
+    ? staticGeometry && staticArrowBoxes ? staticArrowBoxes : new Map(projectedBoxes.map((item) => [item.id, item]))
+    : null
   const viewportRenderArrows = largeSceneViewportCulling
     ? renderArrows.filter((arrow) => selectedIds.includes(arrow.id) || viewportNodeIds.has(arrow.from) || viewportNodeIds.has(arrow.to)
-      || (staticViewportCrossings && !gesturePositionOverrides?.[arrow.from] && !gesturePositionOverrides?.[arrow.to]
-        && !transformDrafts?.[arrow.from] && !transformDrafts?.[arrow.to] && arrowPointDraft?.id !== arrow.id
-        ? staticViewportCrossings.has(arrow.id)
-        : canvasArrowCrossesViewport(arrow, viewportArrowBoxes!, viewportBounds)))
+      || canvasArrowCrossesViewport(arrow, viewportArrowBoxes!, viewportBounds))
     : renderArrows
   const viewportGroupBounds = largeSceneViewportCulling
     ? displayGroupBounds.filter((group) => selectedGroupId === group.id || selectedGroupIds.includes(group.id) || intersects(viewportBounds, group))
@@ -1641,6 +1639,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     ? []
     : reuseStaticRelationships && staticRelationshipGeometry ? staticRelationshipGeometry.trunks : canvasBundleTrunks(relationshipRenderScene)
   const selectedIdSet = new Set(selectedIds)
+  const reusableVisibleLabels = Boolean(largeSceneViewportCulling && staticGeometry && !hasGeometryDraft && !playback?.active && !arrowLabelDraft)
+  const selectedArrowIds = reusableVisibleLabels ? viewportRenderArrows.filter((arrow) => selectedIdSet.has(arrow.id)).map((arrow) => arrow.id) : []
+  const previouslyVisible = visibleLabelCache.current
+  const cachedVisibleLabels = reusableVisibleLabels && previouslyVisible?.scene === renderScene && previouslyVisible.level === semanticLodLevel
+    && previouslyVisible.boxes.length === viewportRenderBoxes.length && previouslyVisible.arrows.length === viewportRenderArrows.length
+    && previouslyVisible.selectedArrowIds.length === selectedArrowIds.length
+    && previouslyVisible.boxes.every((item, index) => item === viewportRenderBoxes[index])
+    && previouslyVisible.arrows.every((item, index) => item === viewportRenderArrows[index])
+    && previouslyVisible.selectedArrowIds.every((id, index) => id === selectedArrowIds[index])
+    ? previouslyVisible.labels : null
   const savedMoveLabels = moveLabels.current
   const frozenMoveLabels = semanticLodLevel === 'detail' && largeSceneViewportCulling && renderArrows.length > 1000
     && gesturePositionOverrides && !transformDrafts && !arrowPointDraft && !playback?.active
@@ -1649,9 +1657,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     && savedMoveLabels.arrowIds.length === viewportRenderArrows.length
     && savedMoveLabels.arrowIds.every((id, index) => id === viewportRenderArrows[index].id)
     ? savedMoveLabels.labels : null
-  const relationLabelLayouts = frozenMoveLabels ?? (reuseStaticRelationships && staticRelationshipLabels
+  const relationLabelLayouts = frozenMoveLabels ?? cachedVisibleLabels ?? (reuseStaticRelationships && staticRelationshipLabels
     ? staticRelationshipLabels : canvasArrowLabelLayouts(relationLabelScene(relationshipRenderScene, architectureScene, semanticLodLevel, selectedIdSet))
   )
+  if (reusableVisibleLabels && !cachedVisibleLabels) {
+    visibleLabelCache.current = {
+      scene: renderScene, level: semanticLodLevel,
+      boxes: viewportRenderBoxes, arrows: viewportRenderArrows,
+      selectedArrowIds, labels: relationLabelLayouts,
+    }
+  }
   const architectureHeader = staticArchitectureHeader
   const architectureLegendStart = architectureHeader
     ? Math.max(scene.width * 0.56, scene.width - architectureHeader.legend.length * 92 - 34)
