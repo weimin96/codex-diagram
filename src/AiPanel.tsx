@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { Dialog, DialogTitle } from '@/components/ui/dialog'
 import { diagramTypeGroups, type DiagramDocument, type DiagramType } from './types.js'
@@ -65,6 +65,15 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
   const [scopeFocused, setScopeFocused] = useState(false)
   const [sourceOptions, setSourceOptions] = useState<string[]>([])
   const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceOptionIndex, setSourceOptionIndex] = useState(-1)
+  const sourceListOpen = scopeFocused && (sourceLoading || sourceOptions.length > 0)
+  const draft = { generation: [type, canvasWorkbench, title, scope, generationInstructions, activeTemplate], modification, path: selected?.path, mode }
+  const latestDraft = useRef(draft)
+  latestDraft.current = draft
+
+  useEffect(() => {
+    if (sourceOptionIndex >= 0) document.getElementById(`ai-source-option-${sourceOptionIndex}`)?.scrollIntoView({ block: 'nearest' })
+  }, [sourceOptionIndex])
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 620px)')
@@ -95,6 +104,7 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
       if (!open) setScopeFocused(false)
       setSourceLoading(false)
       setSourceOptions([])
+      setSourceOptionIndex(-1)
       if (scope.trim() === '.') setSourceError(null)
       return
     }
@@ -104,7 +114,10 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
       setSourceError(null)
       void onSearchSources(scope)
         .then((files) => {
-          if (!cancelled) setSourceOptions(files)
+          if (!cancelled) {
+            setSourceOptions(files)
+            setSourceOptionIndex(-1)
+          }
         })
         .catch((cause) => {
           if (!cancelled) {
@@ -123,20 +136,50 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
   }, [onSearchSources, open, scope, scopeFocused])
 
   async function generate() {
+    const submitted = latestDraft.current
     if (!await onGenerate({
       type, ...(type === 'canvas' ? { canvasWorkbench } : {}), title, scope,
       instructions: [activeTemplate?.instructions, generationInstructions].filter(Boolean).join('\n'),
     })) return
+    const latest = latestDraft.current
+    if (!submitted.generation.every((value, index) => value === latest.generation[index])) return
     setActiveTemplate(null)
     setTitle('')
     setScope('')
     setGenerationInstructions('')
     setSourceError(null)
     setScopeFocused(false)
+    if (latest.mode === 'generate') onClose()
   }
 
   async function modify(instruction: string) {
-    if (await onModify(instruction)) setModification('')
+    const submitted = latestDraft.current
+    if (!await onModify(instruction)) return
+    const latest = latestDraft.current
+    if (latest.path !== submitted.path || latest.modification !== submitted.modification) return
+    if (instruction === submitted.modification) setModification('')
+    if (latest.mode === 'modify') onClose()
+  }
+
+  function chooseSource(path: string) {
+    setScope(path)
+    setScopeFocused(false)
+    setSourceOptions([])
+    setSourceOptionIndex(-1)
+  }
+
+  function navigateSources(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      setScopeFocused(true)
+      if (!sourceOptions.length) return
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      setSourceOptionIndex((current) => current < 0 ? step > 0 ? 0 : sourceOptions.length - 1 : (current + step + sourceOptions.length) % sourceOptions.length)
+    } else if (event.key === 'Enter' && sourceListOpen && sourceOptions[sourceOptionIndex]) {
+      event.preventDefault()
+      chooseSource(sourceOptions[sourceOptionIndex])
+    }
   }
 
   function chooseTemplate(template: (typeof generationTemplates)[number]) {
@@ -158,6 +201,12 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
       aria-describedby={undefined}
       onInteractOutside={(event) => event.preventDefault()}
       onCloseAutoFocus={(event) => { event.preventDefault(); returnFocusElement?.focus() }}
+      onEscapeKeyDown={(event) => {
+        if (sourceListOpen && (event.target as HTMLElement).id === 'ai-diagram-scope') {
+          event.preventDefault()
+          setScopeFocused(false)
+        }
+      }}
     >
       <div className="ai-panel-head">
         <DialogTitle asChild><strong>图表操作</strong></DialogTitle>
@@ -203,18 +252,24 @@ export function AiPanel({ open, returnFocusElement, selected, initialMode = 'gen
                 <Input
                   id="ai-diagram-scope"
                   value={scope}
-                  onChange={(event) => setScope(event.target.value)}
+                  onChange={(event) => { setScope(event.target.value); setSourceOptions([]); setSourceOptionIndex(-1); setScopeFocused(true) }}
                   onFocus={() => setScopeFocused(true)}
-                  onBlur={() => window.setTimeout(() => setScopeFocused(false), 120)}
+                  onBlur={() => setScopeFocused(false)}
+                  onKeyDown={navigateSources}
                   placeholder="搜索或输入源码路径（可选）"
                   aria-label="文件或目录"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={sourceListOpen}
+                  aria-controls={sourceListOpen ? 'ai-source-options' : undefined}
+                  aria-activedescendant={sourceListOpen && sourceOptionIndex >= 0 ? `ai-source-option-${sourceOptionIndex}` : undefined}
                   autoComplete="off"
                 />
-                {scopeFocused && (sourceLoading || sourceOptions.length > 0) ? (
-                  <div className="source-picker-popover" role="listbox" aria-label="源码文件">
+                {sourceListOpen ? (
+                  <div id="ai-source-options" className="source-picker-popover" role="listbox" aria-label="源码文件" aria-busy={sourceLoading}>
                     {sourceLoading ? <div className="source-picker-status">正在扫描工作区…</div> : null}
-                    {!sourceLoading ? sourceOptions.map((file) => (
-                      <Button key={file} variant="ghost" size="sm" type="button" role="option" className="w-full justify-start font-mono text-xs" onMouseDown={(event) => event.preventDefault()} onClick={() => { setScope(file); setScopeFocused(false) }}>
+                    {!sourceLoading ? sourceOptions.map((file, index) => (
+                      <Button key={file} id={`ai-source-option-${index}`} variant={sourceOptionIndex === index ? 'secondary' : 'ghost'} size="sm" type="button" role="option" tabIndex={-1} aria-selected={sourceOptionIndex === index} className="w-full justify-start font-mono text-xs" onMouseMove={() => setSourceOptionIndex(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSource(file)}>
                         {file}
                       </Button>
                     )) : null}

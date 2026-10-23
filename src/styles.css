@@ -274,6 +274,7 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .editor-workspace.mode-split { grid-template-columns: minmax(260px, var(--diagram-split, 44%)) 5px minmax(320px, 1fr); }
 .editor-workspace.mode-source, .editor-workspace.mode-preview { grid-template-columns: minmax(0, 1fr); }
 .source-pane, .preview-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface-panel); }
+.preview-pane[hidden] { display: none; }
 .source-pane { min-width: 0; }
 .split-resizer { position: relative; z-index: 3; width: 5px; min-width: 5px; padding: 0; border: 0; border-left: 1px solid var(--border); border-right: 1px solid transparent; background: var(--app-bg); cursor: col-resize; }
 .split-resizer::after { content: ''; position: absolute; top: 50%; left: 1px; width: 2px; height: 28px; transform: translateY(-50%); border-radius: 2px; background: transparent; }

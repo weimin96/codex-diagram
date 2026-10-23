@@ -32,6 +32,7 @@ export interface CanvasPlaybackRequest {
 
 interface CanvasEditorProps {
   source: string
+  active?: boolean
   onChange: (source: string) => void
   onSelectionChange?: (selection: CanvasSelection | null) => void
   onOpenSource?: (path: string) => void
@@ -357,7 +358,7 @@ const CanvasArrowInk = memo(function CanvasArrowInk({ label, path, markerEnd, st
   </>
 })
 
-export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, onImportImage, onResolveImage, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
+export function CanvasEditor({ source, active = true, onChange, onSelectionChange, onOpenSource, onSearchSources, onAnalyzeGitImpact, onImportImage, onResolveImage, focusElementIds, focusKey, traceRequest, playbackRequest, onPlaybackComplete }: CanvasEditorProps) {
   const parsed = useMemo(() => {
     try {
       return { scene: parseCanvasScene(source), error: null as string | null }
@@ -467,9 +468,16 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   const freehandDraftRef = useRef<typeof freehandDraft>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const imageLoadPathsRef = useRef(new Set<string>())
+  const imageImportVersion = useRef(0)
   const gestureVisualFrameRef = useRef<number | null>(null)
   const pendingGestureVisualRef = useRef<GestureVisualDraft | null>(null)
   const geometryDraftFrameRef = useRef<number | null>(null)
+
+  useLayoutEffect(() => {
+    if (!active) setImageImporting(false)
+    // 离开画布或卸载后，旧导入结果不能继续写回编辑目标。
+    return () => { imageImportVersion.current += 1 }
+  }, [active])
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current
@@ -583,9 +591,10 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
     const element = editorRef.current
     if (!element) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
+      if (!active || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
-      if (target && (target.isContentEditable || target.closest('input, textarea, select, button, a, summary, [role="combobox"], [role="listbox"], [role="menu"]'))) return
+      if (target && (target.isContentEditable || target.closest('input, textarea, select, a, summary, [role="combobox"], [role="listbox"], [role="menu"]'))) return
+      if (target?.closest('button') && (!target.closest('.freeform-floating-toolbar') || event.code === 'Space' || event.key === 'Enter')) return
       const mod = event.metaKey || event.ctrlKey
       if (event.code === 'Space') {
         event.preventDefault()
@@ -1602,15 +1611,19 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   }
 
   async function insertImageFile(file: File, center?: CanvasPoint) {
+    if (!active) return
     if (!onImportImage) {
       setImageImportError('当前 Diagram Host 不支持图片资源写入。')
       return
     }
+    const version = ++imageImportVersion.current
     setImageImporting(true)
     setImageImportError(null)
     try {
       const decoded = await readCanvasImageFile(file)
+      if (version !== imageImportVersion.current) return
       const asset = await onImportImage({ filename: file.name || 'image', mimeType: decoded.mimeType, content: decoded.content })
+      if (version !== imageImportVersion.current) return
       const live = currentScene()
       const viewWidth = live.width / viewport.zoom
       const viewHeight = live.height / viewport.zoom
@@ -1638,9 +1651,9 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
       setSelectedIds([id])
       setTool('select')
     } catch (error) {
-      setImageImportError(error instanceof Error ? error.message : String(error))
+      if (version === imageImportVersion.current) setImageImportError(error instanceof Error ? error.message : String(error))
     } finally {
-      setImageImporting(false)
+      if (version === imageImportVersion.current) setImageImporting(false)
     }
   }
 
@@ -2928,7 +2941,7 @@ export function CanvasEditor({ source, onChange, onSelectionChange, onOpenSource
   </>
 
   return (
-    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}`} tabIndex={0} aria-label="自由画布编辑器" aria-busy={imageImporting || undefined} onPaste={handleEditorPaste}>
+    <div ref={editorRef} className={`freeform-editor workbench-${workbench} architecture-view-${architectureProjection.view} architecture-density-${architectureProjection.density} architecture-theme-${architectureTheme} lod-${semanticLodLevel}${scene.architecture ? ' is-architecture-mode' : ''}${architectureScope ? ' has-architecture-scope' : ''}`} tabIndex={0} inert={!active || undefined} aria-label="自由画布编辑器" aria-busy={imageImporting || undefined} onPaste={handleEditorPaste}>
       <div ref={surfaceRef} className="freeform-surface">
         <input
           ref={imageInputRef}

@@ -353,6 +353,9 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<ViewMode>(() => isThread ? 'preview' : 'split')
+  const canvasActive = mode !== 'source' && (!loadingPath || loadingPath === selected?.path)
+  const canvasWriteTarget = useRef({ workspacePath, path: selected?.path, active: canvasActive })
+  canvasWriteTarget.current = { workspacePath, path: selected?.path, active: canvasActive }
   const [creating, setCreating] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [diagramQuery, setDiagramQuery] = useState('')
@@ -1643,7 +1646,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
         existingPaths: new Set(snapshot.diagrams.map((item) => item.path)),
       }
       await sendHostMessage(buildGenerationPrompt(workspacePath, request))
-      setAiOpen(false)
       setNotice('已发送到当前 对话，生成后会自动刷新')
       return true
     } catch (cause) {
@@ -1669,7 +1671,6 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
     setError(null)
     try {
       await sendHostMessage(buildModificationPrompt(workspacePath, selected, instruction))
-      setAiOpen(false)
       setNotice('已发送到当前 对话；AI 返回候选修改后会先进入 Proposal 审查')
       return true
     } catch (cause) {
@@ -2245,14 +2246,19 @@ function DiagramWorkspace({ snapshot, onSnapshot, onSwitch }: {
                   onPointerCancel={() => { splitDrag.current = null }}
                 />
               ) : null}
-              {(mode === 'preview' || mode === 'split') ? (
-                <section className="preview-pane">
+              {(mode === 'preview' || mode === 'split' || selected.type === 'canvas') ? (
+                <section className="preview-pane" hidden={mode === 'source'}>
                   {!isThread || selected.type !== 'canvas' ? <div className="pane-head"><span>{selected.type === 'canvas' ? '画布' : '预览'}</span><span>{selected.type === 'canvas' ? '可视化编辑' : '实时渲染'}</span></div> : null}
                   {selected.type === 'canvas'
                     ? <CanvasEditor
-                        key={selected.path}
+                        key={`${workspacePath}:${selected.path}`}
                         source={source}
-                        onChange={setSource}
+                        active={canvasActive}
+                        onChange={(nextSource) => {
+                          const target = canvasWriteTarget.current
+                          if (target.workspacePath !== workspacePath || target.path !== selected.path || !target.active) return
+                          setSource(nextSource)
+                        }}
                         onSelectionChange={setCanvasSelection}
                         onOpenSource={(path) => void openWorkspaceSource(path)}
                         onSearchSources={searchSourceFiles}
